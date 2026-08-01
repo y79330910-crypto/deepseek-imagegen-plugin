@@ -112,9 +112,10 @@ def test_comfyui_workflow() -> None:
 
 def test_resolve_backend() -> None:
     cfg = image_gen.load_config()
-    check("resolve auto -> 默认", image_gen.resolve_backend("auto", cfg) == "pollinations")
+    check("resolve auto -> 默认", image_gen.resolve_backend("auto", cfg) == "vertex")
     check("resolve 别名", image_gen.resolve_backend("webui", cfg) == "sd-webui")
     check("resolve comfy", image_gen.resolve_backend("comfy", cfg) == "comfyui")
+    check("resolve vertex 别名", image_gen.resolve_backend("vproxy", cfg) == "vertex")
 
 
 def test_default_output_path() -> None:
@@ -134,6 +135,53 @@ def test_mask_key() -> None:
     check("mask_key 打码", image_gen.mask_key("sk-abcdefghijkl") == "sk-a*******ijkl")
 
 
+def test_read_first_api_key() -> None:
+    text = "# 注释\nwaqeq:sk-aaaabbbb\n第三方:sk-ccccdddd\n"
+    check("api_keys 解析 name:key", image_gen.read_first_api_key(text) == "sk-aaaabbbb")
+    check("api_keys 解析裸 key", image_gen.read_first_api_key("sk-xxxx") == "sk-xxxx")
+    check("api_keys 空返回", image_gen.read_first_api_key("# only comment") == "")
+
+
+def test_pick_best_image_model() -> None:
+    models = [
+        "gemini-2.5-flash-image",
+        "gemini-3.1-flash-image",
+        "gemini-3.1-flash-image-preview",
+        "gemini-3-pro-image",
+        "gemini-3-pro-image-preview",
+        "gemini-3.1-flash-lite-image",
+        "gemini-2.5-flash",
+        "gemini-3.6-flash",
+    ]
+    check("最佳图像模型", image_gen.pick_best_image_model(models) == "gemini-3-pro-image")
+    check("无图像模型返回空", image_gen.pick_best_image_model(["gemini-3.6-flash"]) == "")
+
+
+def test_discover_vertex() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg_dir = Path(tmp) / "config"
+        cfg_dir.mkdir()
+        (cfg_dir / "config.json").write_text(json.dumps({"port_api": 2199}), encoding="utf-8")
+        (cfg_dir / "api_keys.txt").write_text("waqeq:sk-testkey123\n", encoding="utf-8")
+        (cfg_dir / "models.json").write_text(
+            json.dumps({"models": ["gemini-3-pro-image", "gemini-3.6-flash"]}), encoding="utf-8"
+        )
+        cfg = image_gen.load_config()
+        cfg["vertex"] = {"dir": tmp, "base_url": "", "api_key": "", "model": ""}
+        info = image_gen.discover_vertex(cfg)
+        check("vertex 端口读取", info["port"] == 2199)
+        check("vertex base_url", info["base_url"] == "http://127.0.0.1:2199/v1")
+        check("vertex 密钥读取", info["api_key"] == "sk-testkey123")
+        check("vertex 最佳模型", info["model"] == "gemini-3-pro-image")
+        check("vertex 图像模型列表", info["image_models"] == ["gemini-3-pro-image"])
+
+
+def test_ext_from_content_type() -> None:
+    check("jpg 扩展名", image_gen.ext_from_content_type("image/jpeg") == "jpg")
+    check("webp 扩展名", image_gen.ext_from_content_type("image/webp; charset=binary") == "webp")
+    check("png 扩展名", image_gen.ext_from_content_type("image/png") == "png")
+
+
 def main() -> int:
     print("=== deepseek-imagegen 冒烟测试 ===")
     test_parse_size()
@@ -144,6 +192,10 @@ def main() -> int:
     test_resolve_backend()
     test_default_output_path()
     test_mask_key()
+    test_read_first_api_key()
+    test_pick_best_image_model()
+    test_discover_vertex()
+    test_ext_from_content_type()
     print()
     if FAILURES:
         print(f"失败 {len(FAILURES)} 项：{', '.join(FAILURES)}")

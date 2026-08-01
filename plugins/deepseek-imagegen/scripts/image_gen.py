@@ -9,6 +9,7 @@ DeepSeek ImageGen bridge.
 后端：
   pollinations   免费公共 API，无需 Key（默认）
   siliconflow    OpenAI 兼容图像接口（FLUX 等），需要 api_key
+  vertex         本地 Vertex Proxy（OpenAI 兼容，自动读取端口/密钥/模型列表）
   sd-webui       本地 Stable Diffusion WebUI / Forge（http://127.0.0.1:7860）
   comfyui        本地 ComfyUI（http://127.0.0.1:8188）
 
@@ -36,6 +37,7 @@ from typing import Any, Optional
 APP_NAME = "deepseek-imagegen"
 CONFIG_DIR = Path.home() / ".deepseek-imagegen"
 CONFIG_FILE = CONFIG_DIR / "config.json"
+VERTEX_DEFAULT_DIR = r"C:\Users\yjq\Documents\Codex\2026-07-31\new-chat\outputs\vertex-proxy\dist"
 
 DEFAULT_TIMEOUT = 180
 HEALTH_TIMEOUT = 8
@@ -45,7 +47,7 @@ BROWSER_UA = (
 )
 
 DEFAULT_CONFIG: dict[str, Any] = {
-    "default_backend": "pollinations",
+    "default_backend": "vertex",
     "save_dir": "",
     "pollinations": {
         "base_url": "https://image.pollinations.ai/prompt",
@@ -56,6 +58,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "api_key": "",
         "model": "black-forest-labs/FLUX.1-schnell",
         "size": "1024x1024",
+    },
+    "vertex": {
+        "dir": VERTEX_DEFAULT_DIR,
+        "base_url": "",
+        "api_key": "",
+        "model": "",
     },
     "sd_webui": {
         "base_url": "http://127.0.0.1:7860",
@@ -81,6 +89,11 @@ BACKEND_ALIASES = {
     "siliconflow": "siliconflow",
     "silicon": "siliconflow",
     "flux": "siliconflow",
+    "vertex": "vertex",
+    "vertex-proxy": "vertex",
+    "vproxy": "vertex",
+    "proxy": "vertex",
+    "local": "vertex",
     "sd": "sd-webui",
     "sd-webui": "sd-webui",
     "a1111": "sd-webui",
@@ -196,6 +209,148 @@ def mask_key(key: str) -> str:
 
 # ---------------------------------------------------------------- backends
 
+def read_first_api_key(text: str) -> str:
+    """从 api_keys.txt 文本中读取第一个有效 Key（格式：name:sk-... 或单独 sk-...）。"""
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("sk-"):
+            return line
+        parts = line.split(":", 1)
+        if len(parts) == 2 and parts[1].strip().startswith("sk-"):
+            return parts[1].strip()
+    return ""
+
+
+def pick_best_image_model(models: list[str]) -> str:
+    """从模型列表中挑选最好的图像模型：优先非预览、pro > flash > lite、版本号更高。"""
+    candidates = [m for m in models if "image" in str(m).lower()]
+    if not candidates:
+        return ""
+
+    def score(model: str) -> int:
+        low = model.lower()
+        total = 0
+        if low.endswith("-preview"):
+            total -= 20
+        if "pro" in low:
+            total += 80
+        elif "flash" in low:
+            total += 30
+        if "lite" in low:
+            total -= 10
+        version = re.search(r"(\d+)(?:\.(\d+))?", low)
+        if version:
+            major = int(version.group(1))
+            minor = int(version.group(2) or 0)
+            total += major * 10 + minor
+        return total
+
+    return max(candidates, key=score)
+
+
+def discover_vertex(cfg: dict[str, Any]) -> dict[str, Any]:
+    """读取本地 Vertex Proxy 的端口、密钥与模型列表，返回可用的连接信息。"""
+    bc = cfg.get("vertex", {}) if isinstance(cfg.get("vertex"), dict) else {}
+    vdir = (
+        str(bc.get("dir") or os.environ.get("VERTEX_PROXY_DIR") or VERTEX_DEFAULT_DIR)
+        .strip()
+        .strip('"')
+    )
+    if not vdir:
+        raise GenError("未配置 vertex.dir（Vertex Proxy 目录）。")
+    proxy_cfg_file = os.path.join(vdir, "config", "config.json")
+    if not os.path.isfile(proxy_cfg_file):
+        raise GenError(f"未找到 Vertex Proxy 配置：{proxy_cfg_file}，请检查 vertex.dir。")
+    with open(proxy_cfg_file, "r", encoding="utf-8") as handle:
+        proxy_cfg = json.load(handle)
+    port = int(proxy_cfg.get("port_api", 2156))
+
+    base_url = str(bc.get("base_url") or "").strip().rstrip("/")
+    if not base_url:
+        base_url = f"http://127.0.0.1:{port}/v1"
+
+    api_key = str(bc.get("api_key") or "").strip()
+    if not api_key:
+        keys_file = os.path.join(vdir, "config", "api_keys.txt")
+        if os.path.isfile(keys_file):
+            with open(keys_file, "r", encoding="utf-8") as handle:
+                api_key = read_first_api_key(handle.read())
+
+    models: list[str] = []
+    models_file = os.path.join(vdir, "config", "models.json")
+    if os.path.isfile(models_file):
+        with open(models_file, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        models = [m for m in data.get("models", []) if isinstance(m, str)]
+
+    model = str(bc.get("model") or "").strip()
+    if not model and models:
+        model = pick_best_image_model(models)
+    if not model:
+        raise GenError("Vertex Proxy 模型列表中未找到图像模型，请检查 config/models.json。")
+    if not api_key:
+        raise GenError("Vertex Proxy 未找到 API Key，请检查 config/api_keys.txt 或配置 vertex.api_key。")
+
+    return {
+        "dir": vdir,
+        "port": port,
+        "base_url": base_url,
+        "api_key": api_key,
+        "models": models,
+        "image_models": [m for m in models if "image" in str(m).lower()],
+        "model": model,
+    }
+
+
+def _gen_openai_image(
+    base_url: str, api_key: str, model: str, prompt: str, width: int, height: int
+) -> bytes:
+    """调用任意 OpenAI 兼容的 /images/generations 接口。"""
+    base = base_url.rstrip("/")
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        "n": 1,
+        "size": f"{width}x{height}",
+    }
+    status, body, content_type = _http(
+        f"{base}/images/generations",
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": f"{APP_NAME}/0.2",
+        },
+        payload=payload,
+    )
+    try:
+        data = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise GenError(f"图像接口返回了无法解析的内容：{body[:300]!r}") from exc
+    if isinstance(data, dict) and data.get("error"):
+        err = data["error"]
+        raise GenError(f"图像接口返回错误：{err.get('message') or err}")
+    items = (data.get("data") or []) if isinstance(data, dict) else []
+    if not items:
+        raise GenError(f"图像接口未返回图片：{body[:500]!r}")
+    item = items[0]
+    b64 = item.get("b64_json") or item.get("image")
+    if b64:
+        try:
+            return base64.b64decode(b64)
+        except Exception as exc:
+            raise GenError(f"图片 base64 解码失败：{exc}") from exc
+    url = item.get("url")
+    if url:
+        if url.startswith("data:image/"):
+            _, b64 = url.split(",", 1)
+            return base64.b64decode(b64)
+        _, body, content_type = _http(url)
+        return body
+    raise GenError(f"图像接口返回中缺少图片数据：{body[:500]!r}")
+
 def gen_pollinations(
     cfg: dict[str, Any], prompt: str, width: int, height: int, seed: int, model: str
 ) -> tuple[bytes, str]:
@@ -233,41 +388,13 @@ def gen_siliconflow(
     model = model or (bc.get("model") or "").strip()
     if not model:
         raise GenError("siliconflow 未配置 model，请在 config.json 中填写。")
-    payload = {
-        "model": model,
-        "prompt": prompt,
-        "n": 1,
-        "size": f"{width}x{height}",
-    }
-    status, body, content_type = _http(
-        base,
-        method="POST",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "User-Agent": f"{APP_NAME}/0.1",
-        },
-        payload=payload,
-    )
-    try:
-        data = json.loads(body.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise GenError(f"siliconflow 返回了无法解析的内容：{body[:300]!r}") from exc
-    items = (data.get("data") or []) if isinstance(data, dict) else []
-    if not items:
-        raise GenError(f"siliconflow 未返回图片：{body[:500]!r}")
-    item = items[0]
-    b64 = item.get("b64_json") or item.get("image")
-    if b64:
-        try:
-            return base64.b64decode(b64)
-        except Exception as exc:
-            raise GenError(f"siliconflow 图片 base64 解码失败：{exc}") from exc
-    url = item.get("url")
-    if url:
-        _, body, content_type = _http(url)
-        return body
-    raise GenError(f"siliconflow 返回中缺少图片数据：{body[:500]!r}")
+    return _gen_openai_image(base, api_key, model, prompt, width, height)
+
+
+def gen_vertex(cfg: dict[str, Any], prompt: str, width: int, height: int, model: str) -> bytes:
+    info = discover_vertex(cfg)
+    model = model or info["model"]
+    return _gen_openai_image(info["base_url"], info["api_key"], model, prompt, width, height)
 
 
 def gen_sd_webui(
@@ -452,9 +579,9 @@ def resolve_backend(name: str, cfg: dict[str, Any]) -> str:
     if key == "auto" or backend is None:
         backend = (cfg.get("default_backend") or "pollinations").strip().lower()
     backend = BACKEND_ALIASES.get(backend, backend)
-    if backend not in ("pollinations", "siliconflow", "sd-webui", "comfyui"):
+    if backend not in ("pollinations", "siliconflow", "vertex", "sd-webui", "comfyui"):
         raise GenError(
-            f"未知后端：{name!r}。可选：pollinations / siliconflow / sd-webui / comfyui"
+            f"未知后端：{name!r}。可选：vertex / pollinations / siliconflow / sd-webui / comfyui"
         )
     return backend
 
@@ -484,6 +611,8 @@ def generate_image(
         out_ext = ext_from_content_type(content_type)
     elif backend == "siliconflow":
         data = gen_siliconflow(cfg_all, prompt.strip(), width, height, model)
+    elif backend == "vertex":
+        data = gen_vertex(cfg_all, prompt.strip(), width, height, model)
     elif backend == "sd-webui":
         bc = cfg_all.get("sd_webui", {})
         data = gen_sd_webui(
@@ -586,6 +715,23 @@ def cmd_doctor(args: argparse.Namespace) -> dict[str, Any]:
         if not key:
             raise GenError("未配置 api_key（config.json -> siliconflow.api_key）")
 
+    def check_vertex(c: dict[str, Any]) -> None:
+        info = discover_vertex(c)
+        status, body, content_type = _http(
+            f"{info['base_url'].rstrip('/')}/models",
+            headers={
+                "Authorization": f"Bearer {info['api_key']}",
+                "User-Agent": BROWSER_UA,
+            },
+            timeout=HEALTH_TIMEOUT,
+        )
+        data = json.loads(body.decode("utf-8"))
+        ids = [m.get("id") for m in data.get("data", [])]
+        if not ids:
+            raise GenError("接口可访问但未返回模型列表")
+        vertex_info_holder["info"] = info
+        vertex_info_holder["count"] = len(ids)
+
     def check_sd_webui(c: dict[str, Any]) -> None:
         bc = c.get("sd_webui", {})
         base = (bc.get("base_url") or DEFAULT_CONFIG["sd_webui"]["base_url"]).rstrip("/")
@@ -596,8 +742,14 @@ def cmd_doctor(args: argparse.Namespace) -> dict[str, Any]:
         base = (bc.get("base_url") or DEFAULT_CONFIG["comfyui"]["base_url"]).rstrip("/")
         _http(f"{base}/system_stats", timeout=HEALTH_TIMEOUT)
 
+    vertex_info_holder: dict[str, Any] = {}
     checks.append(_health_check("pollinations", check_pollinations, cfg))
     checks.append(_health_check("siliconflow", check_siliconflow, cfg))
+    vertex_check = _health_check("vertex", check_vertex, cfg)
+    if vertex_info_holder.get("info"):
+        vertex_check["best_model"] = vertex_info_holder["info"]["model"]
+        vertex_check["model_count"] = vertex_info_holder["count"]
+    checks.append(vertex_check)
     checks.append(_health_check("sd-webui", check_sd_webui, cfg))
     checks.append(_health_check("comfyui", check_comfyui, cfg))
     return {
@@ -612,9 +764,10 @@ def cmd_doctor(args: argparse.Namespace) -> dict[str, Any]:
 def cmd_config(args: argparse.Namespace) -> dict[str, Any]:
     cfg = load_config()
     safe = json.loads(json.dumps(cfg))
-    key = safe.get("siliconflow", {}).get("api_key", "")
-    if key:
-        safe["siliconflow"]["api_key"] = mask_key(key)
+    for section in ("siliconflow", "vertex"):
+        key = safe.get(section, {}).get("api_key", "")
+        if key:
+            safe[section]["api_key"] = mask_key(key)
     return {
         "config_file": str(CONFIG_FILE),
         "config_exists": CONFIG_FILE.exists(),
@@ -645,6 +798,15 @@ def cmd_list_models(args: argparse.Namespace) -> dict[str, Any]:
     result["models"]["siliconflow"] = (
         "模型列表请在 https://cloud.siliconflow.cn 查看（常用：black-forest-labs/FLUX.1-schnell）"
     )
+    try:
+        info = discover_vertex(cfg)
+        result["models"]["vertex"] = {
+            "base_url": info["base_url"],
+            "best_model": info["model"],
+            "image_models": info["image_models"],
+        }
+    except GenError as exc:
+        result["models"]["vertex"] = f"不可用：{exc}"
     return result
 
 
@@ -703,6 +865,10 @@ def build_parser() -> argparse.ArgumentParser:
     gen.add_argument("--model", default="", help="模型（pollinations / siliconflow）")
     gen.add_argument("--json", action="store_true", help="输出 JSON（机器可读）")
 
+    webui_parser = sub.add_parser("webui", help="启动本地可视化设置页面")
+    webui_parser.add_argument("--host", default="127.0.0.1")
+    webui_parser.add_argument("--port", type=int, default=8766)
+
     for name, help_text in (
         ("doctor", "诊断各后端连通性"),
         ("config", "查看当前生效配置"),
@@ -725,6 +891,10 @@ def main(argv: Optional[list[str]] = None) -> int:
             result = cmd_config(args)
         elif args.command == "list-models":
             result = cmd_list_models(args)
+        elif args.command == "webui":
+            import webui  # type: ignore  # noqa: PLC0415
+
+            return webui.serve(host=args.host, port=args.port)
         else:
             parser.error(f"未知命令：{args.command}")
             return 2

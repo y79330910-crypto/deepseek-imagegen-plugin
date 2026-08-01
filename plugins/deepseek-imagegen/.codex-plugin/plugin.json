@@ -1,7 +1,7 @@
 {
   "name": "deepseek-imagegen",
-  "version": "0.1.0",
-  "description": "为 Codex 中的 DeepSeek 等纯文本模型补齐图像生成能力：通过桥接脚本调用免费 Pollinations、SiliconFlow（FLUX 等）与本地 Stable Diffusion WebUI / ComfyUI，DeepSeek 负责理解需求、组织提示词，后端负责渲染图片。",
+  "version": "0.2.0",
+  "description": "为 Codex 中的 DeepSeek 等纯文本模型补齐图像生成能力：默认绑定本地 Vertex Proxy（自动读取端口/密钥/模型列表并选用最佳图像模型），也可用免费 Pollinations、SiliconFlow（FLUX 等）与本地 Stable Diffusion WebUI / ComfyUI；内置可视化设置页面。",
   "author": {
     "name": "y79330910-crypto",
     "url": "https://github.com/y79330910-crypto"
@@ -14,6 +14,8 @@
     "image-generation",
     "text-to-image",
     "codex",
+    "vertex-proxy",
+    "gemini",
     "flux",
     "stable-diffusion",
     "comfyui",
@@ -23,8 +25,8 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "DeepSeek ImageGen",
-    "shortDescription": "让 DeepSeek 生成图片：免费 Pollinations / SiliconFlow FLUX / 本地 SD & ComfyUI",
-    "longDescription": "DeepSeek 等纯文本模型本身无法生成图片。本插件提供图像生成桥接：用可配置的后端（免费免密钥的 Pollinations、OpenAI 兼容的 SiliconFlow FLUX、本地 Stable Diffusion WebUI / ComfyUI）把用户的文字需求渲染成 PNG 图片，DeepSeek 负责理解意图、撰写提示词并组织交付。支持尺寸、种子、负面提示词、采样步数等参数，内置诊断命令 doctor 与模型列表 list-models，API Key 只保存在本地配置文件，不进入仓库。",
+    "shortDescription": "让 DeepSeek 生成图片：默认绑定 Vertex Proxy 最佳图像模型",
+    "longDescription": "DeepSeek 等纯文本模型本身无法生成图片。本插件提供图像生成桥接：默认绑定本地 Vertex Proxy，自动读取其端口、API Key 与模型列表并选用最佳图像模型（如 gemini-3-pro-image），也可切换免费免密钥的 Pollinations、OpenAI 兼容的 SiliconFlow FLUX 或本地 Stable Diffusion WebUI / ComfyUI。支持尺寸、种子、负面提示词、采样步数等参数，内置诊断命令 doctor、模型列表 list-models 和本地可视化设置页面（image_gen.py webui），API Key 只保存在本地配置文件，不进入仓库。",
     "developerName": "y79330910-crypto",
     "category": "Productivity",
     "capabilities": [
@@ -35,8 +37,8 @@
     "composerIcon": "./assets/icon.png",
     "defaultPrompt": [
       "生成一张科技风网页横幅图：深蓝渐变背景、发光网格线",
-      "用本地 Stable Diffusion 画一个像素风游戏角色，输出到项目目录",
-      "打开图像生成插件的配置说明"
+      "打开图像生成插件的设置页面",
+      "用本地 Stable Diffusion 画一个像素风游戏角色，输出到项目目录"
     ]
   }
 }

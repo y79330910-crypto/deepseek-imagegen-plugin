@@ -1,6 +1,8 @@
 {
-  "default_backend": "pollinations",
+  "default_backend": "vertex",
   "save_dir": "",
+  "default_size": "1024x1024",
+  "default_negative": "",
   "pollinations": {
     "base_url": "https://image.pollinations.ai/prompt",
     "model": ""
@@ -10,6 +12,12 @@
     "api_key": "",
     "model": "black-forest-labs/FLUX.1-schnell",
     "size": "1024x1024"
+  },
+  "vertex": {
+    "dir": "C:\\Users\\yjq\\Documents\\Codex\\2026-07-31\\new-chat\\outputs\\vertex-proxy\\dist",
+    "base_url": "",
+    "api_key": "",
+    "model": ""
   },
   "sd_webui": {
     "base_url": "http://127.0.0.1:7860",
