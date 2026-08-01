@@ -99,6 +99,7 @@ HTML_PAGE = r"""<!doctype html>
       </div>
       <div><label>默认尺寸</label><input id="default_size" placeholder="1024x1024"></div>
       <div><label>默认保存目录（留空=当前目录）</label><input id="save_dir" placeholder="例如 D:\images"></div>
+      <div><label>自动副本目录（留空=不复制）</label><input id="mirror_dir" placeholder="C:\Users\yjq\Pictures\codex"></div>
       <div><label>默认负面提示词</label><input id="default_negative" placeholder="文字, 水印, 低质量"></div>
     </div>
   </section>
@@ -165,6 +166,7 @@ function render() {
   $("default_backend").value = c.default_backend || "vertex";
   $("default_size").value = c.default_size || "1024x1024";
   $("save_dir").value = c.save_dir || "";
+  $("mirror_dir").value = c.mirror_dir || "";
   $("default_negative").value = c.default_negative || "";
   $("vertex_dir").value = c.vertex && c.vertex.dir || "";
   $("vertex_base").value = c.vertex && c.vertex.base_url || "";
@@ -189,6 +191,7 @@ function collect() {
   c.default_backend = $("default_backend").value;
   c.default_size = $("default_size").value || "1024x1024";
   c.save_dir = $("save_dir").value.trim();
+  c.mirror_dir = $("mirror_dir").value.trim();
   c.default_negative = $("default_negative").value;
   c.vertex = {
     dir: $("vertex_dir").value.trim(),

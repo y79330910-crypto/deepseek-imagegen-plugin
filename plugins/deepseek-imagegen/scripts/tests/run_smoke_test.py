@@ -182,6 +182,18 @@ def test_ext_from_content_type() -> None:
     check("png 扩展名", image_gen.ext_from_content_type("image/png") == "png")
 
 
+def test_mirror_output() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        src = Path(tmp) / "img.png"
+        src.write_bytes(b"fake-png")
+        mirror = Path(tmp) / "mirror"
+        cfg = {"mirror_dir": str(mirror)}
+        dest = image_gen.mirror_output(str(src), cfg)
+        check("mirror 副本创建", dest is not None and Path(dest).exists())
+        check("mirror 副本内容一致", Path(dest).read_bytes() == b"fake-png")
+        check("mirror 留空不复制", image_gen.mirror_output(str(src), {"mirror_dir": ""}) is None)
+
+
 def main() -> int:
     print("=== deepseek-imagegen 冒烟测试 ===")
     test_parse_size()
@@ -196,6 +208,7 @@ def main() -> int:
     test_pick_best_image_model()
     test_discover_vertex()
     test_ext_from_content_type()
+    test_mirror_output()
     print()
     if FAILURES:
         print(f"失败 {len(FAILURES)} 项：{', '.join(FAILURES)}")

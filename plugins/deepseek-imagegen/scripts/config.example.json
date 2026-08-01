@@ -1,6 +1,7 @@
 {
   "default_backend": "vertex",
   "save_dir": "",
+  "mirror_dir": "C:\\Users\\yjq\\Pictures\\codex",
   "default_size": "1024x1024",
   "default_negative": "",
   "pollinations": {

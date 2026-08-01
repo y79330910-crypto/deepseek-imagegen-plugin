@@ -90,6 +90,10 @@ python image_gen.py list-models
 
 `base_url` 默认 `https://api.siliconflow.cn/v1/images/generations`，兼容任何 OpenAI 风格图像接口，可改成其他提供方。
 
+## 自动副本
+
+每次生成成功后，脚本会自动在 `mirror_dir`（默认 `C:\Users\yjq\Pictures\codex`）保留一份副本，方便集中管理；复制失败不影响主文件。可在 `config.json` 或设置页面里修改 `mirror_dir`（留空=不复制）。`--json` 输出的 `mirror_path` 字段显示副本位置。
+
 ### 本地 Stable Diffusion WebUI / Forge
 
 1. 启动 WebUI 时带上 API 参数：`webui-user.bat --api`（默认监听 `http://127.0.0.1:7860`）。

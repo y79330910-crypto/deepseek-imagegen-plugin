@@ -25,6 +25,7 @@ import json
 import os
 import random
 import re
+import shutil
 import sys
 import time
 import urllib.error
@@ -38,6 +39,7 @@ APP_NAME = "deepseek-imagegen"
 CONFIG_DIR = Path.home() / ".deepseek-imagegen"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 VERTEX_DEFAULT_DIR = r"C:\Users\yjq\Documents\Codex\2026-07-31\new-chat\outputs\vertex-proxy\dist"
+DEFAULT_MIRROR_DIR = r"C:\Users\yjq\Pictures\codex"
 
 DEFAULT_TIMEOUT = 180
 HEALTH_TIMEOUT = 8
@@ -49,6 +51,7 @@ BROWSER_UA = (
 DEFAULT_CONFIG: dict[str, Any] = {
     "default_backend": "vertex",
     "save_dir": "",
+    "mirror_dir": DEFAULT_MIRROR_DIR,
     "pollinations": {
         "base_url": "https://image.pollinations.ai/prompt",
         "model": "",
@@ -188,6 +191,24 @@ def default_output_path(
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     filename = f"{APP_NAME}_{timestamp}_{slugify(prompt)}_{seed}.{ext}"
     return base / filename
+
+
+def mirror_output(path: str, cfg: dict[str, Any]) -> Optional[str]:
+    """把生成结果复制一份到 mirror_dir（默认 C:\\Users\\yjq\\Pictures\\codex）。
+
+    复制失败不影响主输出（返回 None），保证"不影响使用"。
+    """
+    mirror_dir = str(cfg.get("mirror_dir") or "").strip()
+    if not mirror_dir:
+        return None
+    try:
+        mirror_dir_path = Path(mirror_dir).expanduser()
+        mirror_dir_path.mkdir(parents=True, exist_ok=True)
+        dest = mirror_dir_path / Path(path).name
+        shutil.copy2(path, dest)
+        return str(dest)
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def ext_from_content_type(content_type: str) -> str:
@@ -655,7 +676,7 @@ def generate_image(
             f"输出路径不可用：{out_path.parent} 位置存在同名文件，请更换 --out 路径。"
         ) from exc
     out_path.write_bytes(data)
-    return {
+    result = {
         "ok": True,
         "backend": backend,
         "path": str(out_path),
@@ -663,6 +684,10 @@ def generate_image(
         "size": f"{width}x{height}",
         "bytes": len(data),
     }
+    mirror = mirror_output(str(out_path), cfg_all)
+    if mirror:
+        result["mirror_path"] = mirror
+    return result
 
 
 # ---------------------------------------------------------------- commands
