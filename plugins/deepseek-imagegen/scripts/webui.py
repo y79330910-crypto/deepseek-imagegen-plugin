@@ -47,11 +47,11 @@ HTML_PAGE = r"""<!doctype html>
 <title>DeepSeek ImageGen · 设置</title>
 <style>
   :root {
-    --cyan:#38bdf8; --cyan-deep:#0ea5e9; --cyan-soft:rgba(56,189,248,.16);
-    --teal:#14b8a6; --ok:#16a34a; --warn:#d97706; --bad:#e11d48;
-    --text:#17324a; --text-dim:#4f6d88;
-    --glass:rgba(255,255,255,.62); --stroke:rgba(23,84,120,.14); --hi:rgba(255,255,255,.92);
-    --shadow:0 18px 46px rgba(39,103,148,.16);
+    --cyan:#38bdf8; --cyan-deep:#22d3ee; --cyan-soft:rgba(56,189,248,.18);
+    --teal:#2dd4bf; --ok:#34d399; --warn:#fbbf24; --bad:#f87171;
+    --text:#eef4fb; --text-dim:#b8cfe3;
+    --glass:rgba(14,22,36,.82); --stroke:rgba(160,205,240,.16); --hi:rgba(255,255,255,.10);
+    --shadow:0 18px 46px rgba(4,12,24,.45);
     --radius:18px;
     --ease:cubic-bezier(.22,.8,.3,1);
   }
@@ -65,13 +65,13 @@ HTML_PAGE = r"""<!doctype html>
   a { color:var(--cyan-deep); text-decoration:none; }
   button { font:inherit; cursor:pointer; color:inherit; }
   input, select, textarea {
-    font:inherit; color:var(--text); background:rgba(255,255,255,.78);
+    font:inherit; color:var(--text); background:rgba(8,14,26,.55);
     border:1px solid var(--stroke); border-radius:11px; padding:10px 13px; width:100%;
     transition:border-color .2s var(--ease), background .2s var(--ease), box-shadow .2s;
   }
-  input::placeholder, textarea::placeholder { color:rgba(79,109,136,.78); }
+  input::placeholder, textarea::placeholder { color:rgba(186,205,224,.62); }
   input:focus, select:focus, textarea:focus {
-    outline:none; border-color:var(--cyan); background:#fff;
+    outline:none; border-color:var(--cyan); background:rgba(10,17,31,.78);
     box-shadow:0 0 0 3px var(--cyan-soft);
   }
   select {
@@ -79,7 +79,7 @@ HTML_PAGE = r"""<!doctype html>
     background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%230ea5e9' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
     background-repeat:no-repeat; background-position:right 14px center;
   }
-  option { background:#fff; color:var(--text); }
+  option { background:#101a2c; color:var(--text); }
   .hidden { display:none !important; }
   .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); border:0; }
 
@@ -87,14 +87,14 @@ HTML_PAGE = r"""<!doctype html>
   .bg-veil {
     position:fixed; inset:0; z-index:-1; pointer-events:none;
     background:
-      radial-gradient(1100px 700px at 85% -8%, rgba(125,211,252,.14), transparent 55%),
-      linear-gradient(90deg, rgba(255,255,255,.46), rgba(255,255,255,.24) 45%, rgba(255,255,255,.08)),
-      linear-gradient(180deg, rgba(255,255,255,.20), rgba(255,255,255,.42));
+      radial-gradient(1100px 700px at 85% -8%, rgba(56,189,248,.10), transparent 55%),
+      linear-gradient(90deg, rgba(10,18,32,.30), rgba(10,18,32,.14) 45%, rgba(10,18,32,.04)),
+      linear-gradient(180deg, rgba(10,18,32,.16), rgba(10,18,32,.30));
   }
 
   .glass {
     background:var(--glass);
-    -webkit-backdrop-filter:blur(16px); backdrop-filter:blur(16px);
+    -webkit-backdrop-filter:blur(22px); backdrop-filter:blur(22px);
     border:1px solid var(--stroke); border-radius:var(--radius);
     box-shadow:var(--shadow), inset 0 1px 0 var(--hi);
   }
@@ -107,8 +107,8 @@ HTML_PAGE = r"""<!doctype html>
   }
   .btn:hover { filter:brightness(1.06); transform:translateY(-1.5px); box-shadow:0 9px 24px rgba(14,165,233,.36); }
   .btn:active { transform:translateY(0) scale(.99); }
-  .btn.ghost { background:rgba(255,255,255,.55); color:var(--text-dim); box-shadow:none; border:1px solid var(--stroke); }
-  .btn.ghost:hover { color:var(--text); border-color:var(--cyan); background:rgba(255,255,255,.85); transform:translateY(-1.5px); }
+  .btn.ghost { background:rgba(255,255,255,.07); color:var(--text-dim); box-shadow:none; border:1px solid var(--stroke); }
+  .btn.ghost:hover { color:var(--text); border-color:var(--cyan); background:rgba(255,255,255,.14); transform:translateY(-1.5px); }
   .btn.danger { background:transparent; color:var(--bad); border:1px solid rgba(225,29,72,.3); box-shadow:none; padding:6px 13px; }
   .btn.danger:hover { background:rgba(225,29,72,.08); transform:none; }
   .btn-sm { padding:6px 12px; font-size:12.5px; border-radius:9px; }
@@ -134,7 +134,7 @@ HTML_PAGE = r"""<!doctype html>
     transition:background .2s var(--ease), color .2s, transform .2s var(--ease), box-shadow .2s;
   }
   nav button .ic { font-size:16px; width:20px; text-align:center; }
-  nav button:hover { background:rgba(255,255,255,.55); color:var(--text); transform:translateX(3px); }
+  nav button:hover { background:rgba(255,255,255,.09); color:var(--text); transform:translateX(3px); }
   nav button.active { background:var(--cyan-soft); color:var(--cyan-deep); font-weight:600; box-shadow:inset 0 0 0 1px rgba(14,165,233,.28), 0 4px 14px rgba(14,165,233,.14); }
   aside .spacer { flex:1; }
   .side-foot { padding:12px 8px 2px; border-top:1px dashed var(--stroke); }
@@ -142,20 +142,20 @@ HTML_PAGE = r"""<!doctype html>
   .side-foot .chip {
     display:inline-flex; align-items:center; gap:6px; margin-top:8px;
     padding:4px 10px; border-radius:999px; font-size:11px;
-    background:rgba(56,189,248,.12); color:var(--cyan-deep); border:1px solid rgba(14,165,233,.25);
+    background:rgba(56,189,248,.14); color:#7dd3fc; border:1px solid rgba(56,189,248,.35);
   }
 
   main { position:relative; overflow:hidden; border-radius:var(--radius); }
   .main-glass-bg {
     position:absolute; inset:-1px; z-index:0; pointer-events:none;
-    background:rgba(255,255,255,.58); border:1px solid var(--stroke); border-radius:var(--radius);
+    background:rgba(14,22,36,.78); border:1px solid var(--stroke); border-radius:var(--radius);
     box-shadow:var(--shadow), inset 0 1px 0 var(--hi);
   }
   .main-content { position:relative; z-index:1; overflow:auto; padding:26px 30px 96px; height:100%; }
   .main-content::-webkit-scrollbar { width:9px; }
-  .main-content::-webkit-scrollbar-thumb { background:rgba(23,84,120,.18); border-radius:9px; }
+  .main-content::-webkit-scrollbar-thumb { background:rgba(160,205,240,.24); border-radius:9px; }
   .page-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:22px; flex-wrap:wrap; }
-  .page-head h2 { font-size:23px; font-weight:700; letter-spacing:.01em; color:#0f2942; }
+  .page-head h2 { font-size:23px; font-weight:700; letter-spacing:.01em; color:#f2f8ff; }
   .page-head .hint { color:var(--text-dim); font-size:12.5px; margin-top:4px; }
   section { transition:opacity .16s var(--ease), transform .16s var(--ease); }
   section.leaving { opacity:0; }
@@ -189,7 +189,7 @@ HTML_PAGE = r"""<!doctype html>
   .chip {
     display:inline-flex; align-items:center; gap:6px;
     padding:4px 11px; border-radius:999px; font-size:11.5px; flex:none;
-    background:rgba(255,255,255,.7); border:1px solid var(--stroke); color:var(--text-dim);
+    background:rgba(10,16,28,.55); border:1px solid var(--stroke); color:var(--text-dim);
   }
   .chip .dot { width:7px; height:7px; border-radius:50%; background:var(--text-dim); }
   .chip.ok { color:var(--ok); border-color:rgba(22,163,74,.3); }
@@ -198,15 +198,15 @@ HTML_PAGE = r"""<!doctype html>
   .chip.bad .dot { background:var(--bad); }
   .chip.warn { color:var(--warn); border-color:rgba(217,119,6,.3); }
   .chip.warn .dot { background:var(--warn); }
-  .chip.cyan { color:var(--cyan-deep); border-color:rgba(14,165,233,.3); background:rgba(56,189,248,.1); }
+  .chip.cyan { color:#7dd3fc; border-color:rgba(56,189,248,.4); background:rgba(56,189,248,.14); }
   .chip.cyan .dot { background:var(--cyan); }
 
-  #preview { margin-top:16px; display:none; border:1px solid var(--stroke); border-radius:12px; overflow:hidden; background:#fff; }
+  #preview { margin-top:16px; display:none; border:1px solid var(--stroke); border-radius:12px; overflow:hidden; background:#0c1524; }
   #preview.show { display:block; }
-  #preview img { display:block; width:100%; max-height:430px; object-fit:contain; background:#f7fbfe; }
+  #preview img { display:block; width:100%; max-height:430px; object-fit:contain; background:#0a1320; }
   .preview-meta { display:flex; gap:8px; flex-wrap:wrap; align-items:center; padding:10px 14px; border-top:1px solid var(--stroke); font-size:12px; color:var(--text-dim); }
-  .preview-meta code { color:var(--cyan-deep); font-size:11.5px; word-break:break-all; }
-  #errorBox { margin-top:14px; display:none; padding:12px 14px; border:1px solid rgba(225,29,72,.3); border-radius:10px; background:rgba(225,29,72,.06); color:var(--bad); font-size:12.5px; white-space:pre-wrap; }
+  .preview-meta code { color:#7dd3fc; font-size:11.5px; word-break:break-all; }
+  #errorBox { margin-top:14px; display:none; padding:12px 14px; border:1px solid rgba(248,113,113,.35); border-radius:10px; background:rgba(248,113,113,.10); color:#fda4af; font-size:12.5px; white-space:pre-wrap; }
   #errorBox.show { display:block; }
 
   .check-grid { display:grid; gap:10px; grid-template-columns:repeat(auto-fill, minmax(230px,1fr)); }
@@ -219,8 +219,8 @@ HTML_PAGE = r"""<!doctype html>
     position:fixed; right:34px; bottom:34px; z-index:40;
     display:flex; align-items:center; gap:10px;
     padding:10px 12px 10px 16px;
-    background:rgba(255,255,255,.82); border:1px solid var(--stroke); border-radius:14px;
-    box-shadow:0 14px 40px rgba(39,103,148,.22);
+    background:rgba(16,24,38,.82); border:1px solid var(--stroke); border-radius:14px;
+    box-shadow:0 14px 40px rgba(4,12,24,.45);
     -webkit-backdrop-filter:blur(12px); backdrop-filter:blur(12px);
   }
 
@@ -228,9 +228,9 @@ HTML_PAGE = r"""<!doctype html>
     position:fixed; bottom:28px; left:50%; transform:translateX(-50%) translateY(22px);
     padding:13px 24px; font-size:13px; opacity:0; pointer-events:none; z-index:60;
     transition:all .34s var(--ease); max-width:min(560px,92vw);
-    background:rgba(255,255,255,.92); color:var(--text);
+    background:rgba(16,24,38,.94); color:var(--text);
     border:1px solid var(--stroke); border-radius:13px;
-    box-shadow:0 16px 44px rgba(39,103,148,.24); white-space:pre-wrap; text-align:center;
+    box-shadow:0 16px 44px rgba(4,12,24,.5); white-space:pre-wrap; text-align:center;
   }
   .toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
   .toast.ok { border-left:4px solid var(--ok); }
@@ -239,7 +239,7 @@ HTML_PAGE = r"""<!doctype html>
   .menu-btn {
     display:none; position:fixed; top:14px; left:14px; z-index:99;
     width:40px; height:40px; border:1px solid var(--stroke);
-    background:rgba(255,255,255,.8); border-radius:11px; align-items:center; justify-content:center;
+    background:rgba(16,24,38,.8); border-radius:11px; align-items:center; justify-content:center;
     font-size:20px; color:var(--text);
     -webkit-backdrop-filter:blur(10px); backdrop-filter:blur(10px);
   }
@@ -277,7 +277,7 @@ HTML_PAGE = r"""<!doctype html>
       <div class="mk"><img src="/assets/avatar.png" alt="洛天依"></div>
       <div>
         <b>DeepSeek ImageGen</b>
-        <div class="sub">图像生成桥接 · 洛天依浅色主题</div>
+        <div class="sub">图像生成桥接 · 洛天依主题</div>
       </div>
     </div>
     <nav id="sideNav">
@@ -427,7 +427,7 @@ HTML_PAGE = r"""<!doctype html>
 </div>
 
 <div class="save-bar">
-  <span class="chip cyan" style="background:rgba(255,255,255,.9)"><span class="dot"></span>仅本机访问</span>
+<span class="chip cyan" style="background:rgba(10,16,28,.6)"><span class="dot"></span>仅本机访问</span>
   <button class="btn" onclick="save()">💾 保存配置</button>
 </div>
 <div class="toast" id="toast"></div>
