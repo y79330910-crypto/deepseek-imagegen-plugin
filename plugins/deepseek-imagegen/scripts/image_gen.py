@@ -7,11 +7,16 @@ DeepSeek ImageGen bridge.
 把提示词发给可配置的图像后端，保存生成的 PNG 并返回路径。
 
 后端：
-  pollinations   免费公共 API，无需 Key（默认）
+  pollinations   免费公共 API，无需 Key
   siliconflow    OpenAI 兼容图像接口（FLUX 等），需要 api_key
   vertex         本地 Vertex Proxy（OpenAI 兼容，自动读取端口/密钥/模型列表）
   sd-webui       本地 Stable Diffusion WebUI / Forge（http://127.0.0.1:7860）
   comfyui        本地 ComfyUI（http://127.0.0.1:8188）
+
+图生图（--image 参考图 + --denoise 去噪强度）：
+  vertex         本地 Vertex Proxy 的 /images/edits 编辑接口
+  sd-webui       本地 SD WebUI 的 /sdapi/v1/img2img
+  comfyui        上传图片后 VaeEncode + KSampler（denoise）
 
 配置：~/.deepseek-imagegen/config.json（参考 scripts/config.example.json）
 仅使用 Python 标准库，无第三方依赖。
@@ -73,6 +78,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "sampler_name": "Euler a",
         "steps": 28,
         "cfg_scale": 7,
+        "denoising_strength": 0.6,
     },
     "comfyui": {
         "base_url": "http://127.0.0.1:8188",
@@ -81,6 +87,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "scheduler": "normal",
         "steps": 28,
         "cfg": 7,
+        "denoise": 0.6,
     },
 }
 
@@ -140,10 +147,13 @@ def _http(
     method: str = "GET",
     headers: Optional[dict[str, str]] = None,
     payload: Optional[dict[str, Any]] = None,
+    raw_body: Optional[bytes] = None,
     timeout: int = DEFAULT_TIMEOUT,
 ) -> tuple[int, bytes, str]:
     data = None
-    if payload is not None:
+    if raw_body is not None:
+        data = raw_body
+    elif payload is not None:
         data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=data, method=method, headers=headers or {})
     try:
@@ -229,6 +239,145 @@ def mask_key(key: str) -> str:
 
 
 # ---------------------------------------------------------------- backends
+
+MAX_INIT_BYTES = 20 * 1024 * 1024
+
+
+def _guess_mime(data: bytes, name: str = "") -> str:
+    """按文件头嗅探图片 MIME，嗅探不到时按扩展名兜底。"""
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    ext = Path(name).suffix.lower()
+    return {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+    }.get(ext, "application/octet-stream")
+
+
+def probe_image_size(data: bytes, mime: str = "") -> Optional[tuple[int, int]]:
+    """不依赖第三方库，从图片文件头解析宽高（PNG / JPEG / WebP）。解析失败返回 None。"""
+    try:
+        if data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) >= 24:
+            width = int.from_bytes(data[16:20], "big")
+            height = int.from_bytes(data[20:24], "big")
+            if 1 <= width <= 32768 and 1 <= height <= 32768:
+                return width, height
+        if data[:3] == b"\xff\xd8\xff" and len(data) >= 12:
+            i = 2
+            while i + 9 < len(data):
+                if data[i] != 0xFF:
+                    i += 1
+                    continue
+                marker = data[i + 1]
+                if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7:
+                    i += 2
+                    continue
+                if i + 4 > len(data):
+                    break
+                seg_len = int.from_bytes(data[i + 2 : i + 4], "big")
+                if (
+                    marker
+                    in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF)
+                    and i + 9 <= len(data)
+                ):
+                    height = int.from_bytes(data[i + 5 : i + 7], "big")
+                    width = int.from_bytes(data[i + 7 : i + 9], "big")
+                    if 1 <= width <= 32768 and 1 <= height <= 32768:
+                        return width, height
+                i += 2 + seg_len
+        if data[:4] == b"RIFF" and data[8:12] == b"WEBP" and len(data) >= 30:
+            if data[12:16] == b"VP8X":
+                width = int.from_bytes(data[24:27], "little") + 1
+                height = int.from_bytes(data[27:30], "little") + 1
+                return width, height
+            if data[12:16] == b"VP8 ":
+                width = int.from_bytes(data[26:28], "little") & 0x3FFF
+                height = int.from_bytes(data[28:30], "little") & 0x3FFF
+                return width, height
+            if data[12:16] == b"VP8L" and len(data) >= 25:
+                bits = int.from_bytes(data[21:25], "little")
+                width = (bits & 0x3FFF) + 1
+                height = ((bits >> 14) & 0x3FFF) + 1
+                return width, height
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
+def load_init_image(ref: str) -> tuple[bytes, str, str]:
+    """读取图生图参考图，返回 (图片字节, MIME, 建议文件名)。支持本地路径 / http(s) 链接 / data URI。"""
+    ref = (ref or "").strip().strip('"')
+    if not ref:
+        raise GenError("--image 不能为空。")
+    name = "reference"
+    data: bytes = b""
+    mime = ""
+    if ref.startswith(("http://", "https://")):
+        status, body, ctype = _http(
+            ref, headers={"User-Agent": BROWSER_UA}, timeout=HEALTH_TIMEOUT * 3
+        )
+        if not ctype.lower().startswith("image/"):
+            raise GenError(f"--image 指向的内容不是图片（Content-Type: {ctype}）。")
+        data = body
+        parsed_name = urllib.parse.urlparse(ref).path.rsplit("/", 1)[-1]
+        if parsed_name:
+            name = parsed_name
+        mime = ctype.split(";")[0].strip()
+    elif ref.startswith("data:image/"):
+        header, _, b64 = ref.partition(",")
+        try:
+            data = base64.b64decode(b64)
+        except Exception as exc:  # noqa: BLE001
+            raise GenError(f"data URI 图片解码失败：{exc}") from exc
+        mime = header[5:].split(";")[0].strip()
+    else:
+        path = Path(ref).expanduser()
+        if not path.is_file():
+            raise GenError(f"找不到图片文件：{path}")
+        data = path.read_bytes()
+        name = path.name
+    if not data:
+        raise GenError("图片内容为空。")
+    if len(data) > MAX_INIT_BYTES:
+        raise GenError(f"图片过大（{len(data) // 1024} KB），上限 {MAX_INIT_BYTES // (1024 * 1024)} MB。")
+    mime = mime or _guess_mime(data, name)
+    return data, mime, name
+
+
+def _multipart(
+    fields: dict[str, Any], files: list[tuple[str, str, bytes, str]]
+) -> tuple[bytes, str]:
+    """构造 multipart/form-data 请求体，返回 (body, Content-Type)。"""
+    boundary = "----codex" + "".join(random.choices("abcdef0123456789", k=16))
+    parts: list[bytes] = []
+    for field_name, value in fields.items():
+        parts.append(
+            (
+                f'--{boundary}\r\nContent-Disposition: form-data; name="{field_name}"'
+                f"\r\n\r\n{value}\r\n"
+            ).encode("utf-8")
+        )
+    for field_name, filename, content, ctype in files:
+        safe_name = filename.replace('"', "")
+        parts.append(
+            (
+                f'--{boundary}\r\nContent-Disposition: form-data; name="{field_name}"; '
+                f'filename="{safe_name}"\r\nContent-Type: {ctype}\r\n\r\n'
+            ).encode("utf-8")
+        )
+        parts.append(content)
+        parts.append(b"\r\n")
+    parts.append(f"--{boundary}--\r\n".encode("utf-8"))
+    return b"".join(parts), f"multipart/form-data; boundary={boundary}"
 
 def read_first_api_key(text: str) -> str:
     """从 api_keys.txt 文本中读取第一个有效 Key（格式：name:sk-... 或单独 sk-...）。"""
@@ -346,6 +495,11 @@ def _gen_openai_image(
         },
         payload=payload,
     )
+    return _extract_image_from_response(body)
+
+
+def _extract_image_from_response(body: bytes) -> bytes:
+    """从 OpenAI 兼容图像接口的 JSON 响应中提取第一张图片字节。"""
     try:
         data = json.loads(body.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -371,6 +525,22 @@ def _gen_openai_image(
         _, body, content_type = _http(url)
         return body
     raise GenError(f"图像接口返回中缺少图片数据：{body[:500]!r}")
+
+
+def _decode_sd_webui_image(body: bytes) -> bytes:
+    """从 SD WebUI 响应中提取第一张图片字节。"""
+    try:
+        data = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise GenError(f"SD WebUI 返回了无法解析的内容：{body[:300]!r}") from exc
+    images = data.get("images") or []
+    if not images:
+        raise GenError(f"SD WebUI 未返回图片：{body[:500]!r}")
+    try:
+        return base64.b64decode(images[0])
+    except Exception as exc:  # noqa: BLE001
+        raise GenError(f"SD WebUI 图片 base64 解码失败：{exc}") from exc
+
 
 def gen_pollinations(
     cfg: dict[str, Any], prompt: str, width: int, height: int, seed: int, model: str
@@ -418,6 +588,36 @@ def gen_vertex(cfg: dict[str, Any], prompt: str, width: int, height: int, model:
     return _gen_openai_image(info["base_url"], info["api_key"], model, prompt, width, height)
 
 
+def gen_vertex_img2img(
+    cfg: dict[str, Any],
+    prompt: str,
+    width: int,
+    height: int,
+    model: str,
+    image_bytes: bytes,
+    image_mime: str,
+    image_name: str,
+) -> bytes:
+    """调用本地 Vertex Proxy 的 OpenAI 兼容 /images/edits 接口做图生图。"""
+    info = discover_vertex(cfg)
+    model = model or info["model"]
+    body, content_type = _multipart(
+        {"model": model, "prompt": prompt, "n": "1", "size": f"{width}x{height}"},
+        [("image", image_name, image_bytes, image_mime)],
+    )
+    status, resp_body, resp_ctype = _http(
+        f"{info['base_url'].rstrip('/')}/images/edits",
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {info['api_key']}",
+            "Content-Type": content_type,
+            "User-Agent": f"{APP_NAME}/0.3",
+        },
+        raw_body=body,
+    )
+    return _extract_image_from_response(resp_body)
+
+
 def gen_sd_webui(
     cfg: dict[str, Any],
     prompt: str,
@@ -447,17 +647,45 @@ def gen_sd_webui(
         headers={"Content-Type": "application/json", "User-Agent": f"{APP_NAME}/0.1"},
         payload=payload,
     )
-    try:
-        data = json.loads(body.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise GenError(f"SD WebUI 返回了无法解析的内容：{body[:300]!r}") from exc
-    images = data.get("images") or []
-    if not images:
-        raise GenError(f"SD WebUI 未返回图片：{body[:500]!r}")
-    try:
-        return base64.b64decode(images[0])
-    except Exception as exc:
-        raise GenError(f"SD WebUI 图片 base64 解码失败：{exc}") from exc
+    return _decode_sd_webui_image(body)
+
+
+def gen_sd_webui_img2img(
+    cfg: dict[str, Any],
+    prompt: str,
+    negative: str,
+    width: int,
+    height: int,
+    seed: int,
+    steps: int,
+    cfg_scale: float,
+    sampler: str,
+    init_image: tuple[bytes, str, str],
+    denoising_strength: float,
+) -> bytes:
+    """调用 SD WebUI 的 /sdapi/v1/img2img 接口做图生图。"""
+    bc = cfg.get("sd_webui", {})
+    base = (bc.get("base_url") or DEFAULT_CONFIG["sd_webui"]["base_url"]).rstrip("/")
+    payload = {
+        "init_images": [base64.b64encode(init_image[0]).decode("ascii")],
+        "prompt": prompt,
+        "negative_prompt": negative,
+        "width": width,
+        "height": height,
+        "seed": seed,
+        "steps": steps,
+        "cfg_scale": cfg_scale,
+        "sampler_name": sampler,
+        "denoising_strength": denoising_strength,
+        "resize_mode": 1,  # 1 = Crop and resize（优先按目标尺寸裁剪，避免变形）
+    }
+    status, body, content_type = _http(
+        f"{base}/sdapi/v1/img2img",
+        method="POST",
+        headers={"Content-Type": "application/json", "User-Agent": f"{APP_NAME}/0.3"},
+        payload=payload,
+    )
+    return _decode_sd_webui_image(body)
 
 
 def _comfyui_workflow(
@@ -471,13 +699,25 @@ def _comfyui_workflow(
     cfg: float,
     sampler: str,
     scheduler: str,
+    init_image: str = "",
+    denoise: float = 1.0,
 ) -> dict[str, Any]:
+    if init_image:
+        latent_node = {
+            "class_type": "VaeEncode",
+            "inputs": {"pixels": ["10", 0], "vae": ["4", 2]},
+        }
+    else:
+        latent_node = {
+            "class_type": "EmptyLatentImage",
+            "inputs": {"batch_size": 1, "height": height, "width": width},
+        }
     return {
         "3": {
             "class_type": "KSampler",
             "inputs": {
                 "cfg": cfg,
-                "denoise": 1.0,
+                "denoise": denoise,
                 "latent_image": ["5", 0],
                 "model": ["4", 0],
                 "negative": ["7", 0],
@@ -489,10 +729,7 @@ def _comfyui_workflow(
             },
         },
         "4": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": checkpoint}},
-        "5": {
-            "class_type": "EmptyLatentImage",
-            "inputs": {"batch_size": 1, "height": height, "width": width},
-        },
+        "5": latent_node,
         "6": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["4", 1], "text": prompt}},
         "7": {
             "class_type": "CLIPTextEncode",
@@ -503,6 +740,11 @@ def _comfyui_workflow(
             "class_type": "SaveImage",
             "inputs": {"filename_prefix": APP_NAME, "images": ["8", 0]},
         },
+        **(
+            {"10": {"class_type": "LoadImage", "inputs": {"image": init_image}}}
+            if init_image
+            else {}
+        ),
     }
 
 
@@ -521,6 +763,30 @@ def comfyui_checkpoints(cfg: dict[str, Any]) -> list[str]:
     return list(ckpt_input[0]) if ckpt_input and isinstance(ckpt_input[0], list) else []
 
 
+def upload_comfyui_image(
+    cfg: dict[str, Any], data: bytes, filename: str, mime: str
+) -> str:
+    """把图生图参考图上传到 ComfyUI 的 input 目录，返回服务端文件名。"""
+    bc = cfg.get("comfyui", {})
+    base = (bc.get("base_url") or DEFAULT_CONFIG["comfyui"]["base_url"]).rstrip("/")
+    upload_name = f"{APP_NAME}_{int(time.time())}_{filename}"
+    upload_body, upload_ctype = _multipart({}, [("image", upload_name, data, mime)])
+    status, upload_resp, upload_ct = _http(
+        f"{base}/upload/image",
+        method="POST",
+        headers={"Content-Type": upload_ctype, "User-Agent": f"{APP_NAME}/0.3"},
+        raw_body=upload_body,
+    )
+    try:
+        upload_info = json.loads(upload_resp.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise GenError(f"ComfyUI 上传图片失败：{upload_resp[:300]!r}") from exc
+    server_name = str(upload_info.get("name") or "").strip()
+    if not server_name:
+        raise GenError(f"ComfyUI 上传图片未返回文件名：{upload_resp[:300]!r}")
+    return server_name
+
+
 def gen_comfyui(
     cfg: dict[str, Any],
     prompt: str,
@@ -532,6 +798,8 @@ def gen_comfyui(
     cfg_scale: float,
     sampler: str,
     scheduler: str,
+    init_image: Optional[tuple[bytes, str, str]] = None,
+    denoise: float = 1.0,
 ) -> bytes:
     bc = cfg.get("comfyui", {})
     base = (bc.get("base_url") or DEFAULT_CONFIG["comfyui"]["base_url"]).rstrip("/")
@@ -544,8 +812,22 @@ def gen_comfyui(
                 "或在 config.json 的 comfyui.checkpoint 中指定名称。"
             )
         checkpoint = available[0]
+    init_name = ""
+    if init_image is not None:
+        init_name = upload_comfyui_image(cfg, *init_image)
     workflow = _comfyui_workflow(
-        checkpoint, prompt, negative, width, height, seed, steps, cfg_scale, sampler, scheduler
+        checkpoint,
+        prompt,
+        negative,
+        width,
+        height,
+        seed,
+        steps,
+        cfg_scale,
+        sampler,
+        scheduler,
+        init_image=init_name,
+        denoise=denoise,
     )
     client_id = f"{APP_NAME}-{os.getpid()}-{int(time.time())}"
     status, body, content_type = _http(
@@ -618,49 +900,125 @@ def generate_image(
     steps: Optional[int] = None,
     cfg: Optional[float] = None,
     model: str = "",
+    init_image: Optional[str] = None,
+    denoise: Optional[float] = None,
 ) -> dict[str, Any]:
     if not prompt or not prompt.strip():
         raise GenError("提示词不能为空。")
     cfg_all = load_config()
     backend = resolve_backend(backend, cfg_all)
-    width, height = parse_size(size or "1024x1024")
+    if denoise is not None and not (0 < denoise <= 1):
+        raise GenError("--denoise 必须是 0~1 之间的小数（默认 0.6）。")
+
+    init_data: Optional[tuple[bytes, str, str]] = None
+    if init_image:
+        init_data = load_init_image(init_image)
+        if size:
+            width, height = parse_size(size)
+        else:
+            probed = probe_image_size(init_data[0], init_data[1])
+            width, height = probed or parse_size("1024x1024")
+    else:
+        width, height = parse_size(size or "1024x1024")
     seed = seed if seed is not None else random.randint(0, 2**31 - 1)
 
     out_ext = "png"
+    denoise_used: Optional[float] = None
     if backend == "pollinations":
+        if init_data is not None:
+            raise GenError("pollinations 不支持图生图，请使用 --backend vertex / sd-webui / comfyui。")
         data, content_type = gen_pollinations(cfg_all, prompt.strip(), width, height, seed, model)
         out_ext = ext_from_content_type(content_type)
     elif backend == "siliconflow":
+        if init_data is not None:
+            raise GenError("siliconflow 不支持图生图，请使用 --backend vertex / sd-webui / comfyui。")
         data = gen_siliconflow(cfg_all, prompt.strip(), width, height, model)
     elif backend == "vertex":
-        data = gen_vertex(cfg_all, prompt.strip(), width, height, model)
+        if init_data is not None:
+            denoise_used = denoise if denoise is not None else 0.6
+            data = gen_vertex_img2img(
+                cfg_all,
+                prompt.strip(),
+                width,
+                height,
+                model,
+                init_data[0],
+                init_data[1],
+                init_data[2],
+            )
+        else:
+            data = gen_vertex(cfg_all, prompt.strip(), width, height, model)
     elif backend == "sd-webui":
         bc = cfg_all.get("sd_webui", {})
-        data = gen_sd_webui(
-            cfg_all,
-            prompt.strip(),
-            negative.strip(),
-            width,
-            height,
-            seed,
-            int(steps if steps is not None else bc.get("steps", 28)),
-            float(cfg if cfg is not None else bc.get("cfg_scale", 7)),
-            str(bc.get("sampler_name", "Euler a")),
-        )
+        steps_n = int(steps if steps is not None else bc.get("steps", 28))
+        cfg_n = float(cfg if cfg is not None else bc.get("cfg_scale", 7))
+        sampler = str(bc.get("sampler_name", "Euler a"))
+        if init_data is not None:
+            denoise_used = denoise if denoise is not None else float(
+                bc.get("denoising_strength", DEFAULT_CONFIG["sd_webui"]["denoising_strength"])
+            )
+            data = gen_sd_webui_img2img(
+                cfg_all,
+                prompt.strip(),
+                negative.strip(),
+                width,
+                height,
+                seed,
+                steps_n,
+                cfg_n,
+                sampler,
+                init_data,
+                denoise_used,
+            )
+        else:
+            data = gen_sd_webui(
+                cfg_all,
+                prompt.strip(),
+                negative.strip(),
+                width,
+                height,
+                seed,
+                steps_n,
+                cfg_n,
+                sampler,
+            )
     else:
         bc = cfg_all.get("comfyui", {})
-        data = gen_comfyui(
-            cfg_all,
-            prompt.strip(),
-            negative.strip(),
-            width,
-            height,
-            seed,
-            int(steps if steps is not None else bc.get("steps", 28)),
-            float(cfg if cfg is not None else bc.get("cfg", 7)),
-            str(bc.get("sampler_name", "euler")),
-            str(bc.get("scheduler", "normal")),
-        )
+        steps_n = int(steps if steps is not None else bc.get("steps", 28))
+        cfg_n = float(cfg if cfg is not None else bc.get("cfg", 7))
+        sampler = str(bc.get("sampler_name", "euler"))
+        scheduler = str(bc.get("scheduler", "normal"))
+        if init_data is not None:
+            denoise_used = denoise if denoise is not None else float(
+                bc.get("denoise", DEFAULT_CONFIG["comfyui"]["denoise"])
+            )
+            data = gen_comfyui(
+                cfg_all,
+                prompt.strip(),
+                negative.strip(),
+                width,
+                height,
+                seed,
+                steps_n,
+                cfg_n,
+                sampler,
+                scheduler,
+                init_image=init_data,
+                denoise=denoise_used,
+            )
+        else:
+            data = gen_comfyui(
+                cfg_all,
+                prompt.strip(),
+                negative.strip(),
+                width,
+                height,
+                seed,
+                steps_n,
+                cfg_n,
+                sampler,
+                scheduler,
+            )
 
     if out:
         out_path = Path(out).expanduser()
@@ -684,6 +1042,9 @@ def generate_image(
         "size": f"{width}x{height}",
         "bytes": len(data),
     }
+    if init_data is not None:
+        result["init_image"] = init_image
+        result["denoise"] = denoise_used
     mirror = mirror_output(str(out_path), cfg_all)
     if mirror:
         result["mirror_path"] = mirror
@@ -703,6 +1064,8 @@ def cmd_generate(args: argparse.Namespace) -> dict[str, Any]:
         steps=args.steps,
         cfg=args.cfg,
         model=args.model,
+        init_image=args.image or None,
+        denoise=args.denoise,
     )
 
 
@@ -843,6 +1206,11 @@ def _print_result(result: dict[str, Any], use_json: bool) -> int:
         print(f"后端：{result['backend']}")
         print(f"输出：{result['path']}")
         print(f"尺寸：{result['size']}  种子：{result['seed']}")
+        if result.get("init_image"):
+            print(
+                f"图生图：原图 {result['init_image']}"
+                + (f"  去噪强度：{result.get('denoise')}" if result.get("denoise") else "")
+            )
     elif "checks" in result:
         print(
             f"配置文件：{result['config_file']}"
@@ -879,15 +1247,21 @@ def build_parser() -> argparse.ArgumentParser:
     gen = sub.add_parser("generate", help="生成图片")
     gen.add_argument("prompt", help="提示词")
     gen.add_argument(
-        "--backend", default="auto", help="pollinations / siliconflow / sd-webui / comfyui"
+        "--backend", default="auto", help="vertex / pollinations / siliconflow / sd-webui / comfyui"
     )
     gen.add_argument("--out", help="输出文件路径")
-    gen.add_argument("--size", default="1024x1024", help="分辨率，如 1024x1024")
+    gen.add_argument("--size", default="", help="分辨率，如 1024x1024（图生图省略时自动取原图尺寸）")
     gen.add_argument("--seed", type=int, default=None, help="随机种子")
     gen.add_argument("--negative", default="", help="负面提示词（sd-webui / comfyui）")
     gen.add_argument("--steps", type=int, default=None, help="采样步数（sd-webui / comfyui）")
     gen.add_argument("--cfg", type=float, default=None, help="引导强度（sd-webui / comfyui）")
     gen.add_argument("--model", default="", help="模型（pollinations / siliconflow）")
+    gen.add_argument(
+        "--image",
+        default="",
+        help="参考图片（图生图）：本地路径或 http(s) 链接（vertex / sd-webui / comfyui）",
+    )
+    gen.add_argument("--denoise", type=float, default=None, help="去噪强度 0~1（图生图，默认 0.6）")
     gen.add_argument("--json", action="store_true", help="输出 JSON（机器可读）")
 
     webui_parser = sub.add_parser("webui", help="启动本地可视化设置页面")

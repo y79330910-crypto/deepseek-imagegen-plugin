@@ -119,10 +119,12 @@ HTML_PAGE = r"""<!doctype html>
       <div><label>SD WebUI 采样器</label><input id="sd_sampler" placeholder="Euler a"></div>
       <div><label>SD WebUI 步数</label><input id="sd_steps" type="number" placeholder="28"></div>
       <div><label>SD WebUI CFG</label><input id="sd_cfg" type="number" step="0.5" placeholder="7"></div>
+      <div><label>SD WebUI 图生图去噪强度</label><input id="sd_denoise" type="number" step="0.05" min="0" max="1" placeholder="0.6"></div>
       <div><label>ComfyUI 地址</label><input id="cf_base" placeholder="http://127.0.0.1:8188"></div>
       <div><label>ComfyUI Checkpoint（留空=自动）</label><input id="cf_checkpoint" placeholder="sd_xl_base_1.0.safetensors"></div>
       <div><label>ComfyUI 步数</label><input id="cf_steps" type="number" placeholder="28"></div>
       <div><label>ComfyUI CFG</label><input id="cf_cfg" type="number" step="0.5" placeholder="7"></div>
+      <div><label>ComfyUI 图生图去噪强度</label><input id="cf_denoise" type="number" step="0.05" min="0" max="1" placeholder="0.6"></div>
     </div>
   </section>
 
@@ -180,10 +182,12 @@ function render() {
   $("sd_sampler").value = c.sd_webui && c.sd_webui.sampler_name || "";
   $("sd_steps").value = c.sd_webui && c.sd_webui.steps || "";
   $("sd_cfg").value = c.sd_webui && c.sd_webui.cfg_scale || "";
+  $("sd_denoise").value = c.sd_webui && c.sd_webui.denoising_strength != null ? c.sd_webui.denoising_strength : 0.6;
   $("cf_base").value = c.comfyui && c.comfyui.base_url || "";
   $("cf_checkpoint").value = c.comfyui && c.comfyui.checkpoint || "";
   $("cf_steps").value = c.comfyui && c.comfyui.steps || "";
   $("cf_cfg").value = c.comfyui && c.comfyui.cfg || "";
+  $("cf_denoise").value = c.comfyui && c.comfyui.denoise != null ? c.comfyui.denoise : 0.6;
 }
 
 function collect() {
@@ -210,12 +214,14 @@ function collect() {
     sampler_name: $("sd_sampler").value.trim(),
     steps: parseInt($("sd_steps").value) || 28,
     cfg_scale: parseFloat($("sd_cfg").value) || 7,
+    denoising_strength: parseFloat($("sd_denoise").value) || 0.6,
   });
   c.comfyui = Object.assign({}, c.comfyui, {
     base_url: $("cf_base").value.trim(),
     checkpoint: $("cf_checkpoint").value.trim(),
     steps: parseInt($("cf_steps").value) || 28,
     cfg: parseFloat($("cf_cfg").value) || 7,
+    denoise: parseFloat($("cf_denoise").value) || 0.6,
   });
   return c;
 }

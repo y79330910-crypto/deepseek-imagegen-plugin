@@ -52,6 +52,18 @@ python "<脚本路径>" generate "<提示词>" [选项]
 - `--model <模型名>`：指定模型（vertex / pollinations / siliconflow）
 - `--json`：机器可读输出，读取 `path`、`seed`、`backend` 字段
 
+**图生图（编辑已有图片 / 换风格 / 局部修改）：** 用户给出参考图片时，加 `--image <图片路径或链接>` 启用图生图：
+
+```text
+python "<脚本路径>" generate "把这张图改成赛博朋克风格" --image D:\图片\原图.png [--denoise 0.6] [--size 1024x1024]
+```
+
+- `--denoise`：去噪强度 0~1（默认 0.6），数值越高对原图的改动越大。
+- 省略 `--size` 时自动保持原图尺寸。
+- 支持的后端：`vertex`（本地代理 `/images/edits`）、`sd-webui`（`/sdapi/v1/img2img`）、`comfyui`（自动上传图片后生成）。pollinations / siliconflow 不支持，传 `--image` 会直接报错提示。
+- `--denoise` 对 sd-webui / comfyui 生效；vertex 后端由 Gemini 自行控制编辑强度。
+- 如果用户想"改图"但没说怎么改，帮用户把需求整理成明确的修改指令（保留什么、改什么、换成什么风格）。
+
 需要机器可读结果时加 `--json`。生成失败时脚本会返回非零退出码并给出 `error` 说明。
 
 ### 5. 使用结果组织交付

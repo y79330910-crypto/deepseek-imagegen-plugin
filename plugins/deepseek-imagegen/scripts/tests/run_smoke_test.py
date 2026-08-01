@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import base64
 import sys
 import tempfile
 from pathlib import Path
@@ -110,6 +111,208 @@ def test_comfyui_workflow() -> None:
     check("comfyui 工作流包含尺寸", workflow["5"]["inputs"]["width"] == 1024)
 
 
+def test_comfyui_img2img_workflow() -> None:
+    workflow = image_gen._comfyui_workflow(
+        "sd_xl_base_1.0.safetensors",
+        "hello",
+        "bad",
+        1024,
+        1024,
+        7,
+        28,
+        7.0,
+        "euler",
+        "normal",
+        init_image="my_photo.png",
+        denoise=0.6,
+    )
+    check("comfyui 图生图 LoadImage", workflow["10"]["class_type"] == "LoadImage")
+    check(
+        "comfyui 图生图文件名",
+        workflow["10"]["inputs"]["image"] == "my_photo.png",
+    )
+    check("comfyui 图生图 VaeEncode", workflow["5"]["class_type"] == "VaeEncode")
+    check(
+        "comfyui 图生图 latent 来源",
+        workflow["5"]["inputs"]["pixels"] == ["10", 0],
+    )
+    check("comfyui 图生图 denoise", workflow["3"]["inputs"]["denoise"] == 0.6)
+
+
+def test_probe_image_size() -> None:
+    png = (
+        b"\x89PNG\r\n\x1a\n"
+        + b"\x00\x00\x00\rIHDR"
+        + (640).to_bytes(4, "big")
+        + (480).to_bytes(4, "big")
+        + b"\x08\x02\x00\x00\x00"
+        + b"\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+    check("PNG 宽高解析", image_gen.probe_image_size(png) == (640, 480))
+    jpeg = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x02\x00\x00\x01\x00\x01\x00\x00" + (
+        b"\xff\xc0\x00\x11\x08\x01\x2c\x02\x80\x03\x01\x11\x00\x02\x11\x00\x03\x11\x00"
+    )
+    check("JPEG 宽高解析", image_gen.probe_image_size(jpeg) == (640, 300))
+    webp = (
+        b"RIFF\x24\x00\x00\x00WEBPVP8X"
+        + b"\x00" * 8  # chunk size(4) + flags(1) + reserved(3)
+        + (639).to_bytes(3, "little")
+        + (479).to_bytes(3, "little")
+    )
+    check("WebP 宽高解析", image_gen.probe_image_size(webp) == (640, 480))
+    check("垃圾数据返回 None", image_gen.probe_image_size(b"not an image") is None)
+
+
+def test_load_init_image_local() -> None:
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + (64).to_bytes(4, "big") + (64).to_bytes(4, "big")
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "photo.PNG"
+        path.write_bytes(png)
+        data, mime, name = image_gen.load_init_image(str(path))
+        check("本地图片读取", data == png)
+        check("MIME 嗅探", mime == "image/png")
+        check("文件名保留", name == "photo.PNG")
+        try:
+            image_gen.load_init_image(str(Path(tmp) / "missing.png"))
+            check("缺失文件报错", False)
+        except image_gen.GenError:
+            check("缺失文件报错", True)
+
+
+def test_multipart() -> None:
+    body, content_type = image_gen._multipart(
+        {"model": "gemini-3-pro-image", "prompt": "hi", "n": "1", "size": "512x512"},
+        [("image", "a.png", b"\x89PNG-data", "image/png")],
+    )
+    check("multipart 含字段", b'name="model"' in body and b'name="prompt"' in body)
+    check("multipart 含文件", b'name="image"; filename="a.png"' in body)
+    check("multipart 含图片内容", b"\x89PNG-data" in body)
+    check("multipart Content-Type", content_type.startswith("multipart/form-data; boundary="))
+
+
+def test_vertex_img2img() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg_dir = Path(tmp) / "config"
+        cfg_dir.mkdir()
+        (cfg_dir / "config.json").write_text(json.dumps({"port_api": 2199}), encoding="utf-8")
+        (cfg_dir / "api_keys.txt").write_text("waqeq:sk-testkey123\n", encoding="utf-8")
+        (cfg_dir / "models.json").write_text(
+            json.dumps({"models": ["gemini-3-pro-image", "gemini-3.6-flash"]}), encoding="utf-8"
+        )
+        cfg = image_gen.load_config()
+        cfg["vertex"] = {"dir": tmp, "base_url": "", "api_key": "", "model": ""}
+        captured: dict = {}
+
+        def fake_http(url: str, **kwargs):
+            captured["url"] = url
+            captured["headers"] = kwargs.get("headers", {})
+            captured["raw_body"] = kwargs.get("raw_body")
+            fake_png = base64.b64encode(b"fake-image-bytes").decode("ascii")
+            return 200, json.dumps({"data": [{"b64_json": fake_png}]}).encode("utf-8"), "application/json"
+
+        original = image_gen._http
+        image_gen._http = fake_http
+        try:
+            data = image_gen.gen_vertex_img2img(
+                cfg, "make it red", 512, 512, "", b"\x89PNG-raw", "image/png", "a.png"
+            )
+        finally:
+            image_gen._http = original
+        check("vertex 图生图走 /images/edits", captured.get("url", "").endswith("/images/edits"))
+        check("vertex 图生图带鉴权", "Bearer sk-testkey123" in captured.get("headers", {}).get("Authorization", ""))
+        check("vertex 图生图 multipart 请求体", b'name="image"; filename="a.png"' in captured.get("raw_body", b""))
+        check("vertex 图生图返回图片", data == b"fake-image-bytes")
+
+
+def test_sd_webui_img2img() -> None:
+    cfg = image_gen.load_config()
+    captured: dict = {}
+
+    def fake_http(url: str, **kwargs):
+        captured["url"] = url
+        captured["payload"] = kwargs.get("payload")
+        fake_png = base64.b64encode(b"fake-image-bytes").decode("ascii")
+        return 200, json.dumps({"images": [fake_png]}).encode("utf-8"), "application/json"
+
+    original = image_gen._http
+    image_gen._http = fake_http
+    try:
+        data = image_gen.gen_sd_webui_img2img(
+            cfg, "make it red", "bad", 512, 512, 42, 28, 7.0, "Euler a",
+            (b"\x89PNG-raw", "image/png", "a.png"), 0.6,
+        )
+    finally:
+        image_gen._http = original
+    payload = captured.get("payload", {})
+    check("sd-webui 图生图走 /img2img", captured.get("url", "").endswith("/sdapi/v1/img2img"))
+    check("sd-webui init_images 为 base64", payload.get("init_images") == [base64.b64encode(b"\x89PNG-raw").decode("ascii")])
+    check("sd-webui denoising_strength", payload.get("denoising_strength") == 0.6)
+    check("sd-webui 返回图片", data == b"fake-image-bytes")
+
+
+def test_comfyui_upload_image() -> None:
+    cfg = image_gen.load_config()
+    captured: dict = {}
+
+    def fake_http(url: str, **kwargs):
+        captured["url"] = url
+        captured["raw_body"] = kwargs.get("raw_body")
+        return 200, json.dumps({"name": "img2img.png", "subfolder": "", "type": "input"}).encode("utf-8"), "application/json"
+
+    original = image_gen._http
+    image_gen._http = fake_http
+    try:
+        name = image_gen.upload_comfyui_image(cfg, b"\x89PNG-raw", "photo.png", "image/png")
+    finally:
+        image_gen._http = original
+    check("comfyui 上传走 /upload/image", captured.get("url", "").endswith("/upload/image"))
+    check("comfyui 上传 multipart 含文件", b'name="image"; filename="deepseek-imagegen_' in captured.get("raw_body", b""))
+    check("comfyui 上传返回文件名", name == "img2img.png")
+
+
+def test_img2img_routing() -> None:
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + (64).to_bytes(4, "big") + (64).to_bytes(4, "big")
+    with tempfile.TemporaryDirectory() as tmp:
+        ref = Path(tmp) / "ref.png"
+        ref.write_bytes(png)
+        out_dir = Path(tmp) / "out"
+
+        cfg = image_gen.load_config()
+        cfg["save_dir"] = str(out_dir)
+        cfg["mirror_dir"] = ""
+        cfg["default_backend"] = "sd-webui"
+        original_load = image_gen.load_config
+        image_gen.load_config = lambda: cfg  # type: ignore[method-assign]
+
+        captured: dict = {}
+        original = image_gen.gen_sd_webui_img2img
+
+        def fake_gen_sd_img2img(c, p, n, w, h, s, st, cf, sm, init, den):
+            captured.update({"w": w, "h": h, "den": den, "init": init})
+            return b"fake-image-bytes"
+
+        image_gen.gen_sd_webui_img2img = fake_gen_sd_img2img  # type: ignore[method-assign]
+        try:
+            result = image_gen.generate_image(
+                "make it red", backend="sd-webui", init_image=str(ref)
+            )
+        finally:
+            image_gen.gen_sd_webui_img2img = original
+            image_gen.load_config = original_load  # type: ignore[method-assign]
+
+        check("图生图自动沿用原图尺寸", captured.get("w") == 64 and captured.get("h") == 64)
+        check("图生图默认去噪 0.6", captured.get("den") == 0.6)
+        check("图生图结果含 init_image", result.get("init_image") == str(ref))
+        check("图生图结果含 denoise", result.get("denoise") == 0.6)
+        check("图生图输出文件存在", Path(result["path"]).exists())
+
+        try:
+            image_gen.generate_image("x", backend="pollinations", init_image=str(ref))
+            check("pollinations 图生图拒绝", False)
+        except image_gen.GenError:
+            check("pollinations 图生图拒绝", True)
+
+
 def test_resolve_backend() -> None:
     cfg = image_gen.load_config()
     check("resolve auto -> 默认", image_gen.resolve_backend("auto", cfg) == "vertex")
@@ -201,6 +404,14 @@ def main() -> int:
     test_config_merge()
     test_pollinations_url()
     test_comfyui_workflow()
+    test_comfyui_img2img_workflow()
+    test_probe_image_size()
+    test_load_init_image_local()
+    test_multipart()
+    test_vertex_img2img()
+    test_sd_webui_img2img()
+    test_comfyui_upload_image()
+    test_img2img_routing()
     test_resolve_backend()
     test_default_output_path()
     test_mask_key()

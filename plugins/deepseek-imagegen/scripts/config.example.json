@@ -24,7 +24,8 @@
     "base_url": "http://127.0.0.1:7860",
     "sampler_name": "Euler a",
     "steps": 28,
-    "cfg_scale": 7
+    "cfg_scale": 7,
+    "denoising_strength": 0.6
   },
   "comfyui": {
     "base_url": "http://127.0.0.1:8188",
@@ -32,6 +33,7 @@
     "sampler_name": "euler",
     "scheduler": "normal",
     "steps": 28,
-    "cfg": 7
+    "cfg": 7,
+    "denoise": 0.6
   }
 }
