@@ -23,6 +23,7 @@ python image_gen.py webui
 - 一键从 Vertex Proxy 导入端口、密钥和模型列表，自动选中最佳图像模型
 - 修改默认后端与各后端参数（vertex / pollinations / siliconflow / sd-webui / comfyui）
 - 测试后端连通性、试生成一张小图、运行 doctor 诊断
+- 试生成结果直接在页面内预览（支持文生图 / 图生图）
 - 保存到 `~/.deepseek-imagegen/config.json`
 
 ## 命令参考
@@ -119,6 +120,12 @@ vertex 走本地代理的 `/images/edits` 编辑接口，SD WebUI 走 `/sdapi/v1
 4. 图生图会自动把参考图上传到 ComfyUI 再生成，默认去噪强度 0.6（`comfyui.denoise` 或 `--denoise`）。
 
 ## 更新日志
+
+### v0.3.1
+
+- 设置页面全新界面：洛天依青色主题、横幅装饰、卡片式分区导航
+- 试生成支持页面内图片预览与图生图参数（参考图、去噪强度）
+- 诊断结果以状态卡片形式展示
 
 ### v0.3.0
 
