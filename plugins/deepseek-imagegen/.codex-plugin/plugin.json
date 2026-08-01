@@ -1,6 +1,6 @@
 {
   "name": "deepseek-imagegen",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "为 Codex 中的 DeepSeek 等纯文本模型补齐图像生成能力：默认绑定本地 Vertex Proxy（自动读取端口/密钥/模型列表并选用最佳图像模型），也可用免费 Pollinations、SiliconFlow（FLUX 等）与本地 Stable Diffusion WebUI / ComfyUI；内置可视化设置页面。",
   "author": {
     "name": "y79330910-crypto",

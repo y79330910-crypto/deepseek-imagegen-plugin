@@ -49,7 +49,7 @@ HTML_PAGE = r"""<!doctype html>
   :root {
     --cyan:#38bdf8; --cyan-deep:#0ea5e9; --cyan-soft:rgba(56,189,248,.16);
     --teal:#14b8a6; --ok:#16a34a; --warn:#d97706; --bad:#e11d48;
-    --text:#17324a; --text-dim:#5b7a94;
+    --text:#17324a; --text-dim:#4f6d88;
     --glass:rgba(255,255,255,.62); --stroke:rgba(23,84,120,.14); --hi:rgba(255,255,255,.92);
     --shadow:0 18px 46px rgba(39,103,148,.16);
     --radius:18px;
@@ -69,7 +69,7 @@ HTML_PAGE = r"""<!doctype html>
     border:1px solid var(--stroke); border-radius:11px; padding:10px 13px; width:100%;
     transition:border-color .2s var(--ease), background .2s var(--ease), box-shadow .2s;
   }
-  input::placeholder, textarea::placeholder { color:rgba(91,122,148,.6); }
+  input::placeholder, textarea::placeholder { color:rgba(79,109,136,.78); }
   input:focus, select:focus, textarea:focus {
     outline:none; border-color:var(--cyan); background:#fff;
     box-shadow:0 0 0 3px var(--cyan-soft);
@@ -87,8 +87,9 @@ HTML_PAGE = r"""<!doctype html>
   .bg-veil {
     position:fixed; inset:0; z-index:-1; pointer-events:none;
     background:
-      radial-gradient(1100px 700px at 85% -8%, rgba(125,211,252,.18), transparent 55%),
-      linear-gradient(180deg, rgba(255,255,255,.28), rgba(255,255,255,.55));
+      radial-gradient(1100px 700px at 85% -8%, rgba(125,211,252,.14), transparent 55%),
+      linear-gradient(90deg, rgba(255,255,255,.46), rgba(255,255,255,.24) 45%, rgba(255,255,255,.08)),
+      linear-gradient(180deg, rgba(255,255,255,.20), rgba(255,255,255,.42));
   }
 
   .glass {
