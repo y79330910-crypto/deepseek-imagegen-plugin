@@ -40,403 +40,399 @@ PLUGIN_ROOT = os.path.dirname(SCRIPT_DIR)
 ASSETS_DIR = os.path.join(PLUGIN_ROOT, "assets")
 
 HTML_PAGE = r"""<!doctype html>
-<html lang="zh">
+<html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>DeepSeek ImageGen 设置</title>
+<title>DeepSeek ImageGen · 设置</title>
 <style>
   :root {
-    --bg0:#090b13; --bg1:#0d1020; --card:#131729; --card2:#181d33; --line:#262c47;
-    --fg:#e9ecf8; --dim:#9aa4c7; --dim2:#68719a;
-    --acc:#38bdf8; --acc2:#22d3ee; --acc-dim:rgba(56,189,248,.16);
-    --ok:#34d399; --warn:#fbbf24; --bad:#f87171;
-    --radius:14px;
+    --cyan:#38bdf8; --cyan-deep:#0ea5e9; --cyan-soft:rgba(56,189,248,.16);
+    --teal:#14b8a6; --ok:#16a34a; --warn:#d97706; --bad:#e11d48;
+    --text:#17324a; --text-dim:#5b7a94;
+    --glass:rgba(255,255,255,.62); --stroke:rgba(23,84,120,.14); --hi:rgba(255,255,255,.92);
+    --shadow:0 18px 46px rgba(39,103,148,.16);
+    --radius:18px;
+    --ease:cubic-bezier(.22,.8,.3,1);
   }
-  * { box-sizing:border-box; }
-  html { scroll-behavior:smooth; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html, body { height:100%; }
   body {
-    margin:0; color:var(--fg);
-    font-family:"Segoe UI","Microsoft YaHei",system-ui,-apple-system,sans-serif;
-    font-size:13.5px; line-height:1.55;
-    background:
-      radial-gradient(1000px 420px at 85% -10%, rgba(56,189,248,.14), transparent 60%),
-      radial-gradient(800px 380px at -10% 20%, rgba(34,211,238,.10), transparent 55%),
-      linear-gradient(165deg, var(--bg0), var(--bg1) 55%, #0b0e1a);
-    min-height:100vh;
+    font:14px/1.55 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    color:var(--text); overflow:hidden;
   }
-  ::selection { background:rgba(56,189,248,.35); }
-
-  .topbar {
-    position:sticky; top:0; z-index:50;
-    display:flex; align-items:center; gap:12px;
-    padding:10px 22px;
-    background:rgba(10,12,22,.78);
-    backdrop-filter:blur(14px);
-    border-bottom:1px solid rgba(38,44,71,.65);
-  }
-  .brand { display:flex; align-items:center; gap:10px; min-width:0; }
-  .brand-mark {
-    width:32px; height:32px; border-radius:9px; flex:0 0 auto;
-    display:flex; align-items:center; justify-content:center;
-    background:linear-gradient(135deg,#0ea5e9,#22d3ee);
-    box-shadow:0 4px 16px rgba(56,189,248,.45);
-    color:#fff; font-size:16px;
-  }
-  .brand-mark img { width:100%; height:100%; border-radius:9px; object-fit:cover; }
-  .brand-name { font-size:15px; font-weight:650; letter-spacing:.2px; }
-  .brand-sub { font-size:11px; color:var(--dim); margin-top:1px; }
-  .topbar-right { margin-left:auto; display:flex; align-items:center; gap:10px; min-width:0; }
-  .cfg-path {
-    font-size:11.5px; color:var(--dim2); white-space:nowrap; overflow:hidden;
-    text-overflow:ellipsis; max-width:46vw; direction:rtl; text-align:left;
-  }
-  .chip {
-    display:inline-flex; align-items:center; gap:6px; flex:0 0 auto;
-    padding:4px 11px; border-radius:999px; font-size:11.5px;
-    background:var(--card2); border:1px solid var(--line); color:var(--dim);
-  }
-  .chip .dot { width:7px; height:7px; border-radius:50%; background:var(--dim2); }
-  .chip.ok { color:var(--ok); border-color:rgba(52,211,153,.35); }
-  .chip.ok .dot { background:var(--ok); box-shadow:0 0 8px rgba(52,211,153,.8); }
-  .chip.bad { color:var(--bad); border-color:rgba(248,113,113,.35); }
-  .chip.bad .dot { background:var(--bad); box-shadow:0 0 8px rgba(248,113,113,.8); }
-  .chip.warn { color:var(--warn); border-color:rgba(251,191,36,.35); }
-  .chip.warn .dot { background:var(--warn); }
-  .chip.purple { color:#a5f3fc; border-color:rgba(103,232,249,.35); }
-  .chip.purple .dot { background:#67e8f9; }
-
-  .wrap { max-width:1060px; margin:0 auto; padding:22px 22px 70px; }
-
-  .hero {
-    position:relative; overflow:hidden; border-radius:18px;
-    border:1px solid var(--line); min-height:168px;
-    display:flex; align-items:flex-end;
-    background:url('/assets/banner.jpg') center/cover no-repeat;
-  }
-  .hero::after {
-    content:""; position:absolute; inset:0;
-    background:
-      linear-gradient(90deg, rgba(9,11,19,.92) 0%, rgba(9,11,19,.72) 42%, rgba(9,11,19,.18) 100%),
-      linear-gradient(0deg, rgba(9,11,19,.55), transparent 60%);
-  }
-  .hero-inner { position:relative; z-index:2; padding:28px 30px; max-width:72%; }
-  .hero h1 { margin:0 0 6px; font-size:26px; font-weight:700; letter-spacing:.3px; }
-  .hero p { margin:0 0 12px; color:var(--dim); font-size:13px; max-width:560px; }
-  .hero .chips { display:flex; gap:8px; flex-wrap:wrap; }
-
-  .nav {
-    display:flex; gap:8px; flex-wrap:wrap; margin:18px 0 16px;
-    position:sticky; top:53px; z-index:40; padding:6px;
-    background:rgba(13,16,32,.72); border:1px solid var(--line);
-    border-radius:12px; backdrop-filter:blur(12px);
-  }
-  .nav a {
-    text-decoration:none; color:var(--dim); font-size:12.5px;
-    padding:7px 14px; border-radius:9px; transition:.15s;
-  }
-  .nav a:hover { color:var(--fg); background:rgba(56,189,248,.10); }
-
-  .card {
-    background:linear-gradient(180deg, rgba(23,27,46,.86), rgba(19,23,41,.90));
-    border:1px solid var(--line); border-radius:var(--radius);
-    margin-bottom:16px; overflow:hidden;
-  }
-  .card-head {
-    display:flex; align-items:center; gap:12px;
-    padding:15px 20px 0;
-  }
-  .step {
-    flex:0 0 auto; width:26px; height:26px; border-radius:8px;
-    display:flex; align-items:center; justify-content:center;
-    background:var(--acc-dim); color:#a5f3fc; border:1px solid rgba(103,232,249,.35);
-    font-size:13px; font-weight:700;
-  }
-  .card-head h2 { margin:0; font-size:15.5px; font-weight:650; }
-  .card-head .desc { margin:1px 0 0; color:var(--dim2); font-size:11.5px; }
-  .card-body { padding:14px 20px 18px; }
-
-  label { display:block; font-size:11.5px; color:var(--dim); margin:0 0 5px; }
+  ::selection { background:rgba(56,189,248,.3); }
+  a { color:var(--cyan-deep); text-decoration:none; }
+  button { font:inherit; cursor:pointer; color:inherit; }
   input, select, textarea {
-    width:100%; background:#0c0f1d; border:1px solid var(--line);
-    color:var(--fg); border-radius:9px; padding:8px 11px; font-size:13px;
-    font-family:inherit; transition:border-color .15s, box-shadow .15s;
+    font:inherit; color:var(--text); background:rgba(255,255,255,.78);
+    border:1px solid var(--stroke); border-radius:11px; padding:10px 13px; width:100%;
+    transition:border-color .2s var(--ease), background .2s var(--ease), box-shadow .2s;
   }
+  input::placeholder, textarea::placeholder { color:rgba(91,122,148,.6); }
   input:focus, select:focus, textarea:focus {
-    outline:none; border-color:var(--acc);
-    box-shadow:0 0 0 3px rgba(56,189,248,.18);
+    outline:none; border-color:var(--cyan); background:#fff;
+    box-shadow:0 0 0 3px var(--cyan-soft);
   }
-  input::placeholder { color:#4c5478; }
-  .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(190px, 1fr)); gap:12px; }
-  .grid3 { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:12px; }
+  select {
+    -webkit-appearance:none; appearance:none; cursor:pointer; padding-right:36px;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%230ea5e9' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+    background-repeat:no-repeat; background-position:right 14px center;
+  }
+  option { background:#fff; color:var(--text); }
+  .hidden { display:none !important; }
+  .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); border:0; }
 
-  .backend-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(300px, 1fr)); gap:12px; }
-  .backend-card {
-    border:1px solid var(--line); border-radius:12px; padding:12px 14px;
-    background:rgba(12,15,29,.5);
+  .bg { position:fixed; inset:-4%; z-index:-2; background:url('/assets/background.jpg') center/cover no-repeat; }
+  .bg-veil {
+    position:fixed; inset:0; z-index:-1; pointer-events:none;
+    background:
+      radial-gradient(1100px 700px at 85% -8%, rgba(125,211,252,.18), transparent 55%),
+      linear-gradient(180deg, rgba(255,255,255,.28), rgba(255,255,255,.55));
   }
-  .b-head { display:flex; align-items:center; gap:9px; margin-bottom:10px; }
-  .b-icon {
-    width:30px; height:30px; border-radius:8px; flex:0 0 auto;
-    display:flex; align-items:center; justify-content:center; font-size:15px;
-    background:var(--acc-dim); border:1px solid rgba(103,232,249,.3);
-  }
-  .b-head b { font-size:13.5px; }
-  .b-head .tag { margin-left:auto; }
 
-  .row2 { display:grid; grid-template-columns:3fr 1fr; gap:10px; align-items:end; }
-  .actions { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
-  button {
-    font-family:inherit; cursor:pointer; color:var(--fg);
-    background:var(--card2); border:1px solid var(--line);
-    border-radius:9px; padding:8px 15px; font-size:13px; transition:.15s;
+  .glass {
+    background:var(--glass);
+    -webkit-backdrop-filter:blur(16px); backdrop-filter:blur(16px);
+    border:1px solid var(--stroke); border-radius:var(--radius);
+    box-shadow:var(--shadow), inset 0 1px 0 var(--hi);
   }
-  button:hover { border-color:var(--acc); background:#1d2340; }
-  .btn-primary {
-    background:linear-gradient(135deg,#0ea5e9,#22d3ee); border:none; color:#04121a;
-    box-shadow:0 4px 16px rgba(56,189,248,.35);
-  }
-  .btn-primary:hover { filter:brightness(1.1); background:linear-gradient(135deg,#0ea5e9,#22d3ee); }
-  .btn-danger { background:#3a1a24; border-color:#5b2534; color:#fda4af; }
-  .btn-danger:hover { border-color:#f87171; background:#461f2c; }
-  .btn-sm { padding:6px 11px; font-size:12px; border-radius:8px; }
 
-  .test-area {
-    display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px;
-    align-items:end;
+  .btn {
+    background:linear-gradient(180deg, var(--cyan), var(--cyan-deep)); color:#fff; border:none;
+    border-radius:11px; padding:10px 18px; font-weight:600; letter-spacing:.01em;
+    box-shadow:0 6px 18px rgba(14,165,233,.28);
+    transition:transform .18s var(--ease), filter .18s, box-shadow .18s;
   }
-  .test-area .wide { grid-column:1 / -1; }
-  #preview {
-    margin-top:16px; display:none;
-    border:1px solid var(--line); border-radius:12px; overflow:hidden;
-    background:#0c0f1d;
+  .btn:hover { filter:brightness(1.06); transform:translateY(-1.5px); box-shadow:0 9px 24px rgba(14,165,233,.36); }
+  .btn:active { transform:translateY(0) scale(.99); }
+  .btn.ghost { background:rgba(255,255,255,.55); color:var(--text-dim); box-shadow:none; border:1px solid var(--stroke); }
+  .btn.ghost:hover { color:var(--text); border-color:var(--cyan); background:rgba(255,255,255,.85); transform:translateY(-1.5px); }
+  .btn.danger { background:transparent; color:var(--bad); border:1px solid rgba(225,29,72,.3); box-shadow:none; padding:6px 13px; }
+  .btn.danger:hover { background:rgba(225,29,72,.08); transform:none; }
+  .btn-sm { padding:6px 12px; font-size:12.5px; border-radius:9px; }
+
+  #app {
+    position:fixed; inset:0; display:grid; grid-template-columns:236px 1fr;
+    padding:18px; gap:18px;
   }
+  aside { padding:24px 16px; display:flex; flex-direction:column; gap:4px; }
+  .brand { display:flex; align-items:center; gap:11px; padding:4px 6px 22px; }
+  .brand .mk {
+    width:40px; height:40px; border-radius:12px; overflow:hidden; flex:none;
+    box-shadow:0 6px 16px rgba(14,165,233,.35);
+  }
+  .brand .mk img { width:100%; height:100%; object-fit:cover; display:block; }
+  .brand b { font-size:15.5px; letter-spacing:.01em; }
+  .brand .sub { font-size:11px; color:var(--text-dim); margin-top:2px; }
+  nav { display:flex; flex-direction:column; gap:3px; }
+  nav button {
+    display:flex; align-items:center; gap:12px; width:100%; text-align:left;
+    background:transparent; border:none; color:var(--text-dim);
+    padding:11px 14px; border-radius:12px; font-size:14px;
+    transition:background .2s var(--ease), color .2s, transform .2s var(--ease), box-shadow .2s;
+  }
+  nav button .ic { font-size:16px; width:20px; text-align:center; }
+  nav button:hover { background:rgba(255,255,255,.55); color:var(--text); transform:translateX(3px); }
+  nav button.active { background:var(--cyan-soft); color:var(--cyan-deep); font-weight:600; box-shadow:inset 0 0 0 1px rgba(14,165,233,.28), 0 4px 14px rgba(14,165,233,.14); }
+  aside .spacer { flex:1; }
+  .side-foot { padding:12px 8px 2px; border-top:1px dashed var(--stroke); }
+  .side-foot .cfg { font-size:11px; color:var(--text-dim); line-height:1.5; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .side-foot .chip {
+    display:inline-flex; align-items:center; gap:6px; margin-top:8px;
+    padding:4px 10px; border-radius:999px; font-size:11px;
+    background:rgba(56,189,248,.12); color:var(--cyan-deep); border:1px solid rgba(14,165,233,.25);
+  }
+
+  main { position:relative; overflow:hidden; border-radius:var(--radius); }
+  .main-glass-bg {
+    position:absolute; inset:-1px; z-index:0; pointer-events:none;
+    background:rgba(255,255,255,.58); border:1px solid var(--stroke); border-radius:var(--radius);
+    box-shadow:var(--shadow), inset 0 1px 0 var(--hi);
+  }
+  .main-content { position:relative; z-index:1; overflow:auto; padding:26px 30px 96px; height:100%; }
+  .main-content::-webkit-scrollbar { width:9px; }
+  .main-content::-webkit-scrollbar-thumb { background:rgba(23,84,120,.18); border-radius:9px; }
+  .page-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:22px; flex-wrap:wrap; }
+  .page-head h2 { font-size:23px; font-weight:700; letter-spacing:.01em; color:#0f2942; }
+  .page-head .hint { color:var(--text-dim); font-size:12.5px; margin-top:4px; }
+  section { transition:opacity .16s var(--ease), transform .16s var(--ease); }
+  section.leaving { opacity:0; }
+  section.entering { opacity:0; transform:translateY(12px); }
+
+  .grid { display:grid; gap:14px; }
+  .grid-2 { grid-template-columns:1fr 1fr; }
+  .backend-grid { grid-template-columns:repeat(auto-fill, minmax(300px, 1fr)); }
+  .card { padding:18px 20px; transition:transform .22s var(--ease), box-shadow .22s, border-color .22s; }
+  .card h3 { font-size:14px; margin-bottom:2px; display:flex; align-items:center; gap:8px; }
+  .card h3 .b-icon {
+    width:26px; height:26px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center;
+    background:var(--cyan-soft); color:var(--cyan-deep); font-size:14px; flex:none;
+  }
+  .card .desc { color:var(--text-dim); font-size:11.5px; margin-bottom:12px; }
+
+  .field { margin-bottom:14px; }
+  .field label { display:block; color:var(--text-dim); font-size:12.5px; margin-bottom:6px; }
+  .field .hint { color:var(--text-dim); font-size:11px; margin-top:5px; }
+  .toolbar { display:flex; gap:10px; margin-bottom:14px; align-items:flex-end; }
+  .toolbar input, .toolbar select { flex:1; }
+  .toolbar .btn { flex:none; }
+
+  .divider { border-top:1px dashed var(--stroke); margin:16px 0; }
+  .stat-cards { display:grid; gap:14px; grid-template-columns:repeat(auto-fill, minmax(190px,1fr)); }
+  .stat { padding:16px 18px; }
+  .stat .label { color:var(--text-dim); font-size:12px; letter-spacing:.03em; }
+  .stat .value { font-size:26px; font-weight:700; margin-top:6px; line-height:1.1; color:var(--cyan-deep); }
+  .stat .sub { color:var(--text-dim); font-size:11.5px; margin-top:5px; }
+
+  .chip {
+    display:inline-flex; align-items:center; gap:6px;
+    padding:4px 11px; border-radius:999px; font-size:11.5px; flex:none;
+    background:rgba(255,255,255,.7); border:1px solid var(--stroke); color:var(--text-dim);
+  }
+  .chip .dot { width:7px; height:7px; border-radius:50%; background:var(--text-dim); }
+  .chip.ok { color:var(--ok); border-color:rgba(22,163,74,.3); }
+  .chip.ok .dot { background:var(--ok); }
+  .chip.bad { color:var(--bad); border-color:rgba(225,29,72,.3); }
+  .chip.bad .dot { background:var(--bad); }
+  .chip.warn { color:var(--warn); border-color:rgba(217,119,6,.3); }
+  .chip.warn .dot { background:var(--warn); }
+  .chip.cyan { color:var(--cyan-deep); border-color:rgba(14,165,233,.3); background:rgba(56,189,248,.1); }
+  .chip.cyan .dot { background:var(--cyan); }
+
+  #preview { margin-top:16px; display:none; border:1px solid var(--stroke); border-radius:12px; overflow:hidden; background:#fff; }
   #preview.show { display:block; }
-  #preview img { display:block; width:100%; max-height:460px; object-fit:contain; background:#0a0c16; }
-  .preview-meta {
-    display:flex; gap:8px; flex-wrap:wrap; align-items:center;
-    padding:10px 14px; border-top:1px solid var(--line); font-size:12px; color:var(--dim);
-  }
-  .preview-meta code { color:#a5f3fc; font-size:11.5px; word-break:break-all; }
-  #errorBox {
-    margin-top:14px; display:none; padding:12px 14px;
-    border:1px solid rgba(248,113,113,.35); border-radius:10px;
-    background:rgba(248,113,113,.08); color:#fca5a5; font-size:12.5px; white-space:pre-wrap;
-  }
+  #preview img { display:block; width:100%; max-height:430px; object-fit:contain; background:#f7fbfe; }
+  .preview-meta { display:flex; gap:8px; flex-wrap:wrap; align-items:center; padding:10px 14px; border-top:1px solid var(--stroke); font-size:12px; color:var(--text-dim); }
+  .preview-meta code { color:var(--cyan-deep); font-size:11.5px; word-break:break-all; }
+  #errorBox { margin-top:14px; display:none; padding:12px 14px; border:1px solid rgba(225,29,72,.3); border-radius:10px; background:rgba(225,29,72,.06); color:var(--bad); font-size:12.5px; white-space:pre-wrap; }
   #errorBox.show { display:block; }
 
-  .check-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(230px, 1fr)); gap:10px; }
-  .check-card {
-    border:1px solid var(--line); border-radius:11px; padding:12px 14px;
-    background:rgba(12,15,29,.5); display:flex; flex-direction:column; gap:8px;
-  }
+  .check-grid { display:grid; gap:10px; grid-template-columns:repeat(auto-fill, minmax(230px,1fr)); }
+  .check-card { padding:13px 15px; display:flex; flex-direction:column; gap:8px; }
   .check-card .row { display:flex; align-items:center; justify-content:space-between; gap:8px; }
   .check-card .name { font-weight:600; font-size:13px; }
-  .check-card .msg { color:var(--dim); font-size:12px; word-break:break-all; }
+  .check-card .msg { color:var(--text-dim); font-size:12px; word-break:break-all; }
 
-  .hint { color:var(--dim2); font-size:11.5px; margin:8px 0 0; }
-  .hr { border:none; border-top:1px dashed var(--line); margin:16px 0; }
-
-  #toasts { position:fixed; top:16px; right:16px; z-index:100; display:flex; flex-direction:column; gap:8px; max-width:min(380px, 90vw); }
-  .toast {
-    padding:11px 14px; border-radius:11px; font-size:12.5px; line-height:1.5;
-    background:rgba(24,29,51,.96); border:1px solid var(--line); border-left:3px solid var(--acc);
-    box-shadow:0 10px 30px rgba(0,0,0,.45); white-space:pre-wrap; word-break:break-word;
-    animation:toastIn .2s ease;
+  .save-bar {
+    position:fixed; right:34px; bottom:34px; z-index:40;
+    display:flex; align-items:center; gap:10px;
+    padding:10px 12px 10px 16px;
+    background:rgba(255,255,255,.82); border:1px solid var(--stroke); border-radius:14px;
+    box-shadow:0 14px 40px rgba(39,103,148,.22);
+    -webkit-backdrop-filter:blur(12px); backdrop-filter:blur(12px);
   }
-  .toast.ok { border-left-color:var(--ok); }
-  .toast.bad { border-left-color:var(--bad); }
-  @keyframes toastIn { from { opacity:0; transform:translateX(12px); } to { opacity:1; transform:none; } }
 
-  @media (max-width:760px) {
-    .hero-inner { max-width:100%; padding:22px; }
-    .hero h1 { font-size:21px; }
-    .cfg-path { display:none; }
-    .row2 { grid-template-columns:1fr; }
+  .toast {
+    position:fixed; bottom:28px; left:50%; transform:translateX(-50%) translateY(22px);
+    padding:13px 24px; font-size:13px; opacity:0; pointer-events:none; z-index:60;
+    transition:all .34s var(--ease); max-width:min(560px,92vw);
+    background:rgba(255,255,255,.92); color:var(--text);
+    border:1px solid var(--stroke); border-radius:13px;
+    box-shadow:0 16px 44px rgba(39,103,148,.24); white-space:pre-wrap; text-align:center;
+  }
+  .toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
+  .toast.ok { border-left:4px solid var(--ok); }
+  .toast.bad { border-left:4px solid var(--bad); }
+
+  .menu-btn {
+    display:none; position:fixed; top:14px; left:14px; z-index:99;
+    width:40px; height:40px; border:1px solid var(--stroke);
+    background:rgba(255,255,255,.8); border-radius:11px; align-items:center; justify-content:center;
+    font-size:20px; color:var(--text);
+    -webkit-backdrop-filter:blur(10px); backdrop-filter:blur(10px);
+  }
+  .menu-overlay { position:fixed; inset:0; z-index:90; background:rgba(20,50,70,.35); opacity:0; pointer-events:none; transition:opacity .3s var(--ease); }
+  .menu-overlay.open { opacity:1; pointer-events:auto; }
+
+  @media (max-width:768px) {
+    .menu-btn { display:flex; }
+    #app { grid-template-columns:1fr; padding:0; gap:0; }
+    aside {
+      position:fixed; top:0; left:0; bottom:0; z-index:100; width:260px; border-radius:0;
+      transform:translateX(-100%); transition:transform .3s var(--ease); padding:20px 14px;
+    }
+    aside.open { transform:translateX(0); box-shadow:0 0 60px rgba(20,50,70,.4); }
+    .main-content { padding:16px; padding-top:68px; }
+    main { border-radius:0; }
+    .page-head h2 { font-size:19px; }
+    .card { padding:15px; }
+    .grid-2 { grid-template-columns:1fr; }
+    .save-bar { right:14px; bottom:14px; }
+    .toolbar { flex-wrap:wrap; }
+    .toolbar input { min-width:130px; }
   }
 </style>
 </head>
 <body>
-<div class="topbar">
-  <div class="brand">
-    <div class="brand-mark"><img src="/assets/avatar.png" alt="洛天依"></div>
-    <div>
-      <div class="brand-name">DeepSeek ImageGen</div>
-      <div class="brand-sub">图像生成桥接 · 本地设置</div>
+
+<div class="bg"></div>
+<div class="bg-veil"></div>
+
+<div id="app">
+  <button class="menu-btn" id="menuBtn" onclick="toggleMenu()">☰</button>
+  <aside class="glass" id="sideBar">
+    <div class="brand">
+      <div class="mk"><img src="/assets/avatar.png" alt="洛天依"></div>
+      <div>
+        <b>DeepSeek ImageGen</b>
+        <div class="sub">图像生成桥接 · 洛天依浅色主题</div>
+      </div>
     </div>
-  </div>
-  <div class="topbar-right">
-    <span class="chip purple"><span class="dot"></span>洛天依主题 · 仅本机访问</span>
-    <span id="saveChip" class="chip"><span class="dot"></span>加载中…</span>
-    <span class="cfg-path" id="cfgPath">配置加载中…</span>
-  </div>
+    <nav id="sideNav">
+      <button data-page="import" class="active"><span class="ic">📥</span> 一键导入</button>
+      <button data-page="global"><span class="ic">⚙️</span> 全局设置</button>
+      <button data-page="backends"><span class="ic">🧩</span> 后端参数</button>
+      <button data-page="test"><span class="ic">✨</span> 试生成</button>
+      <button data-page="doctor"><span class="ic">🔍</span> 诊断</button>
+    </nav>
+    <div class="spacer"></div>
+    <div class="side-foot">
+      <div class="cfg" id="cfgPath">配置加载中…</div>
+      <span class="chip" id="saveChip"><span class="dot"></span>加载中…</span>
+    </div>
+  </aside>
+  <div class="menu-overlay" id="menuOverlay" onclick="closeMenu()"></div>
+
+  <main>
+    <div class="main-glass-bg"></div>
+    <div class="main-content">
+
+      <section id="page-import">
+        <div class="page-head">
+          <div><h2>一键导入 Vertex Proxy</h2><div class="hint">自动读取代理的端口、密钥与模型列表，选中最佳图像模型</div></div>
+        </div>
+        <div class="card glass">
+          <div class="toolbar">
+            <input id="vpDir" placeholder="Vertex Proxy 目录（含 config\config.json、api_keys.txt、models.json）">
+            <button class="btn" onclick="loadVertex()">读取并导入</button>
+          </div>
+          <div id="vpResult"></div>
+          <div class="field"><div class="hint">留空使用默认目录：C:\Users\yjq\Documents\Codex\2026-07-31\new-chat\outputs\vertex-proxy\dist</div></div>
+        </div>
+      </section>
+
+      <section id="page-global" class="hidden">
+        <div class="page-head">
+          <div><h2>全局设置</h2><div class="hint">不指定后端时默认使用这里的选择</div></div>
+          <button class="btn ghost" onclick="save()">💾 保存</button>
+        </div>
+        <div class="card glass">
+          <div class="grid grid-2">
+            <div class="field">
+              <label for="default_backend">默认后端</label>
+              <select id="default_backend">
+                <option value="vertex">vertex（本地代理，自动选最佳图像模型）</option>
+                <option value="pollinations">pollinations（免费免密钥）</option>
+                <option value="siliconflow">siliconflow（FLUX）</option>
+                <option value="sd-webui">sd-webui（本地）</option>
+                <option value="comfyui">comfyui（本地）</option>
+              </select>
+            </div>
+            <div class="field"><label for="default_size">默认尺寸</label><input id="default_size" placeholder="1024x1024"></div>
+            <div class="field"><label for="save_dir">默认保存目录（留空=当前目录）</label><input id="save_dir" placeholder="例如 D:\images"></div>
+            <div class="field"><label for="mirror_dir">自动副本目录（留空=不复制）</label><input id="mirror_dir" placeholder="C:\Users\yjq\Pictures\codex"></div>
+            <div class="field"><label for="default_negative">默认负面提示词</label><input id="default_negative" placeholder="文字, 水印, 低质量"></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="page-backends" class="hidden">
+        <div class="page-head">
+          <div><h2>后端参数</h2><div class="hint">每个后端独立配置，密钥只保存在本机</div></div>
+          <button class="btn ghost" onclick="save()">💾 保存</button>
+        </div>
+        <div class="grid backend-grid">
+          <div class="card glass">
+            <h3><span class="b-icon">🟣</span> Vertex Proxy <span class="chip cyan" style="margin-left:auto"><span class="dot"></span>默认</span></h3>
+            <div class="desc">本地代理，自动发现端口 / 密钥 / 模型</div>
+            <div class="field"><label for="vertex_dir">代理目录</label><input id="vertex_dir" placeholder="代理目录"></div>
+            <div class="field"><label for="vertex_base">API 地址（留空=按端口自动）</label><input id="vertex_base" placeholder="http://127.0.0.1:2156/v1"></div>
+            <div class="field"><label for="vertex_key">API Key（留空=自动读取）</label><input id="vertex_key" type="password" placeholder="sk-..."></div>
+            <div class="field m-b-0"><label for="vertex_model">图像模型（留空=自动最佳）</label><input id="vertex_model" placeholder="gemini-3-pro-image"></div>
+          </div>
+          <div class="card glass">
+            <h3><span class="b-icon">🌐</span> Pollinations <span class="chip" style="margin-left:auto"><span class="dot"></span>免费免密钥</span></h3>
+            <div class="desc">公共免费接口，无需任何密钥</div>
+            <div class="field"><label for="pollinations_model">模型（留空=默认）</label><input id="pollinations_model" placeholder="flux"></div>
+          </div>
+          <div class="card glass">
+            <h3><span class="b-icon">⚡</span> SiliconFlow <span class="chip" style="margin-left:auto"><span class="dot"></span>FLUX</span></h3>
+            <div class="desc">OpenAI 兼容图像接口，国内可直连</div>
+            <div class="field"><label for="sf_base">API 地址</label><input id="sf_base" placeholder="https://api.siliconflow.cn/v1"></div>
+            <div class="field"><label for="sf_key">API Key</label><input id="sf_key" type="password" placeholder="sk-..."></div>
+            <div class="field m-b-0"><label for="sf_model">模型</label><input id="sf_model" placeholder="black-forest-labs/FLUX.1-schnell"></div>
+          </div>
+          <div class="card glass">
+            <h3><span class="b-icon">🖥</span> SD WebUI / Forge <span class="chip" style="margin-left:auto"><span class="dot"></span>本地</span></h3>
+            <div class="desc">本地 Stable Diffusion，支持文生图与图生图</div>
+            <div class="field"><label for="sd_base">地址</label><input id="sd_base" placeholder="http://127.0.0.1:7860"></div>
+            <div class="grid grid-2">
+              <div class="field"><label for="sd_sampler">采样器</label><input id="sd_sampler" placeholder="Euler a"></div>
+              <div class="field"><label for="sd_steps">步数</label><input id="sd_steps" type="number" placeholder="28"></div>
+              <div class="field"><label for="sd_cfg">CFG</label><input id="sd_cfg" type="number" step="0.5" placeholder="7"></div>
+              <div class="field"><label for="sd_denoise">图生图去噪强度</label><input id="sd_denoise" type="number" step="0.05" min="0" max="1" placeholder="0.6"></div>
+            </div>
+          </div>
+          <div class="card glass">
+            <h3><span class="b-icon">🔗</span> ComfyUI <span class="chip" style="margin-left:auto"><span class="dot"></span>本地</span></h3>
+            <div class="desc">本地节点式工作流，自动上传图片图生图</div>
+            <div class="field"><label for="cf_base">地址</label><input id="cf_base" placeholder="http://127.0.0.1:8188"></div>
+            <div class="field"><label for="cf_checkpoint">Checkpoint（留空=自动）</label><input id="cf_checkpoint" placeholder="sd_xl_base_1.0.safetensors"></div>
+            <div class="grid grid-2">
+              <div class="field"><label for="cf_steps">步数</label><input id="cf_steps" type="number" placeholder="28"></div>
+              <div class="field"><label for="cf_cfg">CFG</label><input id="cf_cfg" type="number" step="0.5" placeholder="7"></div>
+              <div class="field"><label for="cf_denoise">图生图去噪强度</label><input id="cf_denoise" type="number" step="0.05" min="0" max="1" placeholder="0.6"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="page-test" class="hidden">
+        <div class="page-head">
+          <div><h2>试生成</h2><div class="hint">不保存配置也能先试试效果；图片预览不会离开你的电脑</div></div>
+        </div>
+        <div class="card glass">
+          <div class="field"><label for="testPrompt">提示词</label><input id="testPrompt" placeholder="一只戴宇航员头盔的柴犬，写实风格"></div>
+          <div class="grid grid-2">
+            <div class="field"><label for="testBackend">后端</label><select id="testBackend"></select></div>
+            <div class="field"><label for="testSize">尺寸</label><input id="testSize" placeholder="1024x1024（图生图可留空）"></div>
+            <div class="field"><label for="testImage">参考图（图生图，可选）</label><input id="testImage" placeholder="图片路径或 http(s) 链接"></div>
+            <div class="field"><label for="testDenoise">去噪强度（图生图）</label><input id="testDenoise" type="number" step="0.05" min="0" max="1" placeholder="0.6"></div>
+            <div class="field"><label for="testSeed">种子（留空=随机）</label><input id="testSeed" type="number" placeholder="例如 42"></div>
+            <div class="field" style="display:flex;align-items:flex-end"><button class="btn" id="genBtn" style="width:100%" onclick="testGenerate()">✨ 开始生成</button></div>
+          </div>
+          <div class="toolbar" style="margin-top:4px">
+            <button class="btn ghost" onclick="testBackend()">🔌 测试后端连通性</button>
+          </div>
+          <div id="errorBox"></div>
+          <div id="preview">
+            <img id="previewImg" alt="生成结果预览">
+            <div class="preview-meta" id="previewMeta"></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="page-doctor" class="hidden">
+        <div class="page-head">
+          <div><h2>诊断</h2><div class="hint">检查各后端连通性、配置是否完整</div></div>
+          <button class="btn ghost" onclick="runDoctor()">🔍 运行诊断（doctor）</button>
+        </div>
+        <div id="doctorResult"></div>
+      </section>
+
+    </div>
+  </main>
 </div>
 
-<div class="wrap">
-  <div class="hero">
-    <div class="hero-inner">
-      <h1>🎨 图像生成工作台</h1>
-      <p>配置后端点一下就能出图：文生图、图生图、模型选择、连通诊断都在这里。</p>
-      <div class="chips">
-        <span class="chip">vertex 本地代理</span>
-        <span class="chip">5 种后端</span>
-        <span class="chip">洛天依主题 ✦</span>
-      </div>
-    </div>
-  </div>
-
-  <nav class="nav">
-    <a href="#s-import">一键导入</a>
-    <a href="#s-global">全局设置</a>
-    <a href="#s-backends">后端参数</a>
-    <a href="#s-test">试生成</a>
-    <a href="#s-doctor">诊断</a>
-  </nav>
-
-  <section class="card" id="s-import">
-    <div class="card-head">
-      <span class="step">1</span>
-      <div><h2>一键导入 Vertex Proxy</h2><p class="desc">自动读取代理的端口、密钥与模型列表，选中最佳图像模型</p></div>
-    </div>
-    <div class="card-body">
-      <div class="row2">
-        <input id="vpDir" placeholder="Vertex Proxy 目录（含 config\config.json、api_keys.txt、models.json）">
-        <button class="btn-primary" onclick="loadVertex()">读取并导入</button>
-      </div>
-      <div id="vpResult"></div>
-      <p class="hint">留空使用默认目录：C:\Users\yjq\Documents\Codex\2026-07-31\new-chat\outputs\vertex-proxy\dist</p>
-    </div>
-  </section>
-
-  <section class="card" id="s-global">
-    <div class="card-head">
-      <span class="step">2</span>
-      <div><h2>默认后端与全局设置</h2><p class="desc">不指定后端时默认使用这里的选择</p></div>
-    </div>
-    <div class="card-body">
-      <div class="grid">
-        <div>
-          <label>默认后端</label>
-          <select id="default_backend">
-            <option value="vertex">vertex（本地代理，自动选最佳图像模型）</option>
-            <option value="pollinations">pollinations（免费免密钥）</option>
-            <option value="siliconflow">siliconflow（FLUX）</option>
-            <option value="sd-webui">sd-webui（本地）</option>
-            <option value="comfyui">comfyui（本地）</option>
-          </select>
-        </div>
-        <div><label>默认尺寸</label><input id="default_size" placeholder="1024x1024"></div>
-        <div><label>默认保存目录（留空=当前目录）</label><input id="save_dir" placeholder="例如 D:\images"></div>
-        <div><label>自动副本目录（留空=不复制）</label><input id="mirror_dir" placeholder="C:\Users\yjq\Pictures\codex"></div>
-        <div><label>默认负面提示词</label><input id="default_negative" placeholder="文字, 水印, 低质量"></div>
-      </div>
-    </div>
-  </section>
-
-  <section class="card" id="s-backends">
-    <div class="card-head">
-      <span class="step">3</span>
-      <div><h2>后端参数</h2><p class="desc">每个后端独立配置，密钥只保存在本机</p></div>
-    </div>
-    <div class="card-body">
-      <div class="backend-grid">
-        <div class="backend-card">
-          <div class="b-head"><div class="b-icon">🟣</div><b>Vertex Proxy</b><span class="chip purple"><span class="dot"></span>默认</span></div>
-          <div class="grid3">
-            <div style="grid-column:1/-1"><label>代理目录</label><input id="vertex_dir" placeholder="代理目录"></div>
-            <div style="grid-column:1/-1"><label>API 地址（留空=按端口自动）</label><input id="vertex_base" placeholder="http://127.0.0.1:2156/v1"></div>
-            <div style="grid-column:1/-1"><label>API Key（留空=自动读取）</label><input id="vertex_key" type="password" placeholder="sk-..."></div>
-            <div style="grid-column:1/-1"><label>图像模型（留空=自动最佳）</label><input id="vertex_model" placeholder="gemini-3-pro-image"></div>
-          </div>
-        </div>
-        <div class="backend-card">
-          <div class="b-head"><div class="b-icon">🌐</div><b>Pollinations</b><span class="chip"><span class="dot"></span>免费免密钥</span></div>
-          <div class="grid3">
-            <div style="grid-column:1/-1"><label>模型（留空=默认）</label><input id="pollinations_model" placeholder="flux"></div>
-          </div>
-        </div>
-        <div class="backend-card">
-          <div class="b-head"><div class="b-icon">⚡</div><b>SiliconFlow</b><span class="chip"><span class="dot"></span>FLUX</span></div>
-          <div class="grid3">
-            <div style="grid-column:1/-1"><label>API 地址</label><input id="sf_base" placeholder="https://api.siliconflow.cn/v1"></div>
-            <div style="grid-column:1/-1"><label>API Key</label><input id="sf_key" type="password" placeholder="sk-..."></div>
-            <div style="grid-column:1/-1"><label>模型</label><input id="sf_model" placeholder="black-forest-labs/FLUX.1-schnell"></div>
-          </div>
-        </div>
-        <div class="backend-card">
-          <div class="b-head"><div class="b-icon">🖥</div><b>SD WebUI / Forge</b><span class="chip"><span class="dot"></span>本地</span></div>
-          <div class="grid3">
-            <div style="grid-column:1/-1"><label>地址</label><input id="sd_base" placeholder="http://127.0.0.1:7860"></div>
-            <div><label>采样器</label><input id="sd_sampler" placeholder="Euler a"></div>
-            <div><label>步数</label><input id="sd_steps" type="number" placeholder="28"></div>
-            <div><label>CFG</label><input id="sd_cfg" type="number" step="0.5" placeholder="7"></div>
-            <div style="grid-column:1/-1"><label>图生图去噪强度</label><input id="sd_denoise" type="number" step="0.05" min="0" max="1" placeholder="0.6"></div>
-          </div>
-        </div>
-        <div class="backend-card">
-          <div class="b-head"><div class="b-icon">🔗</div><b>ComfyUI</b><span class="chip"><span class="dot"></span>本地</span></div>
-          <div class="grid3">
-            <div style="grid-column:1/-1"><label>地址</label><input id="cf_base" placeholder="http://127.0.0.1:8188"></div>
-            <div style="grid-column:1/-1"><label>Checkpoint（留空=自动）</label><input id="cf_checkpoint" placeholder="sd_xl_base_1.0.safetensors"></div>
-            <div><label>步数</label><input id="cf_steps" type="number" placeholder="28"></div>
-            <div><label>CFG</label><input id="cf_cfg" type="number" step="0.5" placeholder="7"></div>
-            <div style="grid-column:1/-1"><label>图生图去噪强度</label><input id="cf_denoise" type="number" step="0.05" min="0" max="1" placeholder="0.6"></div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <section class="card" id="s-test">
-    <div class="card-head">
-      <span class="step">4</span>
-      <div><h2>试生成</h2><p class="desc">不保存配置也能先试试效果；图片预览不会离开你的电脑</p></div>
-    </div>
-    <div class="card-body">
-      <div class="test-area">
-        <div class="wide"><label>提示词</label><input id="testPrompt" placeholder="一只戴宇航员头盔的柴犬，写实风格"></div>
-        <div><label>后端</label><select id="testBackend"></select></div>
-        <div><label>尺寸</label><input id="testSize" placeholder="1024x1024（图生图可留空）"></div>
-        <div><label>参考图（图生图，可选）</label><input id="testImage" placeholder="图片路径或 http(s) 链接"></div>
-        <div><label>去噪强度（图生图）</label><input id="testDenoise" type="number" step="0.05" min="0" max="1" placeholder="0.6"></div>
-        <div><label>种子（留空=随机）</label><input id="testSeed" type="number" placeholder="例如 42"></div>
-      </div>
-      <div class="actions" style="margin-top:14px">
-        <button class="btn-primary" id="genBtn" onclick="testGenerate()">✨ 开始生成</button>
-        <button onclick="testBackend()">🔌 测试后端连通性</button>
-      </div>
-      <div id="errorBox"></div>
-      <div id="preview">
-        <img id="previewImg" alt="生成结果预览">
-        <div class="preview-meta" id="previewMeta"></div>
-      </div>
-    </div>
-  </section>
-
-  <section class="card" id="s-doctor">
-    <div class="card-head">
-      <span class="step">5</span>
-      <div><h2>诊断</h2><p class="desc">检查各后端连通性、配置是否完整</p></div>
-    </div>
-    <div class="card-body">
-      <div class="actions">
-        <button onclick="runDoctor()">🔍 运行诊断（doctor）</button>
-      </div>
-      <div id="doctorResult" style="margin-top:14px"></div>
-    </div>
-  </section>
-
-  <section class="card">
-    <div class="card-body" style="display:flex; justify-content:flex-end">
-      <button class="btn-primary" onclick="save()">💾 保存配置</button>
-    </div>
-  </section>
+<div class="save-bar">
+  <span class="chip cyan" style="background:rgba(255,255,255,.9)"><span class="dot"></span>仅本机访问</span>
+  <button class="btn" onclick="save()">💾 保存配置</button>
 </div>
-
-<div id="toasts"></div>
+<div class="toast" id="toast"></div>
 
 <script>
-let state = { config: null, busy: false };
+let state = { config: null, busy: false, page: "import" };
 const $ = id => document.getElementById(id);
 
 async function api(path, opts) {
@@ -449,13 +445,14 @@ async function api(path, opts) {
 
 function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 
+let toastTimer = null;
 function toast(text, type) {
-  const box = $("toasts");
-  const t = document.createElement("div");
-  t.className = "toast " + (type || "");
+  const t = $("toast");
   t.textContent = text;
-  box.appendChild(t);
-  setTimeout(() => { t.style.opacity = "0"; t.style.transition = "opacity .3s"; setTimeout(() => t.remove(), 320); }, 4200);
+  t.className = "toast " + (type || "");
+  requestAnimationFrame(() => t.classList.add("show"));
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.classList.remove("show"); }, 4200);
 }
 
 function setSaveChip(text, cls) {
@@ -464,10 +461,29 @@ function setSaveChip(text, cls) {
   chip.innerHTML = '<span class="dot"></span>' + esc(text);
 }
 
+function showPage(name) {
+  document.querySelectorAll(".main-content > section").forEach(s => s.classList.add("hidden"));
+  const sec = $("page-" + name);
+  if (sec) sec.classList.remove("hidden");
+  document.querySelectorAll("#sideNav button").forEach(b => b.classList.toggle("active", b.dataset.page === name));
+  state.page = name;
+  try { history.replaceState(null, "", "#page-" + name); } catch (e) {}
+  closeMenu();
+}
+
+function toggleMenu() {
+  const sb = $("sideBar"), ov = $("menuOverlay");
+  const open = sb.classList.toggle("open");
+  ov.classList.toggle("open", open);
+}
+function closeMenu() { $("sideBar").classList.remove("open"); $("menuOverlay").classList.remove("open"); }
+document.querySelectorAll("#sideNav button").forEach(b => b.onclick = () => showPage(b.dataset.page));
+
 async function loadConfig() {
   const j = await api("/api/config");
   state.config = j.config;
   $("cfgPath").textContent = j.path;
+  $("cfgPath").title = j.path;
   render();
   setSaveChip("配置已加载", "ok");
 }
@@ -561,12 +577,12 @@ async function loadVertex() {
   const keys = r.keys.map(k => `<option value="${esc(k)}">${esc(k.slice(0,10) + "…" + k.slice(-4))}</option>`).join("");
   const models = r.models.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join("");
   $("vpResult").innerHTML =
-    `<div class="row2" style="margin-top:12px">` +
-    `<div><label>API 地址</label><input id="vpBase" value="${esc(r.base_url)}"></div>` +
-    `<div><label>图像模型（已自动选最佳）</label><select id="vpModel">${models}</select></div>` +
-    `<div><label>API Key</label><select id="vpKey">${keys}</select></div>` +
-    `<button class="btn-primary" onclick="applyVertex()">应用到后端参数</button></div>` +
-    `<p class="hint">端口 ${r.port}，共 ${r.models.length} 个模型，图像模型 ${r.image_models.length} 个，最佳：<b style="color:#c4b5fd">${esc(r.best_model || "")}</b></p>`;
+    `<div class="toolbar" style="margin-top:4px">` +
+    `<div style="flex:1.2"><label class="sr-only" for="vpBase">API 地址</label><input id="vpBase" value="${esc(r.base_url)}"></div>` +
+    `<div style="flex:1.4"><label class="sr-only" for="vpModel">图像模型</label><select id="vpModel">${models}</select></div>` +
+    `<div style="flex:1"><label class="sr-only" for="vpKey">API Key</label><select id="vpKey">${keys}</select></div>` +
+    `<button class="btn" onclick="applyVertex()">应用</button></div>` +
+    `<div class="field"><div class="hint">端口 ${r.port} · 共 ${r.models.length} 个模型 · 图像模型 ${r.image_models.length} 个 · 最佳：<b style="color:var(--cyan-deep)">${esc(r.best_model || "")}</b></div></div>`;
   $("vpResult").querySelector("#vpModel").value = r.best_model || "";
 }
 
@@ -595,9 +611,8 @@ async function testGenerate() {
   $("genBtn").textContent = "⏳ 生成中…";
   $("errorBox").className = "";
   $("preview").className = "";
-  const prompt = $("testPrompt").value.trim() || "a cute astronaut dog";
   const body = {
-    prompt,
+    prompt: $("testPrompt").value.trim() || "a cute astronaut dog",
     backend: $("testBackend").value,
     size: $("testSize").value.trim() || "1024x1024",
     image: $("testImage").value.trim(),
@@ -631,13 +646,13 @@ async function runDoctor() {
   const box = $("doctorResult");
   if (!r.checks || !r.checks.length) { box.innerHTML = `<p class="hint">${esc(r.error || "无诊断结果")}</p>`; return; }
   const cards = r.checks.map(c =>
-    `<div class="check-card">
+    `<div class="card glass check-card">
       <div class="row">
         <span class="name">${esc(c.backend)}</span>
         <span class="chip ${c.ok ? "ok" : "bad"}"><span class="dot"></span>${c.ok ? "正常" : "失败"}</span>
       </div>
       <div class="msg">${esc(c.message)}</div>
-      ${c.best_model ? `<div class="msg">最佳模型：<b style="color:#c4b5fd">${esc(c.best_model)}</b></div>` : ""}
+      ${c.best_model ? `<div class="msg">最佳模型：<b style="color:var(--cyan-deep)">${esc(c.best_model)}</b></div>` : ""}
     </div>`
   ).join("");
   box.innerHTML = `<div class="check-grid">${cards}</div>` +
@@ -645,6 +660,8 @@ async function runDoctor() {
 }
 
 loadConfig().catch(e => { setSaveChip("加载失败", "bad"); toast("加载失败：" + e.message, "bad"); });
+const hashPage = (location.hash || "").match(/^#page-(.+)/);
+if (hashPage) showPage(hashPage[1]);
 </script>
 </body>
 </html>
@@ -781,7 +798,7 @@ def serve_preview_image(path: str) -> bytes | None:
 
 
 def serve_asset(name: str) -> bytes | None:
-    allowed = {"banner.jpg", "icon.png", "avatar.png"}
+    allowed = {"banner.jpg", "icon.png", "avatar.png", "background.jpg"}
     if name not in allowed:
         return None
     target = os.path.join(ASSETS_DIR, name)
