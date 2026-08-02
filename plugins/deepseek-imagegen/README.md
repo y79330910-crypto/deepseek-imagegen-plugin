@@ -124,7 +124,13 @@ python image_gen.py translate "一只戴宇航员头盔的柴犬，火星背景�
 
 ### 自动看图改图（--auto-fix）
 
-生成后自动调用视觉插件的 `vision_bridge.py` 对照用户需求检查图片，把缺失细节反馈给翻译官重写提示词并重新生成（默认最多 1 轮，可配置）。结果里的 `auto_fix.rounds` 与 `auto_fix.history` 记录每一轮的问题和图片路径。关闭：`--no-auto-fix` 或设置页关闭开关。
+生成后自动调用视觉插件的 `vision_bridge.py` 对照用户需求检查图片。v0.5.0 起默认**局部小修**：把当前图片原样喂回去，只针对检查发现的问题做最小改动，其余内容（人物长相、发型、服饰、耳机、背景、画风）一律保持原样，不再整图重画。
+
+- **分级检查**：视觉检查把问题分成"人物级"与"背景细节"两类。局部小修模式下两类都会修（改动成本低）；整图重画模式下背景细节只提示、不重画。
+- **保留最佳**：修正版生成后会复查一次，如果比原图更差（例如引入了新的人物错误），自动退回上一版，结果里的 `auto_fix.reverted` 会标记为 true。
+- 可配置项：`translator.fix_mode`（`edit` 局部小修 / `redraw` 整图重画）、`translator.fix_keep_best`（是否保留最佳），也可用 `--fix-mode` / `--no-keep-best` 临时指定；设置页有对应开关。
+
+结果里的 `auto_fix.rounds`、`auto_fix.fix_mode`、`auto_fix.reverted` 与 `auto_fix.history`（每一轮的问题、修正指令、判定结果）可查看全过程。关闭：`--no-auto-fix` 或设置页关闭开关。
 
 ### 本地 Stable Diffusion WebUI / Forge
 
@@ -140,6 +146,13 @@ python image_gen.py translate "一只戴宇航员头盔的柴犬，火星背景�
 4. 图生图会自动把参考图上传到 ComfyUI 再生成，默认去噪强度 0.6（`comfyui.denoise` 或 `--denoise`）。
 
 ## 更新日志
+
+### v0.5.0
+
+- 自动看图改图升级为"图生图局部修正"：用原图 + 最小改动指令，不再整图重画，人物一致性大幅提升
+- 新增"保留最佳"保护：修正版更差时自动退回上一版
+- 视觉检查分级：人物级问题自动修，背景小细节只提示不折腾（整图重画模式）
+- 设置页新增"自动改图方式"与"保留最佳"开关；生成命令新增 `--fix-mode` / `--keep-best` / `--no-keep-best`
 
 ### v0.4.0
 

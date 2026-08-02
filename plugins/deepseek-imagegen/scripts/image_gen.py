@@ -64,6 +64,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "output_lang": "zh",
         "auto_fix": True,
         "max_fix_rounds": 1,
+        "fix_mode": "edit",
+        "fix_keep_best": True,
         "deepseek": {
             "base_url": "",
             "api_key": "",
@@ -805,21 +807,170 @@ def _vision_says_ok(text: str) -> bool:
     return any(m in t for m in ("无", "没有", "没问题", "符合", "ok", "okay", "none", "good"))
 
 
+def _split_issues_lines(text: str) -> list[str]:
+    """把视觉返回的问题文本拆成条目列表（去掉编号、符号和"无"）。"""
+    out: list[str] = []
+    for raw in str(text or "").splitlines():
+        line = raw.strip().strip("。.；;，, ")
+        line = re.sub(r"^[\d一二三四五六七八九十]+[\.、．)]\s*", "", line).strip()
+        line = re.sub(r"^[-•*]\s*", "", line).strip()
+        if not line:
+            continue
+        if line in ("无", "none", "None", "没有", "没问题"):
+            continue
+        out.append(line)
+    return out
+
+
+def _count_issues(text: str) -> int:
+    return len(_split_issues_lines(text))
+
+
+def _parse_tiered_issues(text: str) -> dict[str, Any]:
+    """把视觉返回的"人物问题/背景问题"两段式文本解析成两类问题。
+
+    解析失败（没有分类标题）时整段按人物级处理，宁严勿松。
+    """
+    raw = str(text or "").strip()
+    character: list[str] = []
+    background: list[str] = []
+    section = ""
+    saw_header = False
+    for raw_line in raw.splitlines():
+        line = raw_line.strip()
+        if "人物问题" in line or "人物级" in line or line.startswith("人物"):
+            saw_header = True
+            section = "char"
+            rest = line.split("：", 1)[-1].split(":", 1)[-1].strip()
+            if rest and rest not in ("无", "none", "没有"):
+                character.append(rest)
+            continue
+        if "背景问题" in line or "背景/细节" in line or "背景细节" in line or line.startswith("背景"):
+            saw_header = True
+            section = "bg"
+            rest = line.split("：", 1)[-1].split(":", 1)[-1].strip()
+            if rest and rest not in ("无", "none", "没有"):
+                background.append(rest)
+            continue
+        if section == "char":
+            if line and line not in ("无", "none", "没有"):
+                character.append(line)
+        elif section == "bg":
+            if line and line not in ("无", "none", "没有"):
+                background.append(line)
+    char_text = "\n".join(character).strip()
+    bg_text = "\n".join(background).strip()
+    if not saw_header and raw:
+        return {"character": raw, "background": "", "parsed": False}
+    return {
+        "character": char_text,
+        "background": bg_text,
+        "parsed": saw_header or bool(character or background),
+    }
+
+
+def _fix_issues_text(check: dict[str, Any]) -> str:
+    """汇总视觉检查发现的问题（人物级+背景细节），供修正指令使用。"""
+    char = str(check.get("character_issues") or "").strip()
+    bg = str(check.get("background_issues") or "").strip()
+    if char and bg:
+        return "人物问题：\n" + char + "\n\n背景问题：\n" + bg
+    if char:
+        return char
+    if bg:
+        return bg
+    return str(check.get("issues") or "").strip()
+
+
+def build_fix_instruction(issues: str, max_len: int = 600) -> str:
+    """生成最小改动式的局部修正指令：只改问题项，其余一律保持原样。"""
+    items = _split_issues_lines(issues)
+    if not items:
+        return "画面已符合需求，无需修改。"
+    body = "\n".join(f"{i}. {it}" for i, it in enumerate(items, 1))
+    if len(body) > max_len:
+        body = body[:max_len].rsplit("\n", 1)[0]
+    return (
+        "这是一张需要局部修正的原图。请只修正下面列出的问题，"
+        "除此之外画面中的所有内容都必须保持原样、不得改动：\n"
+        "（包括人物长相、发色发型、耳机、服饰、姿势、表情、背景、光影、画风、构图）\n"
+        "需要修正的问题：\n" + body + "\n\n保持与原图相同的尺寸、风格和整体布局，画面中不要出现任何文字。"
+    )
+
+
+def _finalize_vision_check(issues: str, tiered: bool) -> dict[str, Any]:
+    """把视觉返回文本整理成统一结果字典。"""
+    result: dict[str, Any] = {
+        "ok": True,
+        "issues": issues,
+        "has_issues": not _vision_says_ok(issues),
+    }
+    if tiered:
+        parts = _parse_tiered_issues(issues)
+        char_n = _count_issues(parts["character"])
+        bg_n = _count_issues(parts["background"])
+        result["character_issues"] = parts["character"]
+        result["background_issues"] = parts["background"]
+        if parts.get("parsed"):
+            result["has_issues"] = (char_n + bg_n) > 0
+        result["has_character_issues"] = char_n > 0
+        result["issue_counts"] = {"character": char_n, "background": bg_n}
+    return result
+
+
+def _fix_accepted(old_check: dict[str, Any], new_check: dict[str, Any]) -> tuple[bool, str]:
+    """保留最佳判定：修正版必须修掉人物级错误且总问题数不增加。"""
+    if not new_check.get("ok"):
+        return True, "修正版未能完成视觉复查，按保留处理"
+    if not new_check.get("has_issues"):
+        return True, "修正版已通过复查，无遗留问题"
+    if new_check.get("has_character_issues"):
+        return False, "修正版仍有人物级错误或引入了新的人物级错误"
+    old_counts = old_check.get("issue_counts") or {
+        "character": 0,
+        "background": _count_issues(str(old_check.get("issues") or "")),
+    }
+    new_counts = new_check.get("issue_counts") or {
+        "character": 0,
+        "background": _count_issues(str(new_check.get("issues") or "")),
+    }
+    old_total = int(old_counts.get("character", 0)) + int(old_counts.get("background", 0))
+    new_total = int(new_counts.get("character", 0)) + int(new_counts.get("background", 0))
+    if new_total <= old_total:
+        return True, "修正版已修掉问题且没有新增错误"
+    return False, "修正版的问题数量没有减少"
+
+
 def run_vision_check(
     image_path: str,
     user_text: str,
     cfg: dict[str, Any],
+    tiered: bool = False,
 ) -> dict[str, Any]:
-    """调用视觉插件检查生成图与用户需求的差距。"""
+    """调用视觉插件检查生成图与用户需求的差距。
+
+    tiered=True 时把问题分为"人物级"与"背景细节"两类返回：
+    character_issues / background_issues / has_character_issues。
+    """
     bridge = find_vision_bridge(cfg)
     if not bridge:
         return {"ok": False, "reason": "未找到视觉识别桥接脚本，请在设置页填写", "issues": ""}
-    question = (
-        "请对照以下用户需求，检查这张图片：\n"
-        + str(user_text)[:1500]
-        + "\n\n逐条列出画面中缺失、画错或需要修正的细节。"
-        "如果画面已经符合需求，只回答：无"
-    )
+    if tiered:
+        question = (
+            "请对照以下用户需求，检查这张图片：\n"
+            + str(user_text)[:1500]
+            + "\n\n请把发现的问题严格分成两类输出，每类一行标题，下面逐条编号列出：\n"
+            "人物问题：只列人物本身缺失或画错的地方（五官、发色发型、耳机、服饰、姿态表情等）\n"
+            "背景问题：只列背景/环境/地面/装饰等细节的问题\n"
+            "如果某一类没有问题，写：无。如果画面已完全符合需求，两类都写：无。"
+        )
+    else:
+        question = (
+            "请对照以下用户需求，检查这张图片：\n"
+            + str(user_text)[:1500]
+            + "\n\n逐条列出画面中缺失、画错或需要修正的细节。"
+            "如果画面已经符合需求，只回答：无"
+        )
     # 优先在进程内直接调用视觉桥接函数（中文参数不走命令行，避免 Windows 编码问题）
     try:
         bridge_dir = str(Path(bridge).parent)
@@ -835,7 +986,7 @@ def run_vision_check(
         issues = str(result or "").strip()
         if not issues:
             return {"ok": False, "reason": "视觉检查返回为空", "issues": ""}
-        return {"ok": True, "issues": issues, "has_issues": not _vision_says_ok(issues)}
+        return _finalize_vision_check(issues, tiered)
     except Exception as exc:  # noqa: BLE001
         inproc_error = str(exc)
     # 回退：子进程方式（中文问题用 base64 编码，纯 ASCII 传递）
@@ -874,7 +1025,7 @@ def run_vision_check(
     issues = str(data.get("result") or "").strip()
     if not issues:
         return {"ok": False, "reason": "视觉检查返回为空", "issues": ""}
-    return {"ok": True, "issues": issues, "has_issues": not _vision_says_ok(issues)}
+    return _finalize_vision_check(issues, tiered)
 
 
 def discover_vertex(cfg: dict[str, Any]) -> dict[str, Any]:
@@ -1525,6 +1676,8 @@ def generate_with_translator(
     denoise: Optional[float] = None,
     translator: str = "auto",
     auto_fix: Optional[bool] = None,
+    fix_mode: Optional[str] = None,
+    keep_best: Optional[bool] = None,
 ) -> dict[str, Any]:
     """生成图片：可选先用翻译官改写提示词，再按需自动看图改图。"""
     cfg_all = load_config()
@@ -1570,6 +1723,10 @@ def generate_with_translator(
     result["prompt_used"] = final_prompt
 
     fix_wanted = auto_fix if auto_fix is not None else bool(tr.get("auto_fix", False))
+    fix_mode_val = (fix_mode or tr.get("fix_mode") or "edit").strip().lower()
+    if fix_mode_val not in ("edit", "redraw"):
+        fix_mode_val = "edit"
+    keep_best_val = keep_best if keep_best is not None else bool(tr.get("fix_keep_best", True))
     max_rounds = 0
     try:
         max_rounds = max(0, int(tr.get("max_fix_rounds", 1) or 0))
@@ -1588,47 +1745,95 @@ def generate_with_translator(
         fix_wanted
         and max_rounds > 0
         and resolve_backend(backend, cfg_all) == "vertex"
-        and not init_image
     ):
         current_path = result.get("path", "")
+        reverted = False
         for i in range(max_rounds):
             if not current_path or not os.path.isfile(current_path):
                 warnings.append(f"自动改图第 {i + 1} 轮跳过：找不到生成图片。")
                 break
-            check = run_vision_check(current_path, prompt, cfg_all)
+            check = run_vision_check(current_path, prompt, cfg_all, tiered=True)
             if not check.get("ok"):
                 warnings.append("自动看图检查未完成：" + str(check.get("reason") or ""))
                 break
             issues = str(check.get("issues") or "")
             history[-1]["issues"] = issues
+            if "character_issues" in check:
+                history[-1]["character_issues"] = check.get("character_issues") or ""
+                history[-1]["background_issues"] = check.get("background_issues") or ""
             if not check.get("has_issues", True):
                 break
-            # 让翻译官根据视觉反馈重写提示词并再生成一次
-            fb = translate_prompt(prompt, cfg=cfg_all, engine=fix_engine, feedback=issues)
-            new_prompt = fb.get("rewritten") or final_prompt
-            round_kwargs = dict(kwargs)
-            if fix_out is not None:
-                round_kwargs["out"] = str(
-                    fix_out.with_name(f"{fix_out.stem}-fix{i + 1}{fix_out.suffix}")
+            if fix_mode_val == "redraw" and not check.get("has_character_issues"):
+                warnings.append(
+                    "画面仅有背景/细节问题（"
+                    + str(check.get("background_issues") or issues)
+                    + "），不值得整图重画，已保留当前图片。"
                 )
-            next_result = generate_image(new_prompt, **round_kwargs)
-            history.append(
-                {
-                    "round": i + 1,
-                    "path": next_result.get("path", ""),
-                    "prompt": new_prompt,
-                    "issues": issues,
-                    "translator": fb,
-                }
-            )
+                break
+            if fix_mode_val == "edit":
+                # 图生图局部修正：用当前图 + 最小改动指令，其余保持原样
+                instruction = build_fix_instruction(_fix_issues_text(check))
+                round_kwargs = dict(kwargs)
+                round_kwargs.pop("size", None)  # 自动沿用原图尺寸
+                if fix_out is not None:
+                    round_kwargs["out"] = str(
+                        fix_out.with_name(f"{fix_out.stem}-fix{i + 1}{fix_out.suffix}")
+                    )
+                round_kwargs["init_image"] = current_path
+                round_kwargs["backend"] = "vertex"
+                next_result = generate_image(instruction, **round_kwargs)
+                used_prompt = instruction
+            else:
+                # 整图重画（老方式）：翻译官根据反馈重写提示词再生成
+                fb = translate_prompt(
+                    prompt, cfg=cfg_all, engine=fix_engine, feedback=_fix_issues_text(check)
+                )
+                new_prompt = fb.get("rewritten") or final_prompt
+                round_kwargs = dict(kwargs)
+                if fix_out is not None:
+                    round_kwargs["out"] = str(
+                        fix_out.with_name(f"{fix_out.stem}-fix{i + 1}{fix_out.suffix}")
+                    )
+                next_result = generate_image(new_prompt, **round_kwargs)
+                used_prompt = new_prompt
+            entry: dict[str, Any] = {
+                "round": i + 1,
+                "path": next_result.get("path", ""),
+                "prompt": used_prompt,
+                "issues": issues,
+            }
+            if fix_mode_val == "edit":
+                entry["translator"] = None
+            else:
+                entry["translator"] = fb
+            if keep_best_val and next_result.get("ok") and next_result.get("path"):
+                recheck = run_vision_check(next_result["path"], prompt, cfg_all, tiered=True)
+                accepted, why = _fix_accepted(check, recheck)
+                entry["recheck_issues"] = str(recheck.get("issues") or "")
+                if not accepted:
+                    entry["verdict"] = "reverted"
+                    entry["reason"] = why
+                    warnings.append(f"第 {i + 1} 轮修正版更差（{why}），已自动退回上一版。")
+                    history.append(entry)
+                    reverted = True
+                    break
+                entry["verdict"] = "kept"
+            else:
+                entry["verdict"] = "kept"
+            history.append(entry)
             result = next_result
             current_path = next_result.get("path", "")
         result["auto_fix"] = {
             "ok": True,
             "rounds": len(history) - 1,
+            "fix_mode": fix_mode_val,
+            "keep_best": keep_best_val,
+            "reverted": reverted,
             "history": history,
         }
         last_round = history[-1]
+        if reverted and len(history) >= 2:
+            last_round = history[-2]
         result["translator"] = last_round.get("translator") or tr_info
         result["prompt_used"] = last_round.get("prompt") or final_prompt
     if warnings:
@@ -1653,6 +1858,8 @@ def cmd_generate(args: argparse.Namespace) -> dict[str, Any]:
         denoise=args.denoise,
         translator=getattr(args, "translator", "auto"),
         auto_fix=getattr(args, "auto_fix", None),
+        fix_mode=None if getattr(args, "fix_mode", None) in (None, "", "auto") else args.fix_mode,
+        keep_best=getattr(args, "keep_best", None),
     )
 
 
@@ -1871,13 +2078,34 @@ def build_parser() -> argparse.ArgumentParser:
         dest="auto_fix",
         action="store_true",
         default=None,
-        help="开启自动看图改图（生成后视觉检查，缺失细节自动重写重试）",
+        help="开启自动看图改图（生成后视觉检查，缺失细节自动局部修正重试）",
     )
     fix_group.add_argument(
         "--no-auto-fix",
         dest="auto_fix",
         action="store_false",
         help="关闭自动看图改图",
+    )
+    gen.add_argument(
+        "--fix-mode",
+        dest="fix_mode",
+        default=None,
+        choices=["auto", "edit", "redraw"],
+        help="自动改图方式：edit 局部小修(默认，推荐) / redraw 整图重画 / auto 跟随配置",
+    )
+    keep_group = gen.add_mutually_exclusive_group()
+    keep_group.add_argument(
+        "--keep-best",
+        dest="keep_best",
+        action="store_true",
+        default=None,
+        help="保留最佳：修正版更差时自动退回上一版（默认开启）",
+    )
+    keep_group.add_argument(
+        "--no-keep-best",
+        dest="keep_best",
+        action="store_false",
+        help="关闭保留最佳",
     )
     gen.add_argument("--json", action="store_true", help="输出 JSON（机器可读）")
 

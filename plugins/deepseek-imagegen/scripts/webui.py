@@ -365,6 +365,20 @@ HTML_PAGE = r"""<!doctype html>
               </select>
             </div>
             <div class="field"><label for="tr_maxfix">最多改图轮数</label><input id="tr_maxfix" type="number" min="0" max="3" placeholder="1"></div>
+            <div class="field">
+              <label for="tr_fixmode">自动改图方式</label>
+              <select id="tr_fixmode">
+                <option value="edit">局部小修（在原图上改，推荐）</option>
+                <option value="redraw">整图重画（老方式）</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="tr_keepbest">保留最佳（改坏了自动退回）</label>
+              <select id="tr_keepbest">
+                <option value="1">开启（推荐）</option>
+                <option value="0">关闭</option>
+              </select>
+            </div>
             <div class="field"><label for="tr_ds_base">DeepSeek 地址（留空=自动读 Codex 配置）</label><input id="tr_ds_base" placeholder="https://api.deepseek.com"></div>
             <div class="field"><label for="tr_ds_key">DeepSeek 密钥（留空=自动读 Codex 配置）</label><input id="tr_ds_key" type="password" placeholder="sk-..."></div>
             <div class="field"><label for="tr_ds_model">DeepSeek 模型</label><input id="tr_ds_model" placeholder="deepseek-v4-flash"></div>
@@ -543,6 +557,8 @@ function render() {
   $("tr_lang").value = tr.output_lang || "zh";
   $("tr_autofix").value = tr.auto_fix === false ? "0" : "1";
   $("tr_maxfix").value = tr.max_fix_rounds != null ? tr.max_fix_rounds : 1;
+  $("tr_fixmode").value = tr.fix_mode === "redraw" ? "redraw" : "edit";
+  $("tr_keepbest").value = tr.fix_keep_best === false ? "0" : "1";
   $("tr_ds_base").value = tr.deepseek && tr.deepseek.base_url || "";
   $("tr_ds_key").value = tr.deepseek && tr.deepseek.api_key || "";
   $("tr_ds_model").value = tr.deepseek && tr.deepseek.model || "deepseek-v4-flash";
@@ -605,6 +621,8 @@ function collect() {
     output_lang: $("tr_lang").value,
     auto_fix: $("tr_autofix").value === "1",
     max_fix_rounds: parseInt($("tr_maxfix").value) || 1,
+    fix_mode: $("tr_fixmode").value,
+    fix_keep_best: $("tr_keepbest").value === "1",
     deepseek: {
       base_url: $("tr_ds_base").value.trim(),
       api_key: $("tr_ds_key").value.trim(),
@@ -738,7 +756,10 @@ async function testGenerate() {
       meta += ` · 翻译官 ${used}`;
       if (t.fallback) meta += `(自动切换)`;
     }
-    if (r.auto_fix) meta += ` · 自动改图 ${r.auto_fix.rounds} 轮`;
+    if (r.auto_fix) {
+      meta += ` · 自动改图 ${r.auto_fix.rounds} 轮`;
+      if (r.auto_fix.reverted) meta += ` · 修正更差，已退回原图`;
+    }
     $("previewMeta").innerHTML = `<span>${meta}</span><code>${esc(r.path)}</code>`;
     toast("✅ 生成成功", "ok");
   } catch (e) {

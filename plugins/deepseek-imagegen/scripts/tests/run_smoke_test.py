@@ -432,6 +432,216 @@ def test_looks_broken() -> None:
     check("纯英文回复不判异常", not image_gen._looks_broken("A girl in snow", had_cjk=False))
 
 
+def test_parse_tiered_issues() -> None:
+    sample = (
+        "人物问题：无\n"
+        "背景问题：\n"
+        "1. 地面缺少圆形阴影\n"
+        "2. 背景音符太少"
+    )
+    parts = image_gen._parse_tiered_issues(sample)
+    check("tiered 解析出人物问题", parts["character"] == "")
+    check("tiered 解析出背景问题", "地面缺少圆形阴影" in parts["background"])
+    check("tiered 解析出第二条", "背景音符太少" in parts["background"])
+    check("tiered 标记已解析", parts.get("parsed") is True)
+
+    sample2 = "人物问题：\n1. 耳机只画了一只耳罩\n背景问题：无"
+    parts2 = image_gen._parse_tiered_issues(sample2)
+    check("tiered 解析人物问题", "耳机只画了一只耳罩" in parts2["character"])
+    check("tiered 人物背景都无", parts2["background"] == "")
+
+    sample3 = "这个画面整体不错"
+    parts3 = image_gen._parse_tiered_issues(sample3)
+    check("tiered 无标题时整段按人物级", parts3["character"] == sample3)
+    check("tiered 无标题标记未解析", parts3.get("parsed") is False)
+
+
+def test_count_issues() -> None:
+    check("计数 0", image_gen._count_issues("无") == 0)
+    check("计数空串", image_gen._count_issues("") == 0)
+    check("计数单条", image_gen._count_issues("1. 耳机少一只") == 1)
+    check("计数多条", image_gen._count_issues("1. 耳机少一只\n2. 缺阴影\n3. 背景太乱") == 3)
+
+
+def test_build_fix_instruction() -> None:
+    instruction = image_gen.build_fix_instruction("1. 耳机只画了一只耳罩\n2. 地面缺少圆形阴影")
+    check("修正指令要求保持原样", "保持原样" in instruction)
+    check("修正指令包含问题", "耳机只画了一只耳罩" in instruction)
+    check("修正指令包含问题2", "地面缺少圆形阴影" in instruction)
+    check("修正指令禁止文字", "不要出现任何文字" in instruction)
+    empty = image_gen.build_fix_instruction("无")
+    check("修正指令空问题处理", "无需修改" in empty)
+
+
+def test_fix_accepted() -> None:
+    old = {
+        "ok": True,
+        "has_issues": True,
+        "has_character_issues": False,
+        "issue_counts": {"character": 0, "background": 1},
+    }
+    good = {
+        "ok": True,
+        "has_issues": False,
+        "has_character_issues": False,
+        "issue_counts": {"character": 0, "background": 0},
+    }
+    bad = {
+        "ok": True,
+        "has_issues": True,
+        "has_character_issues": True,
+        "issue_counts": {"character": 1, "background": 0},
+    }
+    same_total = {
+        "ok": True,
+        "has_issues": True,
+        "has_character_issues": False,
+        "issue_counts": {"character": 0, "background": 1},
+    }
+    accepted, _ = image_gen._fix_accepted(old, good)
+    check("保留最佳：修好则保留", accepted)
+    accepted, why = image_gen._fix_accepted(old, bad)
+    check("保留最佳：引入人物错误则退回", not accepted)
+    check("保留最佳：退回原因含人物", "人物" in why)
+    accepted, _ = image_gen._fix_accepted(old, same_total)
+    check("保留最佳：问题数未增加则保留", accepted)
+
+
+def test_auto_fix_edit_loop() -> None:
+    """全流程离线测试：编辑模式 + 保留最佳（改坏退回 / 修好保留 / 背景细节不重画）。"""
+    base_check = {
+        "ok": True,
+        "has_issues": True,
+        "has_character_issues": False,
+        "issues": "人物问题：\n无\n\n背景问题：\n1. 缺阴影",
+        "character_issues": "",
+        "background_issues": "1. 缺阴影",
+        "issue_counts": {"character": 0, "background": 1},
+    }
+    good_check = {
+        "ok": True,
+        "has_issues": False,
+        "has_character_issues": False,
+        "issues": "人物问题：\n无\n\n背景问题：\n无",
+        "character_issues": "",
+        "background_issues": "",
+        "issue_counts": {"character": 0, "background": 0},
+    }
+    bad_check = {
+        "ok": True,
+        "has_issues": True,
+        "has_character_issues": True,
+        "issues": "人物问题：\n1. 耳机少一只\n背景问题：\n无",
+        "character_issues": "1. 耳机少一只",
+        "background_issues": "",
+        "issue_counts": {"character": 1, "background": 0},
+    }
+
+    with tempfile.TemporaryDirectory() as tmp:
+        orig_png = Path(tmp) / "orig.png"
+        orig_png.write_bytes(b"\x89PNG-original")
+        calls: dict = {"vision": [], "gen": []}
+
+        def fake_check(path, user_text, cfg, tiered=False):
+            calls["vision"].append(str(path))
+            if str(path).endswith("out-fix1.png"):
+                return dict(bad_check)
+            if len(calls["vision"]) > 1:
+                return dict(good_check)
+            return dict(base_check)
+
+        def fake_gen(prompt, **kwargs):
+            calls["gen"].append(prompt)
+            out = Path(kwargs["out"])
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(b"\x89PNG-new")
+            return {"ok": True, "path": str(out), "backend": "vertex", "seed": 1}
+
+        orig_check = image_gen.run_vision_check
+        orig_gen = image_gen.generate_image
+        image_gen.run_vision_check = fake_check
+        image_gen.generate_image = fake_gen
+        try:
+            # 场景1：编辑模式，修正版更差 -> 自动退回
+            result = image_gen.generate_with_translator(
+                "测试需求",
+                backend="vertex",
+                out=str(Path(tmp) / "out.png"),
+                init_image=str(orig_png),
+                translator="off",
+                auto_fix=True,
+                fix_mode="edit",
+                keep_best=True,
+            )
+        finally:
+            image_gen.run_vision_check = orig_check
+            image_gen.generate_image = orig_gen
+        af = result.get("auto_fix") or {}
+        check(
+            "编辑模式修正指令为局部小修",
+            any("保持原样" in p for p in calls["gen"]),
+        )
+        check("改坏时自动退回", af.get("reverted") is True)
+        check("退回后结果回到上一版", result["path"].endswith("out.png"))
+        check("退回轮次记录完整", len(af.get("history") or []) == 2)
+        check("退回原因含人物", "人物" in (af["history"][-1].get("reason") or ""))
+
+        with tempfile.TemporaryDirectory() as tmp2:
+            orig2 = Path(tmp2) / "orig.png"
+            orig2.write_bytes(b"\x89PNG-original")
+            calls2: dict = {"vision": [], "gen": []}
+
+            def fake_check2(path, user_text, cfg, tiered=False):
+                calls2["vision"].append(str(path))
+                if str(path).endswith("out-fix1.png"):
+                    return dict(good_check)
+                return dict(base_check)
+
+            def fake_gen2(prompt, **kwargs):
+                calls2["gen"].append(prompt)
+                out = Path(kwargs["out"])
+                out.parent.mkdir(parents=True, exist_ok=True)
+                out.write_bytes(b"\x89PNG-new")
+                return {"ok": True, "path": str(out), "backend": "vertex", "seed": 1}
+
+            image_gen.run_vision_check = fake_check2
+            image_gen.generate_image = fake_gen2
+            try:
+                # 场景2：编辑模式，修正版修好 -> 保留
+                result2 = image_gen.generate_with_translator(
+                    "测试需求",
+                    backend="vertex",
+                    out=str(Path(tmp2) / "out.png"),
+                    init_image=str(orig2),
+                    translator="off",
+                    auto_fix=True,
+                    fix_mode="edit",
+                    keep_best=True,
+                )
+                # 场景3：重画模式，仅背景问题 -> 不重画
+                result3 = image_gen.generate_with_translator(
+                    "测试需求",
+                    backend="vertex",
+                    out=str(Path(tmp2) / "out3.png"),
+                    init_image=str(orig2),
+                    translator="off",
+                    auto_fix=True,
+                    fix_mode="redraw",
+                    keep_best=True,
+                )
+            finally:
+                image_gen.run_vision_check = orig_check
+                image_gen.generate_image = orig_gen
+            af2 = result2.get("auto_fix") or {}
+            check("修好时保留修正版", af2.get("reverted") is False)
+            check("修好后结果为新图", result2["path"].endswith("out-fix1.png"))
+            check("修好轮次记录完整", len(af2.get("history") or []) == 2)
+            af3 = result3.get("auto_fix") or {}
+            check("重画模式背景细节不重画", af3.get("rounds") == 0)
+            check("重画模式保留原图", result3["path"].endswith("out3.png"))
+            check("重画模式给出提示", any("背景" in str(w) for w in result3.get("warnings") or []))
+
+
 def main() -> int:
     print("=== deepseek-imagegen 冒烟测试 ===")
     test_parse_size()
@@ -459,6 +669,11 @@ def main() -> int:
     test_translator_system_prompt()
     test_translate_off_passthrough()
     test_looks_broken()
+    test_parse_tiered_issues()
+    test_count_issues()
+    test_build_fix_instruction()
+    test_fix_accepted()
+    test_auto_fix_edit_loop()
     print()
     if FAILURES:
         print(f"失败 {len(FAILURES)} 项：{', '.join(FAILURES)}")
