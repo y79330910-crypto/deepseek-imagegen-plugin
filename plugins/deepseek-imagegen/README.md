@@ -106,6 +106,26 @@ vertex 走本地代理的 `/images/edits` 编辑接口，SD WebUI 走 `/sdapi/v1
 
 每次生成成功后，脚本会自动在 `mirror_dir`（默认 `C:\Users\yjq\Pictures\codex`）保留一份副本，方便集中管理；复制失败不影响主文件。可在 `config.json` 或设置页面里修改 `mirror_dir`（留空=不复制）。`--json` 输出的 `mirror_path` 字段显示副本位置。
 
+## 提示词翻译官（v0.4.0 新增）
+
+用户的中文需求会先由「翻译官」按固定模板改写成结构化生图提示词（主体→环境→光影→风格→构图→画面文字），再交给图像模型，能明显减少漏画、画错细节。三种引擎：
+
+- **DeepSeek（默认）**：中文理解好；地址/密钥留空时自动读取 Codex 配置（`~/.codex/config.toml` 的 `[model_providers.deepseek]`），密钥不会写入本插件配置。
+- **Gemini**：走本地 Vertex Proxy 的最佳文本模型（自动挑选，如 `gemini-3.6-flash`），稳定支持中文。
+- **off**：关闭翻译，原文直传。
+
+若 DeepSeek 通道异常（例如返回问号/空回复），脚本会自动改用本地 Gemini，出图不会中断；`--json` 输出里的 `translator.engine_used` 与 `fallback` 字段可看到实际使用的引擎。
+
+单独查看翻译结果：
+
+```text
+python image_gen.py translate "一只戴宇航员头盔的柴犬，火星背景，写实" [--engine deepseek|gemini|off]
+```
+
+### 自动看图改图（--auto-fix）
+
+生成后自动调用视觉插件的 `vision_bridge.py` 对照用户需求检查图片，把缺失细节反馈给翻译官重写提示词并重新生成（默认最多 1 轮，可配置）。结果里的 `auto_fix.rounds` 与 `auto_fix.history` 记录每一轮的问题和图片路径。关闭：`--no-auto-fix` 或设置页关闭开关。
+
 ### 本地 Stable Diffusion WebUI / Forge
 
 1. 启动 WebUI 时带上 API 参数：`webui-user.bat --api`（默认监听 `http://127.0.0.1:7860`）。
@@ -120,6 +140,12 @@ vertex 走本地代理的 `/images/edits` 编辑接口，SD WebUI 走 `/sdapi/v1
 4. 图生图会自动把参考图上传到 ComfyUI 再生成，默认去噪强度 0.6（`comfyui.denoise` 或 `--denoise`）。
 
 ## 更新日志
+
+### v0.4.0
+
+- 新增提示词翻译官：DeepSeek（默认）/ Gemini / 关闭三种引擎，中文需求自动改写为结构化生图提示词
+- 新增自动看图改图：生成后调用视觉插件检查缺失细节，自动重写提示词并重试
+- 设置页面新增翻译官配置与「先翻译」按钮；生成命令新增 `--translator` / `--auto-fix` 选项
 
 ### v0.3.4
 

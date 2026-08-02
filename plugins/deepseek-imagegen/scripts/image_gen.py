@@ -31,6 +31,7 @@ import os
 import random
 import re
 import shutil
+import subprocess
 import sys
 import time
 import urllib.error
@@ -57,6 +58,22 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "default_backend": "vertex",
     "save_dir": "",
     "mirror_dir": DEFAULT_MIRROR_DIR,
+    "translator": {
+        "enabled": True,
+        "engine": "deepseek",
+        "output_lang": "zh",
+        "auto_fix": True,
+        "max_fix_rounds": 1,
+        "deepseek": {
+            "base_url": "",
+            "api_key": "",
+            "model": "deepseek-v4-flash",
+        },
+        "gemini": {
+            "model": "",
+        },
+        "vision_bridge": "",
+    },
     "pollinations": {
         "base_url": "https://image.pollinations.ai/prompt",
         "model": "",
@@ -155,22 +172,30 @@ def _http(
         data = raw_body
     elif payload is not None:
         data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(url, data=data, method=method, headers=headers or {})
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.status, resp.read(), resp.headers.get("Content-Type", "")
-    except urllib.error.HTTPError as exc:
-        body = b""
+    last_detail = ""
+    for attempt in range(3):
+        req = urllib.request.Request(url, data=data, method=method, headers=headers or {})
         try:
-            body = exc.read()
-        except Exception:
-            pass
-        detail = body[:800].decode("utf-8", errors="replace")
-        raise GenError(f"HTTP {exc.code} from {url}: {detail}") from exc
-    except urllib.error.URLError as exc:
-        raise GenError(f"无法连接 {url}：{exc.reason}") from exc
-    except TimeoutError as exc:
-        raise GenError(f"请求超时（{timeout}s）：{url}") from exc
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.status, resp.read(), resp.headers.get("Content-Type", "")
+        except urllib.error.HTTPError as exc:
+            body = b""
+            try:
+                body = exc.read()
+            except Exception:
+                pass
+            detail = body[:800].decode("utf-8", errors="replace")
+            if exc.code == 429 and attempt < 2:
+                delay = 8 * (attempt + 1)
+                time.sleep(delay)
+                last_detail = detail
+                continue
+            raise GenError(f"HTTP {exc.code} from {url}: {detail}") from exc
+        except urllib.error.URLError as exc:
+            raise GenError(f"无法连接 {url}：{exc.reason}") from exc
+        except TimeoutError as exc:
+            raise GenError(f"请求超时（{timeout}s）：{url}") from exc
+    raise GenError(f"HTTP 429 from {url}: {last_detail}")
 
 
 def parse_size(size: str) -> tuple[int, int]:
@@ -418,6 +443,438 @@ def pick_best_image_model(models: list[str]) -> str:
         return total
 
     return max(candidates, key=score)
+
+
+def pick_best_text_model(models: list[str]) -> str:
+    """从模型列表中挑选最适合当提示词翻译官的聊天模型（排除图像/音频/翻译等专用模型）。"""
+    skip = (
+        "image", "tts", "audio", "veo", "lyria", "chirp", "translate",
+        "virtual-try-on", "live", "omni",
+    )
+    candidates = []
+    for m in models:
+        low = str(m).lower()
+        if any(s in low for s in skip):
+            continue
+        if low.startswith(("fake", "假流式", "假")):
+            continue
+        candidates.append(m)
+    if not candidates:
+        return ""
+
+    def score(model: str) -> int:
+        low = model.lower()
+        total = 0
+        if low.endswith("-preview"):
+            total -= 60
+        if "pro" in low:
+            total += 20
+        elif "flash" in low:
+            total += 30
+        if "lite" in low:
+            total -= 10
+        version = re.search(r"(\d+)(?:\.(\d+))?", low)
+        if version:
+            total += int(version.group(1)) * 10 + int(version.group(2) or 0)
+        return total
+
+    return max(candidates, key=score)
+
+
+def _read_deepseek_credential_from_codex() -> tuple[str, str]:
+    """从环境变量或 Codex 配置 ~/.codex/config.toml 读取 DeepSeek 供应商的地址与密钥（不回显密钥）。"""
+    base_url = os.environ.get("DEEPSEEK_BASE_URL", "").strip()
+    api_key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
+    codex_cfg = Path.home() / ".codex" / "config.toml"
+    if codex_cfg.is_file():
+        try:
+            text = codex_cfg.read_text(encoding="utf-8")
+        except OSError:
+            return base_url, api_key
+        match = re.search(
+            r'\[model_providers\.deepseek\][^\[]*?base_url\s*=\s*"([^"]+)"[^\[]*?'
+            r'experimental_bearer_token\s*=\s*"([^"]+)"',
+            text,
+            re.S,
+        )
+        if match:
+            if not base_url:
+                base_url = match.group(1).strip().rstrip("/")
+            if not api_key:
+                api_key = match.group(2).strip()
+    return base_url, api_key
+
+
+def _chat_text(
+    base_url: str,
+    api_key: str,
+    model: str,
+    messages: list[dict[str, Any]],
+    max_tokens: int = 4096,
+    timeout: int = 120,
+) -> str:
+    """调用 OpenAI 兼容 /chat/completions，返回助手文本；推理模型思考过长时自动加大上限重试。"""
+
+    def call(tokens: int) -> str:
+        payload = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": tokens,
+            "temperature": 0.8,
+            "stream": False,
+        }
+        _status, body, _ctype = _http(
+            f"{base_url.rstrip('/')}/chat/completions",
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "User-Agent": f"{APP_NAME}/0.4",
+            },
+            payload=payload,
+            timeout=timeout,
+        )
+        data = json.loads(body.decode("utf-8", errors="replace"))
+        try:
+            content = data["choices"][0]["message"].get("content")
+        except (KeyError, IndexError) as exc:
+            raise GenError(f"聊天接口返回异常：{str(data)[:300]}") from exc
+        return str(content or "").strip()
+
+    text = call(max_tokens)
+    if not text:
+        text = call(max_tokens * 2)
+    return text
+
+
+def _deepseek_text(
+    base_url: str,
+    api_key: str,
+    model: str,
+    messages: list[dict[str, Any]],
+    max_tokens: int = 4096,
+) -> str:
+    """调用 DeepSeek 接口（优先 /v1/responses，失败时回退 /v1/chat/completions）。"""
+    system = "\n\n".join(
+        str(m.get("content") or "") for m in messages if m.get("role") == "system"
+    )
+    user = "\n\n".join(
+        str(m.get("content") or "") for m in messages if m.get("role") == "user"
+    )
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "User-Agent": f"{APP_NAME}/0.4",
+    }
+
+    payload = {
+        "model": model,
+        "instructions": system,
+        "input": [
+            {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": user}],
+            }
+        ],
+        "max_output_tokens": max_tokens,
+    }
+    try:
+        _status, body, _ctype = _http(
+            f"{base_url.rstrip('/')}/v1/responses",
+            method="POST",
+            headers=headers,
+            payload=payload,
+            timeout=120,
+        )
+        data = json.loads(body.decode("utf-8", errors="replace"))
+        parts: list[str] = []
+        for item in data.get("output", []):
+            if item.get("type") == "message":
+                for chunk in item.get("content", []):
+                    if chunk.get("type") == "output_text" and chunk.get("text"):
+                        parts.append(str(chunk["text"]))
+        if parts:
+            return "\n".join(parts).strip()
+    except GenError:
+        pass
+
+    # 回退到 OpenAI 兼容的 chat/completions
+    payload = {
+        "model": model,
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": 0.8,
+        "stream": False,
+    }
+    _status, body, _ctype = _http(
+        f"{base_url.rstrip('/')}/v1/chat/completions",
+        method="POST",
+        headers=headers,
+        payload=payload,
+        timeout=120,
+    )
+    data = json.loads(body.decode("utf-8", errors="replace"))
+    try:
+        return str(data["choices"][0]["message"].get("content") or "").strip()
+    except (KeyError, IndexError) as exc:
+        raise GenError(f"DeepSeek 接口返回异常：{str(data)[:300]}") from exc
+
+
+def _looks_broken(text: str, had_cjk: bool) -> bool:
+    """判断翻译结果是否因通道问题变成“问号/没收到消息”之类的废回复。"""
+    if not text or not text.strip():
+        return True
+    if not had_cjk:
+        return False
+    low = text.lower()
+    markers = (
+        "问号", "没有看到", "没看到", "无法理解", "没有收到", "没有显示",
+        "question mark", "question marks", "didn't understand", "did not understand",
+        "didn't come through", "did not come through", "not display", "not come through",
+        "only question", "only got question", "string of question",
+    )
+    return any(m in low for m in markers)
+
+
+def build_translator_system(lang: str = "zh") -> str:
+    """生成提示词翻译官的系统提示词（参考 Gemini 官方提示指南与社区最佳实践）。"""
+    if lang == "en":
+        return (
+            "You are a senior visual prompt engineer. Rewrite the user's image request "
+            "into a well-structured prompt for modern image models such as gemini-3-pro-image.\n\n"
+            "Hard rules:\n"
+            "1. Use natural, descriptive full sentences. Never dump isolated keywords.\n"
+            "2. Cover, in order: subject (identity, appearance, outfit, pose, expression) -> "
+            "environment (place, background, depth) -> lighting (source, color, contrast, rim light) -> "
+            "style/medium (Japanese anime illustration, thick paint, watercolor, photorealism, etc.) -> "
+            "composition (aspect ratio, camera angle, rule of thirds, foreground/midground/background) -> "
+            "on-image text if any (put exact text in quotes, state position and font style, at most 2-3 phrases).\n"
+            "3. Keep every detail the user mentioned; you may add reasonable details to complete the scene.\n"
+            "4. Keep the prompt between 80 and 250 words.\n"
+            "5. On-image text should be English and placed in quotes.\n"
+            "6. Output only the prompt itself: no explanations, no Markdown, no surrounding quotes."
+        )
+    return (
+        "你是一位精通图像生成提示词的资深视觉设计师。请把用户用中文描述的画面需求，"
+        "改写成适合 gemini-3-pro-image 等新一代图像模型的生图提示词。\n\n"
+        "硬性要求：\n"
+        "1. 用自然连贯的完整句子描述，禁止堆砌孤立关键词；Gemini 图像模型喜欢自然描述段落，讨厌关键词清单。\n"
+        "2. 按顺序覆盖：主体（身份、外貌、服装、姿态、表情）→ 环境背景（地点、建筑、天气、景深层次）→ "
+        "光影（光源、颜色、冷暖对比、轮廓光）→ 风格媒介（日系动漫插画、厚涂、水彩、写实摄影等）→ "
+        "构图（画幅比例、机位、居中/三分法、前景中景背景）→ 画面文字（如有，用英文引号标出，"
+        "例如 \"Merry Xmas ♡\"，并说明位置与字体风格，最多 2-3 条）。\n"
+        "3. 用户提到的每一个细节都必须保留，不许遗漏；可以补充合理细节增强画面完成度。\n"
+        "4. 提示词长度控制在 150-500 字之间；内容复杂时宁长勿短。\n"
+        "5. 画面中的文字优先使用英文并放进引号。\n"
+        "6. 只输出提示词正文：不要解释、不要 Markdown、不要编号列表、不要用引号包裹全文。"
+    )
+
+
+def translate_prompt(
+    user_text: str,
+    cfg: Optional[dict[str, Any]] = None,
+    engine: str = "auto",
+    feedback: str = "",
+    max_tokens: int = 4096,
+) -> dict[str, Any]:
+    """提示词翻译官：把用户需求改写成结构化生图提示词。"""
+    cfg = cfg if cfg is not None else load_config()
+    tr = cfg.get("translator") or {}
+    if not isinstance(tr, dict):
+        tr = {}
+    if engine in ("", "auto"):
+        engine = str(tr.get("engine") or "deepseek").strip().lower()
+    engine = engine.strip().lower()
+    if engine in ("off", "none", "direct", "直传"):
+        return {
+            "ok": True,
+            "engine": "off",
+            "engine_used": "off",
+            "model": "",
+            "original": user_text,
+            "rewritten": user_text,
+            "fallback": False,
+        }
+    if engine not in ("deepseek", "gemini"):
+        engine = "deepseek"
+
+    lang = str(tr.get("output_lang") or "zh").lower()
+    system = build_translator_system(lang)
+    user_msg = str(user_text).strip()
+    if feedback and str(feedback).strip():
+        user_msg += "\n\n【上次生成后发现的问题，请在重写时重点修正】\n" + str(feedback).strip()
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user_msg},
+    ]
+    had_cjk = any("\u4e00" <= ch <= "\u9fff" for ch in user_text)
+
+    if engine == "deepseek":
+        ds = tr.get("deepseek") or {}
+        if not isinstance(ds, dict):
+            ds = {}
+        base_url = str(ds.get("base_url") or "").strip().rstrip("/")
+        api_key = str(ds.get("api_key") or "").strip()
+        model = str(ds.get("model") or "deepseek-v4-flash").strip() or "deepseek-v4-flash"
+        if not base_url or not api_key:
+            codex_base, codex_key = _read_deepseek_credential_from_codex()
+            base_url = base_url or codex_base
+            api_key = api_key or codex_key
+        if not base_url or not api_key:
+            raise GenError(
+                "翻译官(deepseek)未配置地址/密钥：请在设置页填写，或改用 gemini 引擎。"
+            )
+        fallback_reason = ""
+        try:
+            text = _deepseek_text(base_url, api_key, model, messages, max_tokens)
+        except GenError as exc:
+            text = ""
+            fallback_reason = str(exc)
+        if _looks_broken(text, had_cjk):
+            info = discover_vertex(cfg)
+            gm_model = str((tr.get("gemini") or {}).get("model") or "").strip()
+            if not gm_model:
+                gm_model = pick_best_text_model(info["models"])
+            if not gm_model:
+                raise GenError("DeepSeek 通道异常且未找到可用的 Gemini 文本模型，请检查配置。")
+            gm_text = _chat_text(info["base_url"], info["api_key"], gm_model, messages, max_tokens)
+            return {
+                "ok": True,
+                "engine": "deepseek",
+                "engine_used": "gemini",
+                "model": gm_model,
+                "original": user_text,
+                "rewritten": gm_text,
+                "fallback": True,
+                "fallback_reason": fallback_reason or "DeepSeek 通道未返回有效中文回复，已自动改用本地 Gemini",
+            }
+        return {
+            "ok": True,
+            "engine": "deepseek",
+            "engine_used": "deepseek",
+            "model": model,
+            "original": user_text,
+            "rewritten": text,
+            "fallback": False,
+        }
+
+    # gemini 引擎：走本地 Vertex Proxy 的最佳文本模型
+    info = discover_vertex(cfg)
+    gm_model = str((tr.get("gemini") or {}).get("model") or "").strip()
+    if not gm_model:
+        gm_model = pick_best_text_model(info["models"])
+    if not gm_model:
+        raise GenError("未找到可用的 Gemini 文本模型，请检查 Vertex Proxy 模型列表。")
+    text = _chat_text(info["base_url"], info["api_key"], gm_model, messages, max_tokens)
+    return {
+        "ok": True,
+        "engine": "gemini",
+        "engine_used": "gemini",
+        "model": gm_model,
+        "original": user_text,
+        "rewritten": text,
+        "fallback": False,
+    }
+
+
+def find_vision_bridge(cfg: dict[str, Any]) -> str:
+    """定位视觉识别桥接脚本（自动改图检查用）。"""
+    tr = cfg.get("translator") or {}
+    if not isinstance(tr, dict):
+        tr = {}
+    cand = str(tr.get("vision_bridge") or "").strip().strip('"')
+    if cand and Path(cand).is_file():
+        return cand
+    roots = [
+        Path.home() / ".codex" / "plugins" / "cache" / "deepseek-vision" / "deepseek-vision",
+        Path("D:/视觉识别支持的插件/plugins/deepseek-vision"),
+    ]
+    for root in roots:
+        if root.is_dir():
+            for p in sorted(root.glob("**/vision_bridge.py"), reverse=True):
+                if p.is_file():
+                    return str(p)
+    return ""
+
+
+def _vision_says_ok(text: str) -> bool:
+    t = str(text or "").strip().strip("。.！! ")
+    if len(t) > 24:
+        return False
+    return any(m in t for m in ("无", "没有", "没问题", "符合", "ok", "okay", "none", "good"))
+
+
+def run_vision_check(
+    image_path: str,
+    user_text: str,
+    cfg: dict[str, Any],
+) -> dict[str, Any]:
+    """调用视觉插件检查生成图与用户需求的差距。"""
+    bridge = find_vision_bridge(cfg)
+    if not bridge:
+        return {"ok": False, "reason": "未找到视觉识别桥接脚本，请在设置页填写", "issues": ""}
+    question = (
+        "请对照以下用户需求，检查这张图片：\n"
+        + str(user_text)[:1500]
+        + "\n\n逐条列出画面中缺失、画错或需要修正的细节。"
+        "如果画面已经符合需求，只回答：无"
+    )
+    # 优先在进程内直接调用视觉桥接函数（中文参数不走命令行，避免 Windows 编码问题）
+    try:
+        bridge_dir = str(Path(bridge).parent)
+        if bridge_dir not in sys.path:
+            sys.path.insert(0, bridge_dir)
+        import vision_bridge  # type: ignore  # noqa: PLC0415
+
+        vb_cfg = vision_bridge.load_config(None)
+        args_ns = argparse.Namespace(backend=None, profile=None, model=None, lang="zh")
+        _backend, _profile, _model, result = vision_bridge.run_command(
+            "ask", image_path, question, vb_cfg, args_ns
+        )
+        issues = str(result or "").strip()
+        if not issues:
+            return {"ok": False, "reason": "视觉检查返回为空", "issues": ""}
+        return {"ok": True, "issues": issues, "has_issues": not _vision_says_ok(issues)}
+    except Exception as exc:  # noqa: BLE001
+        inproc_error = str(exc)
+    # 回退：子进程方式（中文问题用 base64 编码，纯 ASCII 传递）
+    b64_question = base64.b64encode(question.encode("utf-8")).decode("ascii")
+    ascii_question = (
+        "Decode the following base64 text as UTF-8, then use the decoded Chinese text "
+        "as the user requirement to check this image. List every missing or wrong detail. "
+        "If the image already matches the requirement, answer only: 无\nBASE64:\n" + b64_question
+    )
+    try:
+        proc = subprocess.run(
+            [sys.executable, bridge, "ask", image_path, ascii_question, "--json"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=240,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "reason": f"视觉检查执行失败：{exc}", "issues": ""}
+    if proc.returncode != 0:
+        return {
+            "ok": False,
+            "reason": (
+                proc.stderr.strip()
+                or proc.stdout.strip()[:300]
+                or "视觉检查失败"
+            ),
+            "issues": "",
+        }
+    try:
+        data = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return {"ok": False, "reason": "视觉检查输出无法解析", "issues": ""}
+    issues = str(data.get("result") or "").strip()
+    if not issues:
+        return {"ok": False, "reason": "视觉检查返回为空", "issues": ""}
+    return {"ok": True, "issues": issues, "has_issues": not _vision_says_ok(issues)}
 
 
 def discover_vertex(cfg: dict[str, Any]) -> dict[str, Any]:
@@ -1051,10 +1508,125 @@ def generate_image(
     return result
 
 
+# ------------------------------------------------ translator + auto-fix
+
+def generate_with_translator(
+    prompt: str,
+    *,
+    backend: str = "auto",
+    out: Optional[str] = None,
+    size: str = "",
+    seed: Optional[int] = None,
+    negative: str = "",
+    steps: Optional[int] = None,
+    cfg: Optional[float] = None,
+    model: str = "",
+    init_image: Optional[str] = None,
+    denoise: Optional[float] = None,
+    translator: str = "auto",
+    auto_fix: Optional[bool] = None,
+) -> dict[str, Any]:
+    """生成图片：可选先用翻译官改写提示词，再按需自动看图改图。"""
+    cfg_all = load_config()
+    tr = cfg_all.get("translator") or {}
+    if not isinstance(tr, dict):
+        tr = {}
+    engine = str(translator or "auto")
+    if engine in ("", "auto"):
+        engine = str(tr.get("engine") or "deepseek")
+    tr_enabled = engine.strip().lower() not in ("off", "none", "direct", "直传")
+    tr_info: dict[str, Any] = {
+        "ok": True,
+        "engine": "off",
+        "engine_used": "off",
+        "model": "",
+        "original": prompt,
+        "rewritten": prompt,
+        "fallback": False,
+    }
+    if tr_enabled:
+        tr_info = translate_prompt(prompt, cfg=cfg_all, engine=engine)
+        final_prompt = tr_info.get("rewritten") or prompt
+    else:
+        final_prompt = prompt
+    fix_engine = engine if engine.strip().lower() not in ("off", "none", "direct", "直传") else str(
+        tr.get("engine") or "deepseek"
+    )
+
+    kwargs = dict(
+        backend=backend,
+        out=out,
+        size=size,
+        seed=seed,
+        negative=negative,
+        steps=steps,
+        cfg=cfg,
+        model=model,
+        init_image=init_image,
+        denoise=denoise,
+    )
+    result = generate_image(final_prompt, **kwargs)
+    result["translator"] = tr_info
+    result["prompt_used"] = final_prompt
+
+    fix_wanted = auto_fix if auto_fix is not None else bool(tr.get("auto_fix", False))
+    max_rounds = 0
+    try:
+        max_rounds = max(0, int(tr.get("max_fix_rounds", 1) or 0))
+    except (TypeError, ValueError):
+        max_rounds = 1
+    history: list[dict[str, Any]] = [
+        {"round": 0, "path": result.get("path", ""), "prompt": final_prompt}
+    ]
+    warnings: list[str] = []
+    if (
+        fix_wanted
+        and max_rounds > 0
+        and resolve_backend(backend, cfg_all) == "vertex"
+        and not init_image
+    ):
+        current_path = result.get("path", "")
+        for i in range(max_rounds):
+            if not current_path or not os.path.isfile(current_path):
+                warnings.append(f"自动改图第 {i + 1} 轮跳过：找不到生成图片。")
+                break
+            check = run_vision_check(current_path, prompt, cfg_all)
+            if not check.get("ok"):
+                warnings.append("自动看图检查未完成：" + str(check.get("reason") or ""))
+                break
+            issues = str(check.get("issues") or "")
+            history[-1]["issues"] = issues
+            if not check.get("has_issues", True):
+                break
+            # 让翻译官根据视觉反馈重写提示词并再生成一次
+            fb = translate_prompt(prompt, cfg=cfg_all, engine=fix_engine, feedback=issues)
+            new_prompt = fb.get("rewritten") or final_prompt
+            next_result = generate_image(new_prompt, **kwargs)
+            history.append(
+                {
+                    "round": i + 1,
+                    "path": next_result.get("path", ""),
+                    "prompt": new_prompt,
+                    "issues": issues,
+                    "translator": fb,
+                }
+            )
+            result = next_result
+            current_path = next_result.get("path", "")
+        result["auto_fix"] = {
+            "ok": True,
+            "rounds": len(history) - 1,
+            "history": history,
+        }
+    if warnings:
+        result["warnings"] = warnings
+    return result
+
+
 # ---------------------------------------------------------------- commands
 
 def cmd_generate(args: argparse.Namespace) -> dict[str, Any]:
-    return generate_image(
+    return generate_with_translator(
         args.prompt,
         backend=args.backend,
         out=args.out,
@@ -1066,7 +1638,19 @@ def cmd_generate(args: argparse.Namespace) -> dict[str, Any]:
         model=args.model,
         init_image=args.image or None,
         denoise=args.denoise,
+        translator=getattr(args, "translator", "auto"),
+        auto_fix=getattr(args, "auto_fix", None),
     )
+
+
+def cmd_translate(args: argparse.Namespace) -> dict[str, Any]:
+    result = translate_prompt(
+        args.prompt,
+        engine=getattr(args, "engine", "auto"),
+        feedback=getattr(args, "feedback", ""),
+    )
+    result["ok"] = True
+    return result
 
 
 def _health_check(label: str, check: Any, cfg: dict[str, Any]) -> dict[str, Any]:
@@ -1262,7 +1846,38 @@ def build_parser() -> argparse.ArgumentParser:
         help="参考图片（图生图）：本地路径或 http(s) 链接（vertex / sd-webui / comfyui）",
     )
     gen.add_argument("--denoise", type=float, default=None, help="去噪强度 0~1（图生图，默认 0.6）")
+    gen.add_argument(
+        "--translator",
+        default="auto",
+        choices=["auto", "deepseek", "gemini", "off"],
+        help="提示词翻译官：deepseek(默认) / gemini / off(直传) / auto(跟随配置)",
+    )
+    fix_group = gen.add_mutually_exclusive_group()
+    fix_group.add_argument(
+        "--auto-fix",
+        dest="auto_fix",
+        action="store_true",
+        default=None,
+        help="开启自动看图改图（生成后视觉检查，缺失细节自动重写重试）",
+    )
+    fix_group.add_argument(
+        "--no-auto-fix",
+        dest="auto_fix",
+        action="store_false",
+        help="关闭自动看图改图",
+    )
     gen.add_argument("--json", action="store_true", help="输出 JSON（机器可读）")
+
+    tr = sub.add_parser("translate", help="把用户需求改写成结构化生图提示词（翻译官）")
+    tr.add_argument("prompt", help="用户需求（中文即可）")
+    tr.add_argument(
+        "--engine",
+        default="auto",
+        choices=["auto", "deepseek", "gemini", "off"],
+        help="翻译官引擎：auto(跟随配置) / deepseek / gemini / off",
+    )
+    tr.add_argument("--feedback", default="", help="上次生成的问题反馈，用于修正重写")
+    tr.add_argument("--json", action="store_true", help="输出 JSON（机器可读）")
 
     webui_parser = sub.add_parser("webui", help="启动本地可视化设置页面")
     webui_parser.add_argument("--host", default="127.0.0.1")
@@ -1284,6 +1899,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     try:
         if args.command == "generate":
             result = cmd_generate(args)
+        elif args.command == "translate":
+            result = cmd_translate(args)
         elif args.command == "doctor":
             result = cmd_doctor(args)
         elif args.command == "config":

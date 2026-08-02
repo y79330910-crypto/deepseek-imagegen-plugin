@@ -336,6 +336,42 @@ HTML_PAGE = r"""<!doctype html>
             <div class="field"><label for="default_negative">默认负面提示词</label><input id="default_negative" placeholder="文字, 水印, 低质量"></div>
           </div>
         </div>
+        <div class="card glass" style="margin-top:14px">
+          <div class="field">
+            <div class="hint">提示词翻译官：把你的中文需求改写成图像模型更喜欢的结构化描述。默认 DeepSeek；
+            若 DeepSeek 通道异常（例如返回问号），会自动改用本地 Gemini，出图不会中断。</div>
+          </div>
+          <div class="grid grid-2">
+            <div class="field">
+              <label for="tr_engine">翻译官引擎</label>
+              <select id="tr_engine">
+                <option value="deepseek">DeepSeek（默认）</option>
+                <option value="gemini">Gemini（本地代理，稳定支持中文）</option>
+                <option value="off">关闭（原文直传）</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="tr_lang">提示词输出语言</label>
+              <select id="tr_lang">
+                <option value="zh">中文描述</option>
+                <option value="en">英文描述</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="tr_autofix">自动看图改图</label>
+              <select id="tr_autofix">
+                <option value="1">开启（推荐）</option>
+                <option value="0">关闭</option>
+              </select>
+            </div>
+            <div class="field"><label for="tr_maxfix">最多改图轮数</label><input id="tr_maxfix" type="number" min="0" max="3" placeholder="1"></div>
+            <div class="field"><label for="tr_ds_base">DeepSeek 地址（留空=自动读 Codex 配置）</label><input id="tr_ds_base" placeholder="https://api.deepseek.com"></div>
+            <div class="field"><label for="tr_ds_key">DeepSeek 密钥（留空=自动读 Codex 配置）</label><input id="tr_ds_key" type="password" placeholder="sk-..."></div>
+            <div class="field"><label for="tr_ds_model">DeepSeek 模型</label><input id="tr_ds_model" placeholder="deepseek-v4-flash"></div>
+            <div class="field"><label for="tr_gm_model">Gemini 翻译模型（留空=自动最佳）</label><input id="tr_gm_model" placeholder="gemini-3.6-flash"></div>
+            <div class="field m-b-0"><label for="tr_vision">视觉检查脚本路径（留空=自动查找）</label><input id="tr_vision" placeholder="vision_bridge.py 的完整路径"></div>
+          </div>
+        </div>
       </section>
 
       <section id="page-backends" class="hidden">
@@ -395,12 +431,18 @@ HTML_PAGE = r"""<!doctype html>
         </div>
         <div class="card glass">
           <div class="field"><label for="testPrompt">提示词</label><input id="testPrompt" placeholder="一只戴宇航员头盔的柴犬，写实风格"></div>
+          <div class="field" style="display:flex;align-items:center;gap:10px">
+            <button class="btn ghost" id="trBtn" onclick="translateOnly()">🔁 先翻译</button>
+            <span class="hint" id="trHint">点击后用翻译官改写并填入上方输入框，可再手动修改</span>
+          </div>
           <div class="grid grid-2">
             <div class="field"><label for="testBackend">后端</label><select id="testBackend"></select></div>
             <div class="field"><label for="testSize">尺寸</label><input id="testSize" placeholder="1024x1024（图生图可留空）"></div>
             <div class="field"><label for="testImage">参考图（图生图，可选）</label><input id="testImage" placeholder="图片路径或 http(s) 链接"></div>
             <div class="field"><label for="testDenoise">去噪强度（图生图）</label><input id="testDenoise" type="number" step="0.05" min="0" max="1" placeholder="0.6"></div>
             <div class="field"><label for="testSeed">种子（留空=随机）</label><input id="testSeed" type="number" placeholder="例如 42"></div>
+            <div class="field"><label for="testTranslator">翻译官</label><select id="testTranslator"></select></div>
+            <div class="field"><label><input type="checkbox" id="testAutoFix"> 自动看图改图</label></div>
             <div class="field" style="display:flex;align-items:flex-end"><button class="btn" id="genBtn" style="width:100%" onclick="testGenerate()">✨ 开始生成</button></div>
           </div>
           <div class="toolbar" style="margin-top:4px">
@@ -496,6 +538,16 @@ function render() {
   $("save_dir").value = c.save_dir || "";
   $("mirror_dir").value = c.mirror_dir || "";
   $("default_negative").value = c.default_negative || "";
+  const tr = c.translator || {};
+  $("tr_engine").value = tr.engine || "deepseek";
+  $("tr_lang").value = tr.output_lang || "zh";
+  $("tr_autofix").value = tr.auto_fix === false ? "0" : "1";
+  $("tr_maxfix").value = tr.max_fix_rounds != null ? tr.max_fix_rounds : 1;
+  $("tr_ds_base").value = tr.deepseek && tr.deepseek.base_url || "";
+  $("tr_ds_key").value = tr.deepseek && tr.deepseek.api_key || "";
+  $("tr_ds_model").value = tr.deepseek && tr.deepseek.model || "deepseek-v4-flash";
+  $("tr_gm_model").value = tr.gemini && tr.gemini.model || "";
+  $("tr_vision").value = tr.vision_bridge || "";
   $("vertex_dir").value = c.vertex && c.vertex.dir || "";
   $("vertex_base").value = c.vertex && c.vertex.base_url || "";
   $("vertex_key").value = c.vertex && c.vertex.api_key || "";
@@ -515,6 +567,7 @@ function render() {
   $("cf_cfg").value = c.comfyui && c.comfyui.cfg || "";
   $("cf_denoise").value = c.comfyui && c.comfyui.denoise != null ? c.comfyui.denoise : 0.6;
   fillTestBackend();
+  fillTestTranslator();
 }
 
 function fillTestBackend() {
@@ -528,6 +581,17 @@ function fillTestBackend() {
   });
 }
 
+function fillTestTranslator() {
+  const sel = $("testTranslator");
+  const cur = (state.config.translator && state.config.translator.engine) || "deepseek";
+  [["auto","跟随配置（当前 " + (cur === "off" ? "关闭" : cur) + "）"],["deepseek","DeepSeek"],["gemini","Gemini"],["off","关闭（直传）"]].forEach(([v,label]) => {
+    const o = document.createElement("option");
+    o.value = v; o.textContent = label;
+    if (v === "auto") o.selected = true;
+    sel.appendChild(o);
+  });
+}
+
 function collect() {
   const c = JSON.parse(JSON.stringify(state.config || {}));
   c.default_backend = $("default_backend").value;
@@ -535,6 +599,22 @@ function collect() {
   c.save_dir = $("save_dir").value.trim();
   c.mirror_dir = $("mirror_dir").value.trim();
   c.default_negative = $("default_negative").value;
+  c.translator = Object.assign({}, c.translator, {
+    enabled: $("tr_engine").value !== "off",
+    engine: $("tr_engine").value,
+    output_lang: $("tr_lang").value,
+    auto_fix: $("tr_autofix").value === "1",
+    max_fix_rounds: parseInt($("tr_maxfix").value) || 1,
+    deepseek: {
+      base_url: $("tr_ds_base").value.trim(),
+      api_key: $("tr_ds_key").value.trim(),
+      model: $("tr_ds_model").value.trim() || "deepseek-v4-flash",
+    },
+    gemini: {
+      model: $("tr_gm_model").value.trim(),
+    },
+    vision_bridge: $("tr_vision").value.trim(),
+  });
   c.vertex = {
     dir: $("vertex_dir").value.trim(),
     base_url: $("vertex_base").value.trim(),
@@ -605,6 +685,27 @@ async function testBackend() {
   toast("测试 " + backend + "：" + r.message, r.ok ? "ok" : "bad");
 }
 
+async function translateOnly() {
+  const text = $("testPrompt").value.trim();
+  if (!text) { toast("请先输入需求", "bad"); return; }
+  const btn = $("trBtn");
+  btn.disabled = true;
+  btn.textContent = "⏳ 翻译中…";
+  try {
+    const r = await api("/api/translate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, engine: $("testTranslator").value }) });
+    $("testPrompt").value = r.rewritten || text;
+    const engine = r.engine_used === "off" ? "直传" : r.engine_used;
+    const extra = r.fallback ? "（DeepSeek 通道异常，已自动改用 " + r.model + "）" : "";
+    $("trHint").textContent = "已由 " + engine + " 翻译" + extra + "，可再手动修改";
+    toast("✅ 翻译完成：" + engine, "ok");
+  } catch (e) {
+    toast("翻译失败：" + e.message, "bad");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "🔁 先翻译";
+  }
+}
+
 async function testGenerate() {
   if (state.busy) return;
   state.busy = true;
@@ -619,6 +720,8 @@ async function testGenerate() {
     image: $("testImage").value.trim(),
     denoise: $("testDenoise").value.trim() ? parseFloat($("testDenoise").value) : undefined,
     seed: $("testSeed").value.trim() ? parseInt($("testSeed").value) : undefined,
+    translator: $("testTranslator").value,
+    auto_fix: $("testAutoFix").checked,
   };
   try {
     const r = await api("/api/test-generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -629,6 +732,13 @@ async function testGenerate() {
     let meta = `后端 ${esc(r.backend)} · 尺寸 ${esc(r.size)} · 种子 ${r.seed}`;
     if (r.init_image) meta += ` · 图生图`;
     if (r.denoise != null) meta += ` · 去噪 ${r.denoise}`;
+    if (r.translator) {
+      const t = r.translator;
+      const used = t.engine_used === "off" ? "直传" : t.engine_used;
+      meta += ` · 翻译官 ${used}`;
+      if (t.fallback) meta += `(自动切换)`;
+    }
+    if (r.auto_fix) meta += ` · 自动改图 ${r.auto_fix.rounds} 轮`;
     $("previewMeta").innerHTML = `<span>${meta}</span><code>${esc(r.path)}</code>`;
     toast("✅ 生成成功", "ok");
   } catch (e) {
@@ -769,10 +879,10 @@ def test_backend(backend: str) -> dict[str, Any]:
 
 def test_generate(
     prompt: str, backend: str, size: str = "1024x1024", image: str = "", denoise: float | None = None,
-    seed: int | None = None,
+    seed: int | None = None, translator: str = "auto", auto_fix: bool | None = None,
 ) -> dict[str, Any]:
     preview_dir = os.path.join(tempfile.gettempdir(), "deepseek-imagegen-preview")
-    return image_gen.generate_image(
+    return image_gen.generate_with_translator(
         prompt,
         backend=backend or "auto",
         size=size or "1024x1024",
@@ -780,6 +890,8 @@ def test_generate(
         init_image=image or None,
         denoise=denoise,
         seed=seed,
+        translator=translator or "auto",
+        auto_fix=auto_fix,
     )
 
 
@@ -884,6 +996,13 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/test":
                 body = self._read_json()
                 return self._send_json(test_backend(str(body.get("backend") or "auto")))
+            if path == "/api/translate":
+                body = self._read_json()
+                result = image_gen.translate_prompt(
+                    str(body.get("text") or ""),
+                    engine=str(body.get("engine") or "auto"),
+                )
+                return self._send_json(result)
             if path == "/api/test-generate":
                 body = self._read_json()
                 result = test_generate(
@@ -893,6 +1012,8 @@ class Handler(BaseHTTPRequestHandler):
                     image=str(body.get("image") or ""),
                     denoise=body.get("denoise"),
                     seed=body.get("seed"),
+                    translator=str(body.get("translator") or "auto"),
+                    auto_fix=body.get("auto_fix"),
                 )
                 return self._send_json(result)
         except image_gen.GenError as exc:

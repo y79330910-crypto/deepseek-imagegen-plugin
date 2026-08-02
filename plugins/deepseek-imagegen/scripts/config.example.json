@@ -4,6 +4,22 @@
   "mirror_dir": "C:\\Users\\yjq\\Pictures\\codex",
   "default_size": "1024x1024",
   "default_negative": "",
+  "translator": {
+    "enabled": true,
+    "engine": "deepseek",
+    "output_lang": "zh",
+    "auto_fix": true,
+    "max_fix_rounds": 1,
+    "deepseek": {
+      "base_url": "",
+      "api_key": "",
+      "model": "deepseek-v4-flash"
+    },
+    "gemini": {
+      "model": ""
+    },
+    "vision_bridge": ""
+  },
   "pollinations": {
     "base_url": "https://image.pollinations.ai/prompt",
     "model": ""

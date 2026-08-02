@@ -397,6 +397,41 @@ def test_mirror_output() -> None:
         check("mirror 留空不复制", image_gen.mirror_output(str(src), {"mirror_dir": ""}) is None)
 
 
+def test_pick_best_text_model() -> None:
+    models = [
+        "gemini-2.5-pro",
+        "gemini-3.5-flash",
+        "gemini-3.6-flash",
+        "gemini-3.1-pro-preview",
+        "gemini-3-pro-image",
+        "veo-3.0-generate-001",
+        "fake-gemini-3.6-flash",
+    ]
+    best = image_gen.pick_best_text_model(models)
+    check("最佳文本模型选中 3.6-flash", best == "gemini-3.6-flash")
+    check("无文本模型返回空", image_gen.pick_best_text_model(["gemini-3-pro-image", "veo-3.0"]) == "")
+
+
+def test_translator_system_prompt() -> None:
+    zh = image_gen.build_translator_system("zh")
+    en = image_gen.build_translator_system("en")
+    check("中文系统提示词包含结构要求", "主体" in zh and "画面文字" in zh)
+    check("英文系统提示词包含结构要求", "subject" in en.lower() and "composition" in en.lower())
+
+
+def test_translate_off_passthrough() -> None:
+    cfg = json.loads(json.dumps(image_gen.DEFAULT_CONFIG))
+    cfg["translator"]["engine"] = "off"
+    r = image_gen.translate_prompt("测试需求", cfg=cfg)
+    check("直传模式原文返回", r["engine_used"] == "off" and r["rewritten"] == "测试需求")
+
+
+def test_looks_broken() -> None:
+    check("问号回复判为异常", image_gen._looks_broken("你似乎只发了问号", had_cjk=True))
+    check("正常中文回复不判异常", not image_gen._looks_broken("少女站在雪地中", had_cjk=True))
+    check("纯英文回复不判异常", not image_gen._looks_broken("A girl in snow", had_cjk=False))
+
+
 def main() -> int:
     print("=== deepseek-imagegen 冒烟测试 ===")
     test_parse_size()
@@ -420,6 +455,10 @@ def main() -> int:
     test_discover_vertex()
     test_ext_from_content_type()
     test_mirror_output()
+    test_pick_best_text_model()
+    test_translator_system_prompt()
+    test_translate_off_passthrough()
+    test_looks_broken()
     print()
     if FAILURES:
         print(f"失败 {len(FAILURES)} 项：{', '.join(FAILURES)}")

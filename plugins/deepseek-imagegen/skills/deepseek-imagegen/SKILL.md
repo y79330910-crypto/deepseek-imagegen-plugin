@@ -50,7 +50,23 @@ python "<脚本路径>" generate "<提示词>" [选项]
 - `--negative "不想出现的内容"`：负面提示词（sd-webui / comfyui）
 - `--steps 28` / `--cfg 7`：采样步数 / 引导强度（sd-webui / comfyui）
 - `--model <模型名>`：指定模型（vertex / pollinations / siliconflow）
+- `--translator deepseek|gemini|off|auto`：提示词翻译官（默认跟随配置，deepseek 为默认引擎）
+- `--auto-fix` / `--no-auto-fix`：开启/关闭自动看图改图（默认跟随配置，开启时生成后自动视觉检查并修正一次）
 - `--json`：机器可读输出，读取 `path`、`seed`、`backend` 字段
+
+**提示词翻译官（推荐保持开启）：** 用户给出中文需求时，脚本会先让翻译官按固定模板
+（主体→环境→光影→风格→构图→画面文字）改写成结构化生图提示词，再交给图像模型，
+能明显减少漏画、画错细节。默认引擎 DeepSeek；若 DeepSeek 通道异常会自动改用本地
+Gemini 文本模型（`--json` 输出里 `translator.engine_used` 字段可看到实际使用的引擎）。
+可用 `translate` 命令单独查看翻译结果：
+
+```text
+python "<脚本路径>" translate "<用户需求>" [--engine deepseek|gemini|off] [--json]
+```
+
+需要翻译官对照生成的图片自查并自动修正时，生成命令加 `--auto-fix`（或保持配置里的
+自动看图改图开启）；脚本会调用视觉插件的 `vision_bridge.py` 检查图片，把缺失细节
+反馈给翻译官重写提示词并重新生成一次。
 
 **图生图（编辑已有图片 / 换风格 / 局部修改）：** 用户给出参考图片时，加 `--image <图片路径或链接>` 启用图生图：
 
