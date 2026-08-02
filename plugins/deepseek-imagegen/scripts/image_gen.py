@@ -1579,6 +1579,11 @@ def generate_with_translator(
         {"round": 0, "path": result.get("path", ""), "prompt": final_prompt}
     ]
     warnings: list[str] = []
+    fix_out = None
+    if out:
+        _out_path = Path(out).expanduser()
+        if _out_path.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
+            fix_out = _out_path
     if (
         fix_wanted
         and max_rounds > 0
@@ -1601,7 +1606,12 @@ def generate_with_translator(
             # 让翻译官根据视觉反馈重写提示词并再生成一次
             fb = translate_prompt(prompt, cfg=cfg_all, engine=fix_engine, feedback=issues)
             new_prompt = fb.get("rewritten") or final_prompt
-            next_result = generate_image(new_prompt, **kwargs)
+            round_kwargs = dict(kwargs)
+            if fix_out is not None:
+                round_kwargs["out"] = str(
+                    fix_out.with_name(f"{fix_out.stem}-fix{i + 1}{fix_out.suffix}")
+                )
+            next_result = generate_image(new_prompt, **round_kwargs)
             history.append(
                 {
                     "round": i + 1,
@@ -1618,6 +1628,9 @@ def generate_with_translator(
             "rounds": len(history) - 1,
             "history": history,
         }
+        last_round = history[-1]
+        result["translator"] = last_round.get("translator") or tr_info
+        result["prompt_used"] = last_round.get("prompt") or final_prompt
     if warnings:
         result["warnings"] = warnings
     return result
