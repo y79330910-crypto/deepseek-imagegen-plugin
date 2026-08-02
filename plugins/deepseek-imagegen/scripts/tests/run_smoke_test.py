@@ -492,19 +492,39 @@ def test_fix_accepted() -> None:
         "has_character_issues": True,
         "issue_counts": {"character": 1, "background": 0},
     }
-    same_total = {
+    unchanged = {
         "ok": True,
         "has_issues": True,
         "has_character_issues": False,
         "issue_counts": {"character": 0, "background": 1},
+    }
+    more_bg = {
+        "ok": True,
+        "has_issues": True,
+        "has_character_issues": False,
+        "issue_counts": {"character": 0, "background": 2},
+    }
+    improved_char = {
+        "ok": True,
+        "has_issues": True,
+        "has_character_issues": True,
+        "issue_counts": {"character": 1, "background": 0},
     }
     accepted, _ = image_gen._fix_accepted(old, good)
     check("保留最佳：修好则保留", accepted)
     accepted, why = image_gen._fix_accepted(old, bad)
     check("保留最佳：引入人物错误则退回", not accepted)
     check("保留最佳：退回原因含人物", "人物" in why)
-    accepted, _ = image_gen._fix_accepted(old, same_total)
-    check("保留最佳：问题数未增加则保留", accepted)
+    accepted, _ = image_gen._fix_accepted(old, unchanged)
+    check("保留最佳：没有变差则保留", accepted)
+    accepted, _ = image_gen._fix_accepted(old, more_bg)
+    check("保留最佳：背景问题变多则退回", not accepted)
+    accepted, _ = image_gen._fix_accepted(
+        {"ok": True, "has_issues": True, "has_character_issues": True,
+         "issue_counts": {"character": 3, "background": 2}},
+        improved_char,
+    )
+    check("保留最佳：人物级错误减少则保留", accepted)
 
 
 def test_auto_fix_edit_loop() -> None:

@@ -809,9 +809,12 @@ def _vision_says_ok(text: str) -> bool:
 
 def _split_issues_lines(text: str) -> list[str]:
     """把视觉返回的问题文本拆成条目列表（去掉编号、符号和"无"）。"""
+    _HEADERS = ("人物问题", "人物级问题", "人物级", "背景问题", "背景/细节问题", "背景细节", "背景/细节", "背景")
     out: list[str] = []
     for raw in str(text or "").splitlines():
         line = raw.strip().strip("。.；;，, ")
+        if any(line.startswith(h) or line == h for h in _HEADERS):
+            continue
         line = re.sub(r"^[\d一二三四五六七八九十]+[\.、．)]\s*", "", line).strip()
         line = re.sub(r"^[-•*]\s*", "", line).strip()
         if not line:
@@ -919,13 +922,11 @@ def _finalize_vision_check(issues: str, tiered: bool) -> dict[str, Any]:
 
 
 def _fix_accepted(old_check: dict[str, Any], new_check: dict[str, Any]) -> tuple[bool, str]:
-    """保留最佳判定：修正版必须修掉人物级错误且总问题数不增加。"""
+    """保留最佳判定：修正版不能更差，且要有实际改善（人物级错误减少或总数减少）。"""
     if not new_check.get("ok"):
         return True, "修正版未能完成视觉复查，按保留处理"
     if not new_check.get("has_issues"):
         return True, "修正版已通过复查，无遗留问题"
-    if new_check.get("has_character_issues"):
-        return False, "修正版仍有人物级错误或引入了新的人物级错误"
     old_counts = old_check.get("issue_counts") or {
         "character": 0,
         "background": _count_issues(str(old_check.get("issues") or "")),
@@ -936,9 +937,17 @@ def _fix_accepted(old_check: dict[str, Any], new_check: dict[str, Any]) -> tuple
     }
     old_total = int(old_counts.get("character", 0)) + int(old_counts.get("background", 0))
     new_total = int(new_counts.get("character", 0)) + int(new_counts.get("background", 0))
-    if new_total <= old_total:
+    old_char = int(old_counts.get("character", 0))
+    new_char = int(new_counts.get("character", 0))
+    if new_char > old_char:
+        return False, "修正版引入了新的人物级错误"
+    if new_char == 0 and new_total <= old_total:
         return True, "修正版已修掉问题且没有新增错误"
-    return False, "修正版的问题数量没有减少"
+    if new_char < old_char:
+        return True, "修正版的人物级错误已减少"
+    if new_total < old_total:
+        return True, "修正版的总问题数已减少"
+    return False, "修正版没有实际改善"
 
 
 def run_vision_check(
