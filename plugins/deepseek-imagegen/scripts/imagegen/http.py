@@ -9,7 +9,8 @@ import urllib.request
 from typing import Any, Optional
 
 
-DEFAULT_TIMEOUT = 240
+# 高清图（如 2K/4K）生成耗时较长，默认超时放宽到 600 秒
+DEFAULT_TIMEOUT = 600
 HEALTH_TIMEOUT = 8
 BROWSER_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "

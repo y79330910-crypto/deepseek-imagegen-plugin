@@ -59,6 +59,29 @@ def pick_best_image_model(models: list[str]) -> str:
     return max(candidates, key=score)
 
 
+def parse_models_list(data: dict[str, Any]) -> list[str]:
+    """解析代理 models.json 的模型列表，兼容 v1（字符串数组）与 v2（对象数组）。
+
+    新格式示例：{"version": 2, "models": [{"id": "gemini-3-pro-image", "enabled": true, ...}]}
+    只收录启用的模型；禁用（enabled=false）的跳过。
+    """
+    raw = data.get("models", []) if isinstance(data, dict) else []
+    if not isinstance(raw, list):
+        return []
+    out: list[str] = []
+    for item in raw:
+        if isinstance(item, str):
+            mid = item.strip()
+            if mid:
+                out.append(mid)
+        elif isinstance(item, dict):
+            mid = str(item.get("id") or "").strip()
+            enabled = item.get("enabled", True)
+            if mid and enabled:
+                out.append(mid)
+    return out
+
+
 def pick_best_text_model(models: list[str]) -> str:
     """挑最适合当翻译官的聊天模型（排除图像/音频/翻译等专用模型）。"""
     skip = (
@@ -128,7 +151,7 @@ def discover_vertex(cfg: dict[str, Any]) -> dict[str, Any]:
     if os.path.isfile(models_file):
         with open(models_file, "r", encoding="utf-8") as handle:
             data = json.load(handle)
-        models = [m for m in data.get("models", []) if isinstance(m, str)]
+        models = parse_models_list(data)
 
     model = str(bc.get("model") or "").strip()
     if not model and models:

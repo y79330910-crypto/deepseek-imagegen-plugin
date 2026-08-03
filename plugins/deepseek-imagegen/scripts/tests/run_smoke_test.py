@@ -43,7 +43,11 @@ from imagegen.image_utils import (  # noqa: E402
     slugify,
 )
 from imagegen.translator import translate_prompt  # noqa: E402
-from imagegen.vertex import pick_best_image_model, pick_best_text_model  # noqa: E402
+from imagegen.vertex import (  # noqa: E402
+    parse_models_list,
+    pick_best_image_model,
+    pick_best_text_model,
+)
 
 
 def make_png_bytes(width: int = 64, height: int = 64) -> bytes:
@@ -103,6 +107,29 @@ class TestModelPicking(unittest.TestCase):
     def test_pick_best_text_model(self):
         models = ["gemini-3-pro-image", "gemini-3-pro", "gemini-2.5-flash"]
         self.assertNotIn("image", pick_best_text_model(models))
+
+    def test_parse_models_list_v1_strings(self):
+        self.assertEqual(
+            parse_models_list(
+                {"models": ["gemini-3-pro-image", "gemini-2.5-flash"], "alias_map": {}}
+            ),
+            ["gemini-3-pro-image", "gemini-2.5-flash"],
+        )
+
+    def test_parse_models_list_v2_objects(self):
+        self.assertEqual(
+            parse_models_list(
+                {
+                    "version": 2,
+                    "models": [
+                        {"id": "gemini-3-pro-image", "enabled": True},
+                        {"id": "gemini-3.1-flash-image", "enabled": False},
+                        {"id": "gemini-2.5-flash", "enabled": True},
+                    ],
+                }
+            ),
+            ["gemini-3-pro-image", "gemini-2.5-flash"],
+        )
 
 
 class TestComposition(unittest.TestCase):
