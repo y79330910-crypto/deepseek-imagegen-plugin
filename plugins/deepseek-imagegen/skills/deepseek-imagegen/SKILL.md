@@ -46,6 +46,12 @@ python "<脚本路径>" generate "<提示词>" [选项]
 - `--backend vertex|pollinations|siliconflow|sd-webui|comfyui`：指定后端
 - `--out <输出文件路径>`：指定输出文件（项目相关图片必须保存到工作区）
 - `--size 1024x1024`：分辨率（宽x高）
+- `--composition full-body|half-body|portrait|landscape|auto`：构图预设（v0.7）
+- `--size-policy strict|auto|warn`：尺寸不符时的处理策略（v0.7，默认 auto）
+- `--max-fix-rounds N`：自动修复最大轮数（v0.7，默认跟随配置=2）
+- `--fallback-backends vertex,pollinations`：主后端失败时的降级顺序（v0.7）
+- `--character 洛天依-V4公式服`：读取本机 MySQL 角色卡自动注入设定（v2）
+- `--expand 768x1408`：把参考图外扩到目标画幅（v2，仅 vertex）
 - `--seed 12345`：随机种子（复现同一张图）
 - `--negative "不想出现的内容"`：负面提示词（sd-webui / comfyui）
 - `--steps 28` / `--cfg 7`：采样步数 / 引导强度（sd-webui / comfyui）
@@ -55,6 +61,14 @@ python "<脚本路径>" generate "<提示词>" [选项]
 - `--library` / `--no-library`：生成时是否使用提示词词库检索（默认跟随配置）
 - 提示词词库：把收集的提示词存 MySQL，生成时用向量模型检索相近示例喂给翻译官；工具为 `scripts/prompt_lib.py`（init/import/search/stats）
 - `--json`：机器可读输出，读取 `path`、`seed`、`backend` 字段
+
+**构图预设（v0.7）：** 需要全身/半身/特写/横版构图时，尽量加 `--composition`。例如用户要“洛天依 V4 公式服全身演唱会”，应执行：
+
+```text
+python "<脚本路径>" generate "洛天依V4公式服演唱会全身" --composition full-body --auto-fix
+```
+
+full-body 预设会自动锁定竖版画幅（768x1408）、在提示词里强制“从头到脚、脚入画、头顶留白、非Q版”，并让视觉检查按清单逐项核对。**尺寸如实上报**：脚本会读取生成图的真实尺寸，`--json` 输出里的 `actual_size` / `size_check` 才是真值；若代理不遵守尺寸，会自动用“画布优先”兜底（Pillow 建画布 + 图生图）。
 
 **提示词翻译官（推荐保持开启）：** 用户给出中文需求时，脚本会先让翻译官按固定模板
 （主体→环境→光影→风格→构图→画面文字）改写成结构化生图提示词，再交给图像模型，
@@ -86,6 +100,18 @@ python "<脚本路径>" generate "把这张图改成赛博朋克风格" --image 
 
 需要机器可读结果时加 `--json`。生成失败时脚本会返回非零退出码并给出 `error` 说明。
 
+### 角色卡（v2，可选）
+
+本机 MySQL 存已核实角色设定（如洛天依 V4 公式服：灰发绿瞳、蓝白公式服、腰部中国结），出图时自动注入：
+
+```text
+python "<脚本路径>" character init
+python "<脚本路径>" character add --name 角色名 --version 版本 --hair-color 发色 --eye-color 瞳色 --outfit 服装 --verified
+python "<脚本路径>" generate "演唱会全身" --character 洛天依-V4公式服
+```
+
+数据只存本机，不同步 GitHub；角色卡读取失败时出图不中断，只给中文提示。
+
 ### 5. 使用结果组织交付
 
 - 默认输出到当前工作目录：`deepseek-imagegen_<时间戳>_<提示词摘要>.<ext>`。
@@ -103,6 +129,7 @@ python "<脚本路径>" generate "把这张图改成赛博朋克风格" --image 
 ### 7. 故障处理
 
 - 脚本报错时，先运行 `python "<脚本路径>" doctor` 查看各后端连通性诊断。
+- 尺寸不对（想要竖版却出横版）时，运行 `python "<脚本路径>" doctor --size-probe` 实测代理尺寸行为，并优先使用 `--composition` 预设 + `--size-policy auto`。
 - 提示 vertex 代理连不上：先确认 `vertex-proxy.exe` 已启动（`dist\启动.bat`），再运行 doctor 查看端口/密钥是否读取成功。
 - 提示未配置 siliconflow 密钥：需要用户在 `config.json` 里填写 `siliconflow.api_key`（在 https://cloud.siliconflow.cn 申请）。
 - 提示本地 SD / ComfyUI 连不上：需要用户先启动本地服务；SD WebUI 需带 `--api` 参数启动。

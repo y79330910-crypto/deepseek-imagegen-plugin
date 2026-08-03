@@ -562,7 +562,7 @@ def test_auto_fix_edit_loop() -> None:
         orig_png.write_bytes(b"\x89PNG-original")
         calls: dict = {"vision": [], "gen": []}
 
-        def fake_check(path, user_text, cfg, tiered=False):
+        def fake_check(path, user_text, cfg, tiered=False, **kwargs):
             calls["vision"].append(str(path))
             if str(path).endswith("out-fix1.png"):
                 return dict(bad_check)
@@ -602,7 +602,7 @@ def test_auto_fix_edit_loop() -> None:
             any("保持原样" in p for p in calls["gen"]),
         )
         check("改坏时自动退回", af.get("reverted") is True)
-        check("退回后结果回到上一版", result["path"].endswith("out.png"))
+        check("退回后结果回到上一版（交付命名 _final）", result["path"].endswith("out_final.png"))
         check("退回轮次记录完整", len(af.get("history") or []) == 2)
         check("退回原因含人物", "人物" in (af["history"][-1].get("reason") or ""))
 
@@ -611,7 +611,7 @@ def test_auto_fix_edit_loop() -> None:
             orig2.write_bytes(b"\x89PNG-original")
             calls2: dict = {"vision": [], "gen": []}
 
-            def fake_check2(path, user_text, cfg, tiered=False):
+            def fake_check2(path, user_text, cfg, tiered=False, **kwargs):
                 calls2["vision"].append(str(path))
                 if str(path).endswith("out-fix1.png"):
                     return dict(good_check)
@@ -654,7 +654,7 @@ def test_auto_fix_edit_loop() -> None:
                 image_gen.generate_image = orig_gen
             af2 = result2.get("auto_fix") or {}
             check("修好时保留修正版", af2.get("reverted") is False)
-            check("修好后结果为新图", result2["path"].endswith("out-fix1.png"))
+            check("修好后结果为新图（交付命名 _final）", result2["path"].endswith("out_final.png"))
             check("修好轮次记录完整", len(af2.get("history") or []) == 2)
             af3 = result3.get("auto_fix") or {}
             check("重画模式背景细节不重画", af3.get("rounds") == 0)

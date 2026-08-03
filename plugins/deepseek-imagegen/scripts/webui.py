@@ -388,6 +388,57 @@ HTML_PAGE = r"""<!doctype html>
         </div>
         <div class="card glass">
           <div class="page-head">
+            <div><h2>构图与修复（v0.7）</h2><div class="hint">全身/半身/特写构图预设 + 真实尺寸校验 + 自动修复增强；代理不听话时自动用“画布优先”兜底</div></div>
+          </div>
+          <div class="grid grid-2">
+            <div class="field">
+              <label for="comp_preset">默认构图预设</label>
+              <select id="comp_preset">
+                <option value="auto">自动（不预设）</option>
+                <option value="full-body">全身（竖版 2:3，脚入画+头顶留白）</option>
+                <option value="half-body">半身</option>
+                <option value="portrait">特写</option>
+                <option value="landscape">横版</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="sp_mode">尺寸不符策略</label>
+              <select id="sp_mode">
+                <option value="auto">自动兜底（重试→画布优先→警告保留，推荐）</option>
+                <option value="strict">严格（不符就报错）</option>
+                <option value="warn">仅警告（如实记录实际尺寸）</option>
+              </select>
+            </div>
+            <div class="field"><label for="sp_retries">尺寸兜底重试次数</label><input id="sp_retries" type="number" min="0" max="5" placeholder="2"></div>
+            <div class="field"><label for="af_rounds">自动修复最大轮数</label><input id="af_rounds" type="number" min="0" max="5" placeholder="2"></div>
+            <div class="field"><label for="af_threshold">构图问题升级重绘阈值（条）</label><input id="af_threshold" type="number" min="1" max="5" placeholder="1"></div>
+            <div class="field">
+              <label for="af_sizecheck">修复轮严格校验尺寸</label>
+              <select id="af_sizecheck">
+                <option value="1">开启（推荐）</option>
+                <option value="0">关闭</option>
+              </select>
+            </div>
+            <div class="field"><label for="rb_timeout">请求超时（秒）</label><input id="rb_timeout" type="number" min="30" max="900" placeholder="240"></div>
+            <div class="field"><label for="rb_retries">空数据重试次数</label><input id="rb_retries" type="number" min="0" max="5" placeholder="2"></div>
+            <div class="field"><label for="rb_fallback">降级后端顺序（逗号分隔，留空=不降级）</label><input id="rb_fallback" placeholder="vertex,pollinations"></div>
+            <div class="field">
+              <label for="char_enabled">角色卡（v2，本机 MySQL）</label>
+              <select id="char_enabled">
+                <option value="1">开启</option>
+                <option value="0">关闭（默认）</option>
+              </select>
+            </div>
+            <div class="field m-b-0"><label for="char_name">默认角色卡名称</label><input id="char_name" placeholder="洛天依-V4公式服"></div>
+            <div class="field"><label for="char_mysql_host">MySQL 主机</label><input id="char_mysql_host" placeholder="127.0.0.1"></div>
+            <div class="field"><label for="char_mysql_port">MySQL 端口</label><input id="char_mysql_port" type="number" placeholder="3306"></div>
+            <div class="field"><label for="char_mysql_user">MySQL 账号</label><input id="char_mysql_user" placeholder="root"></div>
+            <div class="field"><label for="char_mysql_pass">MySQL 密码</label><input id="char_mysql_pass" type="password" placeholder=""></div>
+            <div class="field m-b-0"><label for="char_mysql_db">数据库名</label><input id="char_mysql_db" placeholder="deepseek_imagegen"></div>
+          </div>
+        </div>
+        <div class="card glass">
+          <div class="page-head">
             <div><h2>提示词词库（v0.6）</h2><div class="hint">把收集的提示词存进 MySQL，生成时用向量检索最相近的几条例子喂给翻译官，让第一版更稳。密钥只保存在本机</div></div>
           </div>
           <div class="grid grid-2">
@@ -496,6 +547,23 @@ HTML_PAGE = r"""<!doctype html>
           <div class="grid grid-2">
             <div class="field"><label for="testBackend">后端</label><select id="testBackend"></select></div>
             <div class="field"><label for="testSize">尺寸</label><input id="testSize" placeholder="1024x1024（图生图可留空）"></div>
+            <div class="field"><label for="testComposition">构图预设</label>
+              <select id="testComposition">
+                <option value="auto">自动</option>
+                <option value="full-body">全身（竖版）</option>
+                <option value="half-body">半身</option>
+                <option value="portrait">特写</option>
+                <option value="landscape">横版</option>
+              </select>
+            </div>
+            <div class="field"><label for="testSizePolicy">尺寸策略</label>
+              <select id="testSizePolicy">
+                <option value="">跟随配置</option>
+                <option value="auto">自动兜底</option>
+                <option value="strict">严格</option>
+                <option value="warn">仅警告</option>
+              </select>
+            </div>
             <div class="field"><label for="testImage">参考图（图生图，可选）</label><input id="testImage" placeholder="图片路径或 http(s) 链接"></div>
             <div class="field"><label for="testDenoise">去噪强度（图生图）</label><input id="testDenoise" type="number" step="0.05" min="0" max="1" placeholder="0.6"></div>
             <div class="field"><label for="testSeed">种子（留空=随机）</label><input id="testSeed" type="number" placeholder="例如 42"></div>
@@ -519,8 +587,11 @@ HTML_PAGE = r"""<!doctype html>
 
       <section id="page-doctor" class="hidden">
         <div class="page-head">
-          <div><h2>诊断</h2><div class="hint">检查各后端连通性、配置是否完整</div></div>
-          <button class="btn ghost" onclick="runDoctor()">🔍 运行诊断（doctor）</button>
+          <div><h2>诊断</h2><div class="hint">检查各后端连通性、配置是否完整；尺寸探针会实测代理是否遵守尺寸参数（约 2-4 分钟）</div></div>
+          <div class="toolbar" style="margin:0;gap:8px">
+            <button class="btn ghost" onclick="runDoctor()">🔍 运行诊断（doctor）</button>
+            <button class="btn ghost" onclick="runSizeProbe()">📏 尺寸探针（doctor --size-probe）</button>
+          </div>
         </div>
         <div id="doctorResult"></div>
       </section>
@@ -611,6 +682,28 @@ function render() {
   $("tr_ds_model").value = tr.deepseek && tr.deepseek.model || "deepseek-v4-flash";
   $("tr_gm_model").value = tr.gemini && tr.gemini.model || "";
   $("tr_vision").value = tr.vision_bridge || "";
+  const comp = c.composition || {};
+  $("comp_preset").value = comp.preset || "auto";
+  const sp = c.size_policy || {};
+  $("sp_mode").value = sp.mode || "auto";
+  $("sp_retries").value = sp.retries != null ? sp.retries : 2;
+  const af = c.auto_fix || {};
+  $("af_rounds").value = af.max_rounds != null ? af.max_rounds : 2;
+  $("af_threshold").value = af.edit_redraw_threshold != null ? af.edit_redraw_threshold : 1;
+  $("af_sizecheck").value = af.check_size === false ? "0" : "1";
+  const rb = c.robustness || {};
+  $("rb_timeout").value = rb.timeout || 240;
+  $("rb_retries").value = rb.empty_data_retries != null ? rb.empty_data_retries : 2;
+  $("rb_fallback").value = (rb.fallback_backends || []).join(", ");
+  const ch = c.characters || {};
+  $("char_enabled").value = ch.enabled ? "1" : "0";
+  $("char_name").value = ch.default_name || "";
+  const chm = ch.mysql || {};
+  $("char_mysql_host").value = chm.host || "127.0.0.1";
+  $("char_mysql_port").value = chm.port || 3306;
+  $("char_mysql_user").value = chm.user || "";
+  $("char_mysql_pass").value = chm.password || "";
+  $("char_mysql_db").value = chm.db || "deepseek_imagegen";
   const pl = c.prompt_library || {};
   const ple = pl.embedding || {}, plr = pl.rerank || {}, plm = pl.mysql || {};
   $("pl_enabled").value = pl.enabled === false ? "0" : "1";
@@ -701,6 +794,32 @@ function collect() {
     },
     vision_bridge: $("tr_vision").value.trim(),
   });
+  c.composition = Object.assign({}, c.composition, { preset: $("comp_preset").value });
+  c.size_policy = Object.assign({}, c.size_policy, {
+    mode: $("sp_mode").value,
+    retries: parseInt($("sp_retries").value) || 2,
+  });
+  c.auto_fix = Object.assign({}, c.auto_fix, {
+    max_rounds: parseInt($("af_rounds").value) || 0,
+    edit_redraw_threshold: parseInt($("af_threshold").value) || 1,
+    check_size: $("af_sizecheck").value === "1",
+  });
+  c.robustness = Object.assign({}, c.robustness, {
+    timeout: parseInt($("rb_timeout").value) || 240,
+    empty_data_retries: parseInt($("rb_retries").value) || 2,
+    fallback_backends: $("rb_fallback").value.split(",").map(s => s.trim()).filter(Boolean),
+  });
+  c.characters = {
+    enabled: $("char_enabled").value === "1",
+    default_name: $("char_name").value.trim(),
+    mysql: {
+      host: $("char_mysql_host").value.trim() || "127.0.0.1",
+      port: parseInt($("char_mysql_port").value) || 3306,
+      user: $("char_mysql_user").value.trim(),
+      password: $("char_mysql_pass").value,
+      db: $("char_mysql_db").value.trim() || "deepseek_imagegen",
+    },
+  };
   const embKey = $("pl_emb_key").value.trim();
   c.prompt_library = {
     enabled: $("pl_enabled").value === "1",
@@ -831,6 +950,8 @@ async function testGenerate() {
     prompt: $("testPrompt").value.trim() || "a cute astronaut dog",
     backend: $("testBackend").value,
     size: $("testSize").value.trim() || "1024x1024",
+    composition: $("testComposition").value || "auto",
+    size_policy: $("testSizePolicy").value || "",
     image: $("testImage").value.trim(),
     denoise: $("testDenoise").value.trim() ? parseFloat($("testDenoise").value) : undefined,
     seed: $("testSeed").value.trim() ? parseInt($("testSeed").value) : undefined,
@@ -845,7 +966,10 @@ async function testGenerate() {
     img.src = "/api/image?path=" + encodeURIComponent(r.path);
     img.onerror = () => { img.style.display = "none"; };
     $("preview").className = "show";
-    let meta = `后端 ${esc(r.backend)} · 尺寸 ${esc(r.size)} · 种子 ${r.seed}`;
+    let meta = `后端 ${esc(r.backend_used || r.backend)} · 请求尺寸 ${esc(r.size)}`;
+    if (r.actual_size) meta += ` · 实际 ${esc(r.actual_size)}${r.size_match ? " ✓" : " ✗"}`;
+    meta += ` · 种子 ${r.seed}`;
+    if (r.composition_preset && r.composition_preset !== "auto") meta += ` · 构图 ${r.composition_preset}`;
     if (r.init_image) meta += ` · 图生图`;
     if (r.denoise != null) meta += ` · 去噪 ${r.denoise}`;
     if (r.translator) {
@@ -909,6 +1033,29 @@ async function runDoctor() {
   ).join("");
   box.innerHTML = `<div class="check-grid">${cards}</div>` +
     `<p class="hint" style="margin-top:12px">默认后端：${esc(r.default_backend)} · 配置文件：${esc(r.config_file)}（${r.config_exists ? "存在" : "不存在，使用默认配置"}）</p>`;
+}
+
+async function runSizeProbe() {
+  const box = $("doctorResult");
+  box.innerHTML = `<p class="hint">⏳ 尺寸探针进行中（要生成几张测试小图，约 2-4 分钟），请稍候…</p>`;
+  try {
+    const r = await api("/api/doctor-size-probe");
+    if (r.error) throw new Error(r.error);
+    const rows = (r.probes || []).map(p =>
+      `<div class="card glass check-card">
+        <div class="row"><span class="name">请求 ${esc(p.requested)}</span></div>
+        <div class="msg">文生图直出：${esc(p.generations)}</div>
+        <div class="msg">画布优先：${esc(p.canvas_first || "不支持")}</div>
+        <div class="msg">结论：<b style="color:var(--cyan-deep)">${esc(p.verdict)}</b></div>
+      </div>`
+    ).join("");
+    box.innerHTML = `<div class="check-grid">${rows}</div>` +
+      `<p class="hint" style="margin-top:12px">${esc(r.message || "")}${r.cache_saved ? " ✅ 已缓存到配置" : ""}</p>`;
+    toast("尺寸探针完成", "ok");
+  } catch (e) {
+    box.innerHTML = `<p class="hint">❌ 尺寸探针失败：${esc(e.message)}</p>`;
+    toast("尺寸探针失败：" + e.message, "bad");
+  }
 }
 
 loadConfig().catch(e => { setSaveChip("加载失败", "bad"); toast("加载失败：" + e.message, "bad"); });
@@ -1021,6 +1168,7 @@ def test_backend(backend: str) -> dict[str, Any]:
 def test_generate(
     prompt: str, backend: str, size: str = "1024x1024", image: str = "", denoise: float | None = None,
     seed: int | None = None, translator: str = "auto", auto_fix: bool | None = None,
+    composition: str = "auto", size_policy: str = "",
 ) -> dict[str, Any]:
     preview_dir = os.path.join(tempfile.gettempdir(), "deepseek-imagegen-preview")
     return image_gen.generate_with_translator(
@@ -1033,6 +1181,8 @@ def test_generate(
         seed=seed,
         translator=translator or "auto",
         auto_fix=auto_fix,
+        composition=composition or "auto",
+        size_policy=size_policy or "",
     )
 
 
@@ -1117,6 +1267,16 @@ def run_doctor_json() -> dict[str, Any]:
         return {"ok": False, "error": str(exc)}
 
 
+def run_size_probe_json(backend: str = "vertex") -> dict[str, Any]:
+    try:
+        report = image_gen.run_size_probe(
+            image_gen.load_config(), backend=backend or "vertex"
+        )
+        return {"ok": report.get("ok", False), **report}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc)}
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):  # noqa: A003
         pass
@@ -1159,8 +1319,13 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/vertex":
             query = urllib.parse.parse_qs(self.path.split("?")[1]) if "?" in self.path else {}
             return self._send_json(read_vertex(query.get("dir", [None])[0]))
-        if path == "/api/doctor":
-            return self._send_json(run_doctor_json())
+            if path == "/api/doctor":
+                return self._send_json(run_doctor_json())
+            if path == "/api/doctor-size-probe":
+                query = urllib.parse.parse_qs(self.path.split("?")[1]) if "?" in self.path else {}
+                return self._send_json(
+                    run_size_probe_json(query.get("backend", [""])[0])
+                )
         if path == "/api/image":
             query = urllib.parse.parse_qs(self.path.split("?")[1]) if "?" in self.path else {}
             body = serve_preview_image(query.get("path", [""])[0])

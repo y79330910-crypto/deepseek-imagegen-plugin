@@ -44,9 +44,15 @@ python image_gen.py generate "保持构图，改成水彩画风格" --backend sd
 # 诊断各后端连通性
 python image_gen.py doctor
 
+# 实测代理是否遵守尺寸参数（生成小图核对，结果缓存进配置）
+python image_gen.py doctor --size-probe
+
 # 查看当前生效配置（密钥自动打码）与可用模型
 python image_gen.py config
 python image_gen.py list-models
+
+# 洛天依 V4 公式服全身演唱会（竖版 + 自动看图修正）
+python image_gen.py generate "洛天依V4公式服演唱会全身" --composition full-body --auto-fix --character 洛天依-V4公式服
 ```
 
 `generate` 常用参数：
@@ -62,6 +68,12 @@ python image_gen.py list-models
 | `--model` | 指定模型（vertex / pollinations / siliconflow） |
 | `--image` | 参考图片路径或 http(s) 链接，启用图生图（vertex / sd-webui / comfyui） |
 | `--denoise` | 去噪强度 0~1，默认 0.6（图生图；数值越高改动越大） |
+| `--composition` | 构图预设：`full-body` 全身竖版 / `half-body` 半身 / `portrait` 特写 / `landscape` 横版（v0.7） |
+| `--size-policy` | 尺寸不符策略：`auto` 自动兜底（默认）/ `strict` 严格报错 / `warn` 仅警告 |
+| `--max-fix-rounds` | 自动修复最大轮数（默认跟随配置，v0.7 起默认 2） |
+| `--fallback-backends` | 主后端失败时的降级顺序，如 `vertex,pollinations` |
+| `--character` | 角色卡名称（v2）：从本机 MySQL 读取已核实设定并自动注入 |
+| `--expand` | 外扩画布（v2，仅 vertex）：把参考图扩到目标尺寸，如 `--expand 768x1408` |
 | `--json` | 机器可读输出 |
 
 图生图（`--image`）说明：不传 `--size` 时自动保持原图尺寸；三个后端均支持——
@@ -82,6 +94,8 @@ vertex 走本地代理的 `/images/edits` 编辑接口，SD WebUI 走 `/sdapi/v1
 
 也可以在 `config.json` 里用 `vertex.base_url / vertex.api_key / vertex.model` 手动覆盖。需要代理先启动（`dist\启动.bat`）。
 图生图时走代理的 `/images/edits` 接口（模型不变）。
+
+> **v0.7 实测提示**：本地代理的文生图接口目前只接受 `1024x1536` 这一个尺寸字符串，且输出固定为 `1408x768`（尺寸参数被忽略）。插件已内置「画布优先」兜底：需要竖版/方形/指定画幅时，先用 Pillow 建目标画幅的空白画布，再走图生图让模型在画布上作画（实测 `768x1408` / `1408x768` / `1024x1024` 画布均原样返回）。`doctor --size-probe` 可随时重新实测并缓存结论。
 
 ### Pollinations（免费免密钥）
 
@@ -124,11 +138,73 @@ python image_gen.py translate "一只戴宇航员头盔的柴犬，火星背景�
 
 ### 自动看图改图（--auto-fix，v0.6.0 起默认关闭）
 
-**默认关闭**：生成后不做自动看图修正，第一版就是交付结果；想用的时候由你决定——在设置页「试生成」预览区点「🔍 看图修正当前图」，或命令行加 `--auto-fix`。修正采用 v0.5 的**局部小修**：把当前图片原样喂回去，只针对检查发现的问题做最小改动，其余内容（人物长相、发型、服饰、耳机、背景、画风）一律保持原样。
+**默认关闭**：生成后不做自动看图修正，第一版就是交付结果；想用的时候由你决定——在设置页「试生成」预览区点「🔍 看图修正当前图」，或命令行加 `--auto-fix`。
+
+**v0.7 重构**：问题按「构图类 / 细节类」分类处理——
+
+- **构图类**（脚被裁掉、半身、头顶没留白、Q版比例等）：不再写“保持整体布局”，直接升级为带反馈的重绘（或画布优先），并逐项核对构图清单；
+- **细节类**（发色、服装、背景小物件等）：继续用局部小修，最小改动、其余保持原样；
+- **修复轮尺寸校验**：编辑输出尺寸与输入不一致直接判失败并退回；
+- **保留最佳升级**：不再只看问题条数，构图清单通过项、尺寸匹配都参与加权评分。
 
 - **分级检查**：视觉检查把问题分成"人物级"与"背景细节"两类。局部小修模式下两类都会修（改动成本低）；整图重画模式下背景细节只提示、不重画。
 - **保留最佳**：修正版生成后会复查一次，如果比原图更差（例如引入了新的人物错误），自动退回上一版，结果里的 `auto_fix.reverted` 会标记为 true。
-- 可配置项：`translator.fix_mode`（`edit` 局部小修 / `redraw` 整图重画）、`translator.fix_keep_best`（是否保留最佳），也可用 `--fix-mode` / `--no-keep-best` 临时指定；设置页有对应开关。
+- 可配置项：`auto_fix.max_rounds`（默认 2）、`auto_fix.edit_redraw_threshold`（构图问题达到几条就升级重绘，默认 1）、`auto_fix.check_size`（是否严格校验尺寸，默认开）；向后兼容 `translator.fix_mode` / `translator.fix_keep_best`，也可用 `--fix-mode` / `--no-keep-best` / `--max-fix-rounds` 临时指定；设置页有对应开关。
+
+### 构图预设（v0.7 新增）
+
+`--composition full-body` 会把画幅、取景规则与视觉检查清单一起锁定：
+
+| 预设 | 默认画幅 | 检查清单（视觉模型逐项核对） |
+| --- | --- | --- |
+| `full-body` | 768x1408 竖版 | 双脚完整入画 / 头顶留白 / 全身从头到脚完整 / 非Q版人体比例 |
+| `half-body` | 1024x1024 | 腰部以上完整入画 / 头顶留白 / 非Q版 |
+| `portrait` | 1024x1024 | 面部完整清晰 / 头顶留白 / 面部特写为主 |
+| `landscape` | 1408x768 横版 | 主体完整入画 / 横向广角 / 背景层次清晰 |
+
+预设可在设置页或 `config.json` 的 `composition.presets` 里改；未指定 `--size` 时自动采用预设画幅。
+
+### 真实尺寸校验（v0.7 新增）
+
+生成后脚本会读取文件头里的真实宽高，不再拿“请求尺寸”冒充结果：
+
+- `--json` 输出新增 `actual_size`（真实尺寸）与 `size_check`（请求/实际/是否匹配/是否用了画布优先）；
+- 尺寸不符时按 `size_policy.mode` 处理：`auto` 重试 → 画布优先兜底 → 警告保留（默认）；`strict` 直接报错；`warn` 只警告；
+- `doctor --size-probe` 实测后端对尺寸的遵守情况，结果缓存进 `size_policy.probe_cache`。
+
+### 健壮性（v0.7 新增）
+
+- 上游返回 HTTP 200 + 空 `data`（限流/吞错）时自动重试（`robustness.empty_data_retries`，默认 2 次），重试失败给出中文提示；
+- 主后端失败自动按 `robustness.fallback_backends` 顺序降级（如 `vertex,pollinations`），`--fallback-backends` 可临时指定；
+- 默认超时提高到 240 秒（`robustness.timeout`）；
+- Windows PowerShell 下中文输出不再乱码（脚本自动把控制台切到 UTF-8）。
+
+### 角色卡（v2，本机 MySQL）
+
+把已核实的角色设定存进本机 MySQL，出图时自动注入，不用每次重写：
+
+```bash
+python image_gen.py character init            # 建表 + 写入默认角色卡（洛天依 V4 公式服，FactGuard 已核实）
+python image_gen.py character list            # 列出角色卡
+python image_gen.py character add --name 初音未来 --version V4 --hair-color 青色 --eye-color 青色 --outfit "制服" --verified
+python image_gen.py generate "洛天依演唱会" --character 洛天依-V4公式服
+```
+
+数据只存本机 MySQL（默认库 `deepseek_imagegen`，可在设置页改），**不会**同步到 GitHub。生成时会注入灰发绿瞳、蓝白公式服、腰部中国结等已核实设定，并禁止 Q 版/改色等。
+
+### 外扩画布（v2，仅 vertex）
+
+把已经生成的半身图就地扩成全身竖版：
+
+```bash
+python image_gen.py generate "把这张图扩展成全身演唱会场景，保持人物设定" --image 半身图.png --expand 768x1408
+```
+
+实现方式：Pillow 把原图放在竖版画布底部，走 `/images/edits` 让模型补全背景与下半身（无蒙版，模型可能重绘局部，属于尽力而为方案）。SD WebUI / ComfyUI 的外扩方案见社区节点（如 tuki0918/comfyui-image-expand-nodes），后续版本接入。
+
+### 交付规范化（v2）
+
+开启自动修复并指定 `--out xxx.png` 时，最终交付文件固定命名为 `xxx_final.png`，中间轮次的 `-fix1`/`-fix2` 版本自动清理，镜像副本同步为最终文件，避免拿错版本。
 
 结果里的 `auto_fix.rounds`、`auto_fix.fix_mode`、`auto_fix.reverted` 与 `auto_fix.history`（每一轮的问题、修正指令、判定结果）可查看全过程。关闭：`--no-auto-fix` 或设置页关闭开关。
 
@@ -161,6 +237,19 @@ python image_gen.py translate "一只戴宇航员头盔的柴犬，火星背景�
 4. 图生图会自动把参考图上传到 ComfyUI 再生成，默认去噪强度 0.6（`comfyui.denoise` 或 `--denoise`）。
 
 ## 更新日志
+
+### v0.7.0
+
+- **构图预设**：`--composition full-body / half-body / portrait / landscape`，锁定画幅 + 取景规则 + 视觉检查清单
+- **真实尺寸校验**：生成后探测文件头真实尺寸，JSON 新增 `actual_size` / `size_check`，不再用请求尺寸冒充
+- **画布优先兜底**：代理文生图不遵守尺寸时，自动用 Pillow 建目标画幅画布走图生图（实测 768x1408 / 1408x768 / 1024x1024 原样返回）
+- **自动修复重构**：问题分构图类/细节类；构图问题升级为带反馈重绘（不写“保持整体布局”）；修复轮校验输出尺寸；keep-best 按检查清单加权
+- **健壮性**：空 data 自动重试、后端降级（`--fallback-backends`）、超时 240s、中文报错、PowerShell UTF-8 输出
+- **doctor --size-probe**：实测后端尺寸行为并缓存进配置
+- **设置页**：新增构图/尺寸策略/修复/健壮性/角色卡配置区
+- **角色卡（v2 预览）**：本机 MySQL 建表 + 洛天依 V4 公式服默认角色卡，`--character` 自动注入
+- **外扩画布（v2 预览）**：`--expand WxH` 把已有图扩成目标画幅
+- **交付规范化**：修复后最终文件固定 `xxx_final.png`，中间版本自动清理
 
 ### v0.6.2
 
