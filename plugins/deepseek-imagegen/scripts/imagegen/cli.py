@@ -48,8 +48,6 @@ def cmd_generate(args: argparse.Namespace) -> dict[str, Any]:
         translator=args.translator,
         composition=args.composition,
         size_policy=args.size_policy,
-        character=args.character,
-        character_image=args.character_image,
         library_enabled=getattr(args, "library", None),
         ref_type=getattr(args, "ref_type", "auto"),
     )
@@ -106,10 +104,6 @@ def _print_result(result: dict[str, Any], use_json: bool) -> int:
         print(f"种子：{result['seed']}")
         if result.get("composition_preset") and result["composition_preset"] != "auto":
             print(f"构图预设：{result['composition_preset']}")
-        if result.get("character", {}).get("used"):
-            char_name = result["character"].get("name") or ""
-            ref = "（含参考图）" if result["character"].get("reference") else ""
-            print(f"角色注入：{char_name}{ref}")
         refinfo = result.get("reference") or {}
         if refinfo.get("type"):
             print(
@@ -210,17 +204,6 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         choices=["", "strict", "auto", "warn"],
         help="尺寸不符策略：strict 严格报错 / auto 自动兜底重试(默认) / warn 仅警告",
-    )
-    gen.add_argument(
-        "--character",
-        default="",
-        help="手动指定角色（默认按提示词精确文字匹配自动注入），如 洛天依",
-    )
-    gen.add_argument(
-        "--character-image",
-        dest="character_image",
-        default="",
-        help="临时覆盖角色参考图（本地图片路径），仅本次生成生效",
     )
     lib_group = gen.add_mutually_exclusive_group()
     lib_group.add_argument(

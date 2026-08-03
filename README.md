@@ -7,7 +7,6 @@ DeepSeek 本身无法直接生成图片；本插件提供图像生成桥接，�
 - **单一本地后端（v1.0 精简）**：自动读取代理端口/密钥/模型列表，选用最佳图像模型（gemini-3-pro-image 等）；删除 pollinations / siliconflow / sd-webui / comfyui 与可视化设置页
 - **提示词翻译官**：中文需求自动改写为结构化生图提示词（DeepSeek 默认 / Gemini 兜底 / off 直传）
 - **构图预设 + 真实尺寸校验（v1.0）**：`--composition full-body / half-body / portrait / landscape`，生成后实测尺寸，代理不守尺寸时自动画布优先兜底
-- **轻量角色表（v1.0）**：config.json 存角色设定（默认洛天依 V4 公式服，含禁忌原文），提示词精确点名自动注入；可选参考图（等比放画布、不拉伸；缺失自动降级）
 - **单模型改图（v1.0）**：编辑指令 + 原图参考，图像模型自己看图改图，单轮完成
 - **提示词词库**：MySQL + SiliconFlow Embedding/Rerank 向量检索（`prompt_library` 库，2000 条 DrawingSpells 已归档保留）
 - **自动副本**：生成成功后自动在 `mirror_dir` 保留副本
@@ -24,7 +23,7 @@ DeepSeek 本身无法直接生成图片；本插件提供图像生成桥接，�
     ├── scripts/image_gen.py              # 薄入口
     ├── scripts/prompt_lib.py             # 词库薄入口
     ├── scripts/imagegen/                 # v1.0 模块化包（cli/config/http/image_utils/
-    │                                     #   vertex/translator/composition/characters/
+    │                                     #   vertex/translator/composition/reference/
     │                                     #   library/generate/doctor）
     ├── scripts/tests/run_smoke_test.py   # 单文件冒烟测试
     └── assets/icon.png                   # 插件图标

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""参考图三段式提示词：类型模板、自动分类、避免项提取与角色禁忌冲突处理。"""
+"""参考图三段式提示词：类型模板、自动分类与避免项提取。"""
 
 from __future__ import annotations
 
@@ -140,33 +140,6 @@ def _dedupe_avoid(items: list[str]) -> list[str]:
         item for item in items
         if not any(other != item and other in item for other in items)
     ]
-
-
-def filter_taboo_conflicts(char_desc: str, avoid_items: Optional[list[str]] = None) -> str:
-    """用户显式要求移除的元素优先于角色设定禁忌：
-    从角色设定正文里删掉对应描述片段，并从“禁忌”句里摘除该元素，
-    防止模型因为“不得漏掉耳机”又把耳机画回去。
-    """
-    if not char_desc or not avoid_items:
-        return char_desc
-    body, sep, taboo = char_desc.partition("禁忌")
-    for item in avoid_items:
-        if not item:
-            continue
-        # 1) 正文：只删除包含该元素的分句（以 ；或 。 结尾），不跨过“禁忌”
-        if item in body:
-            pattern = re.compile(r"[^；。]*" + re.escape(item) + r"[^；。]*[；。]")
-            body = pattern.sub("", body)
-        # 2) 禁忌句：只摘除该元素（连同顿号），保留其余禁忌
-        if item in taboo:
-            taboo = taboo.replace("：" + item, "：")
-            taboo = taboo.replace("、" + item, "")
-            taboo = taboo.replace(item + "、", "")
-            taboo = re.sub(r"、" + re.escape(item) + r"、", "、", taboo)
-            taboo = taboo.replace(item, "")
-            while "、、" in taboo:
-                taboo = taboo.replace("、、", "、")
-    return body + sep + taboo
 
 
 def build_reference_brief(
@@ -355,15 +328,12 @@ def classify_reference(image: str, cfg: dict[str, Any]) -> dict[str, Any]:
 def resolve_ref_type(
     manual: str = "",
     user_text: str = "",
-    char_used: bool = False,
     classify: Optional[dict[str, Any]] = None,
 ) -> tuple[str, str]:
-    """确定最终参考图类型：手动 > 视觉自动 > 降级（角色命中→character，否则 generic）。"""
+    """确定最终参考图类型：手动 > 视觉自动 > 降级 generic。"""
     manual = (manual or "").strip().lower()
     if manual and manual != "auto":
         return validate_ref_type(manual), "manual"
     if classify and classify.get("ok") and classify.get("type"):
         return str(classify["type"]), "vision"
-    if char_used:
-        return "character", "fallback"
     return "generic", "fallback"

@@ -1,4 +1,4 @@
-"""出图编排：角色注入/参考图 → 词库检索 → 翻译官 → 构图预设 → Vertex 出图 → 尺寸校验。"""
+"""出图编排：参考图 → 词库检索 → 翻译官 → 构图预设 → Vertex 出图 → 尺寸校验。"""
 
 from __future__ import annotations
 
@@ -6,7 +6,6 @@ import random
 from pathlib import Path
 from typing import Any, Optional
 
-from . import characters as char_mod
 from . import reference as ref_mod
 from .composition import (
     composition_checklist,
@@ -71,8 +70,6 @@ def generate(
     translator: str = "auto",
     composition: str = "auto",
     size_policy: str = "",
-    character: str = "",
-    character_image: str = "",
     library_enabled: Optional[bool] = None,
     ref_type: str = "auto",
 ) -> dict[str, Any]:
@@ -104,16 +101,8 @@ def generate(
     empty_retries = 2
     retry_delay_base = 6.0
 
-    # ---- 角色解析（精确文字匹配 > 手动 --character；不中断出图）
-    char = char_mod.resolve_character(cfg, prompt, manual=character, character_image=character_image)
-    if char["warning"]:
-        warnings.append(char["warning"])
-    char_desc = char["desc"]
-
-    # ---- 参考图三段式：提取禁止项、处理角色禁忌冲突、自动分类并生成简报
+    # ---- 参考图三段式：提取禁止项、自动分类并生成简报
     avoid_items = ref_mod.detect_avoid_items(prompt)
-    if avoid_items:
-        char_desc = ref_mod.filter_taboo_conflicts(char_desc, avoid_items)
     ref_brief = ""
     ref_info: dict[str, Any] = {
         "type": "",
@@ -133,13 +122,11 @@ def generate(
             manual_type = ""
             classify = ref_mod.classify_reference(user_ref, cfg)
         resolved_type, method = ref_mod.resolve_ref_type(
-            manual_type, prompt, bool(char["used"]), classify
+            manual_type, prompt, classify=classify
         )
         preserve = str(classify.get("preserve") or "") if classify else ""
         identity_list = ""
-        if char_desc:
-            identity_list = char_desc.split("禁忌", 1)[0].strip()
-        elif resolved_type in ("character", "generic"):
+        if resolved_type in ("character", "generic"):
             identity_list = preserve
         ref_brief = ref_mod.build_reference_brief(
             resolved_type, prompt, preserve, avoid_items, identity_list
@@ -156,12 +143,10 @@ def generate(
             "brief": ref_brief,
         }
 
-    # ---- 翻译官输入 = 用户需求 + 构图约束 + 角色设定
+    # ---- 翻译官输入 = 用户需求 + 构图约束 + 参考图简报
     user_prompt = prompt
     if comp_suffix:
         user_prompt += "\n【构图要求】" + comp_suffix
-    if char_desc:
-        user_prompt += "\n【角色设定（已核实，必须严格遵守）】" + char_desc
     if ref_brief:
         user_prompt += "\n\n" + ref_brief
 
@@ -204,41 +189,24 @@ def generate(
         final_prompt = tr_info.get("rewritten") or prompt
     else:
         final_prompt = user_prompt
-    # 最终提示词再补一遍硬约束（防止翻译官漏掉构图/角色设定）
+    # 最终提示词再补一遍硬约束（防止翻译官漏掉构图/参考图约束）
     if comp_suffix:
         final_prompt += "\n（构图硬性要求）" + comp_suffix
-    if char_desc:
-        final_prompt += "\n（角色设定，必须严格遵守）" + char_desc
     if ref_brief:
         final_prompt += "\n" + ref_mod.build_reference_suffix(
             ref_info["type"], avoid_items, ref_info.get("identity_list") or ""
         )
 
-    # ---- 参考图：用户 --image 优先，其次角色参考图（读不了时降级纯文字）
-    ref_source = (init_image or "").strip() or char["image"]
-    ref_is_character = bool(char["image"]) and not (init_image or "").strip()
-    if (init_image or "").strip() and char["image"]:
-        warnings.append("同时给了 --image 与角色参考图：本次以 --image 为准，角色参考图未使用。")
+    # ---- 参考图：用户 --image（读不了时按错误处理）
+    ref_source = (init_image or "").strip()
     init_data: Optional[tuple[bytes, str, str]] = None
     if ref_source:
-        try:
-            if ref_is_character:
-                width, height = parse_size(size or "1024x1024")
-                init_data = char_mod.load_character_reference(ref_source, width, height)
-                final_prompt += "\n（请保持图中人物设定不变，生成新场景）"
-            else:
-                init_data = load_init_image(ref_source)
-                if size:
-                    width, height = parse_size(size)
-                else:
-                    probed = probe_image_size_ext(init_data[0], init_data[1])
-                    width, height = probed or parse_size("1024x1024")
-        except GenError as exc:
-            if ref_is_character:
-                warnings.append(f"角色参考图读取失败，已降级为纯文字出图：{exc}")
-                ref_source = ""
-            else:
-                raise
+        init_data = load_init_image(ref_source)
+        if size:
+            width, height = parse_size(size)
+        else:
+            probed = probe_image_size_ext(init_data[0], init_data[1])
+            width, height = probed or parse_size("1024x1024")
     if not ref_source:
         width, height = parse_size(size or str(cfg.get("default_size") or "1024x1024"))
 
@@ -362,12 +330,6 @@ def generate(
         "bytes": len(data),
         "translator": tr_info,
         "prompt_used": final_prompt,
-        "character": {
-            "used": bool(char["used"]),
-            "name": char["key"],
-            "reference": bool(ref_is_character and ref_source),
-            "warning": char["warning"],
-        },
         "reference": ref_info,
         "prompt_library": {"enabled": lib_enabled, "hits": lib_hits},
     }
