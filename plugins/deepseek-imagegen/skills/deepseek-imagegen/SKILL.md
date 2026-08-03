@@ -51,7 +51,9 @@ python "<脚本路径>" generate "<提示词>" [选项]
 - `--steps 28` / `--cfg 7`：采样步数 / 引导强度（sd-webui / comfyui）
 - `--model <模型名>`：指定模型（vertex / pollinations / siliconflow）
 - `--translator deepseek|gemini|off|auto`：提示词翻译官（默认跟随配置，deepseek 为默认引擎）
-- `--auto-fix` / `--no-auto-fix`：开启/关闭自动看图改图（默认跟随配置，开启时生成后自动视觉检查并修正一次）
+- `--auto-fix` / `--no-auto-fix`：开启/关闭自动看图改图（**v0.6.0 起默认关闭**；需要时手动加 `--auto-fix`，或在设置页预览区点「看图修正」）
+- `--library` / `--no-library`：生成时是否使用提示词词库检索（默认跟随配置）
+- 提示词词库：把收集的提示词存 MySQL，生成时用向量模型检索相近示例喂给翻译官；工具为 `scripts/prompt_lib.py`（init/import/search/stats）
 - `--json`：机器可读输出，读取 `path`、`seed`、`backend` 字段
 
 **提示词翻译官（推荐保持开启）：** 用户给出中文需求时，脚本会先让翻译官按固定模板

@@ -8,7 +8,7 @@
     "enabled": true,
     "engine": "deepseek",
     "output_lang": "zh",
-    "auto_fix": true,
+    "auto_fix": false,
     "max_fix_rounds": 1,
     "fix_mode": "edit",
     "fix_keep_best": true,
@@ -21,6 +21,30 @@
       "model": ""
     },
     "vision_bridge": ""
+  },
+  "prompt_library": {
+    "enabled": false,
+    "use_in_translator": true,
+    "top_k": 50,
+    "final_k": 8,
+    "embedding": {
+      "base_url": "https://api.siliconflow.com/v1/embeddings",
+      "api_key": "",
+      "model": "Qwen/Qwen3-Embedding-8B"
+    },
+    "rerank": {
+      "enabled": true,
+      "base_url": "https://api.siliconflow.com/v1/rerank",
+      "api_key": "",
+      "model": "Qwen/Qwen3-Reranker-8B"
+    },
+    "mysql": {
+      "host": "127.0.0.1",
+      "port": 3306,
+      "user": "",
+      "password": "",
+      "db": "prompt_library"
+    }
   },
   "pollinations": {
     "base_url": "https://image.pollinations.ai/prompt",

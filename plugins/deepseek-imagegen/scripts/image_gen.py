@@ -19,7 +19,7 @@ DeepSeek ImageGen bridge.
   comfyui        上传图片后 VaeEncode + KSampler（denoise）
 
 配置：~/.deepseek-imagegen/config.json（参考 scripts/config.example.json）
-仅使用 Python 标准库，无第三方依赖。
+核心功能仅使用 Python 标准库；提示词词库功能可选依赖 pymysql / numpy。
 """
 
 from __future__ import annotations
@@ -62,7 +62,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "enabled": True,
         "engine": "deepseek",
         "output_lang": "zh",
-        "auto_fix": True,
+        "auto_fix": False,
         "max_fix_rounds": 1,
         "fix_mode": "edit",
         "fix_keep_best": True,
@@ -75,6 +75,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "model": "",
         },
         "vision_bridge": "",
+    },
+    "prompt_library": {
+        "enabled": False,
+        "use_in_translator": True,
+        "top_k": 50,
+        "final_k": 8,
     },
     "pollinations": {
         "base_url": "https://image.pollinations.ai/prompt",
@@ -639,10 +645,10 @@ def _looks_broken(text: str, had_cjk: bool) -> bool:
     return any(m in low for m in markers)
 
 
-def build_translator_system(lang: str = "zh") -> str:
+def build_translator_system(lang: str = "zh", examples: Optional[list[str]] = None) -> str:
     """生成提示词翻译官的系统提示词（参考 Gemini 官方提示指南与社区最佳实践）。"""
     if lang == "en":
-        return (
+        base = (
             "You are a senior visual prompt engineer. Rewrite the user's image request "
             "into a well-structured prompt for modern image models such as gemini-3-pro-image.\n\n"
             "Hard rules:\n"
@@ -657,20 +663,29 @@ def build_translator_system(lang: str = "zh") -> str:
             "5. On-image text should be English and placed in quotes.\n"
             "6. Output only the prompt itself: no explanations, no Markdown, no surrounding quotes."
         )
-    return (
-        "你是一位精通图像生成提示词的资深视觉设计师。请把用户用中文描述的画面需求，"
-        "改写成适合 gemini-3-pro-image 等新一代图像模型的生图提示词。\n\n"
-        "硬性要求：\n"
-        "1. 用自然连贯的完整句子描述，禁止堆砌孤立关键词；Gemini 图像模型喜欢自然描述段落，讨厌关键词清单。\n"
-        "2. 按顺序覆盖：主体（身份、外貌、服装、姿态、表情）→ 环境背景（地点、建筑、天气、景深层次）→ "
-        "光影（光源、颜色、冷暖对比、轮廓光）→ 风格媒介（日系动漫插画、厚涂、水彩、写实摄影等）→ "
-        "构图（画幅比例、机位、居中/三分法、前景中景背景）→ 画面文字（如有，用英文引号标出，"
-        "例如 \"Merry Xmas ♡\"，并说明位置与字体风格，最多 2-3 条）。\n"
-        "3. 用户提到的每一个细节都必须保留，不许遗漏；可以补充合理细节增强画面完成度。\n"
-        "4. 提示词长度控制在 150-500 字之间；内容复杂时宁长勿短。\n"
-        "5. 画面中的文字优先使用英文并放进引号。\n"
-        "6. 只输出提示词正文：不要解释、不要 Markdown、不要编号列表、不要用引号包裹全文。"
-    )
+    else:
+        base = (
+            "你是一位精通图像生成提示词的资深视觉设计师。请把用户用中文描述的画面需求，"
+            "改写成适合 gemini-3-pro-image 等新一代图像模型的生图提示词。\n\n"
+            "硬性要求：\n"
+            "1. 用自然连贯的完整句子描述，禁止堆砌孤立关键词；Gemini 图像模型喜欢自然描述段落，讨厌关键词清单。\n"
+            "2. 按顺序覆盖：主体（身份、外貌、服装、姿态、表情）→ 环境背景（地点、建筑、天气、景深层次）→ "
+            "光影（光源、颜色、冷暖对比、轮廓光）→ 风格媒介（日系动漫插画、厚涂、水彩、写实摄影等）→ "
+            "构图（画幅比例、机位、居中/三分法、前景中景背景）→ 画面文字（如有，用英文引号标出，"
+            "例如 \"Merry Xmas ♡\"，并说明位置与字体风格，最多 2-3 条）。\n"
+            "3. 用户提到的每一个细节都必须保留，不许遗漏；可以补充合理细节增强画面完成度。\n"
+            "4. 提示词长度控制在 150-500 字之间；内容复杂时宁长勿短。\n"
+            "5. 画面中的文字优先使用英文并放进引号。\n"
+            "6. 只输出提示词正文：不要解释、不要 Markdown、不要编号列表、不要用引号包裹全文。"
+        )
+    if examples:
+        base += (
+            "\n\n参考示例：以下是来自已验证提示词库的优秀提示词（可能中英文混合）。"
+            "请借鉴它们的结构、细节密度和用词风格，但不要照抄原文；"
+            "把其中适用的写法自然融入你为用户需求撰写的提示词：\n"
+            + "\n".join(f"- {str(ex)[:600]}" for ex in examples if str(ex).strip())
+        )
+    return base
 
 
 def translate_prompt(
@@ -679,6 +694,7 @@ def translate_prompt(
     engine: str = "auto",
     feedback: str = "",
     max_tokens: int = 4096,
+    examples: Optional[list[str]] = None,
 ) -> dict[str, Any]:
     """提示词翻译官：把用户需求改写成结构化生图提示词。"""
     cfg = cfg if cfg is not None else load_config()
@@ -702,7 +718,7 @@ def translate_prompt(
         engine = "deepseek"
 
     lang = str(tr.get("output_lang") or "zh").lower()
-    system = build_translator_system(lang)
+    system = build_translator_system(lang, examples)
     user_msg = str(user_text).strip()
     if feedback and str(feedback).strip():
         user_msg += "\n\n【上次生成后发现的问题，请在重写时重点修正】\n" + str(feedback).strip()
@@ -1687,6 +1703,7 @@ def generate_with_translator(
     auto_fix: Optional[bool] = None,
     fix_mode: Optional[str] = None,
     keep_best: Optional[bool] = None,
+    library_enabled: Optional[bool] = None,
 ) -> dict[str, Any]:
     """生成图片：可选先用翻译官改写提示词，再按需自动看图改图。"""
     cfg_all = load_config()
@@ -1697,6 +1714,12 @@ def generate_with_translator(
     if engine in ("", "auto"):
         engine = str(tr.get("engine") or "deepseek")
     tr_enabled = engine.strip().lower() not in ("off", "none", "direct", "直传")
+    tr_pl = cfg_all.get("prompt_library") or {}
+    if not isinstance(tr_pl, dict):
+        tr_pl = {}
+    lib_enabled = library_enabled if library_enabled is not None else bool(tr_pl.get("enabled", False))
+    lib_hits: list[dict[str, Any]] = []
+    lib_examples: list[str] = []
     tr_info: dict[str, Any] = {
         "ok": True,
         "engine": "off",
@@ -1707,7 +1730,32 @@ def generate_with_translator(
         "fallback": False,
     }
     if tr_enabled:
-        tr_info = translate_prompt(prompt, cfg=cfg_all, engine=engine)
+        if lib_enabled and bool(tr_pl.get("use_in_translator", True)):
+            try:
+                from prompt_lib import (  # type: ignore  # noqa: PLC0415
+                    LibError as _LibError,
+                    load_config as _pl_load,
+                    search as _pl_search,
+                )
+
+                _pl_cfg = _pl_load()
+                _hits = _pl_search(
+                    _pl_cfg,
+                    prompt,
+                    top_k=int(tr_pl.get("top_k") or 50),
+                    final_k=int(tr_pl.get("final_k") or 8),
+                )
+                lib_examples = [str(h.get("content") or "") for h in _hits if h.get("content")]
+                lib_hits = [
+                    {"id": h.get("id"), "category": h.get("category") or ""}
+                    for h in _hits
+                ]
+            except _LibError as exc:
+                tr_info["library_warning"] = str(exc)
+            except Exception as exc:  # noqa: BLE001
+                tr_info["library_warning"] = f"词库检索异常：{exc}"
+        tr_info = translate_prompt(prompt, cfg=cfg_all, engine=engine, examples=lib_examples)
+        tr_info["library_hits"] = lib_hits
         final_prompt = tr_info.get("rewritten") or prompt
     else:
         final_prompt = prompt
@@ -1795,7 +1843,11 @@ def generate_with_translator(
             else:
                 # 整图重画（老方式）：翻译官根据反馈重写提示词再生成
                 fb = translate_prompt(
-                    prompt, cfg=cfg_all, engine=fix_engine, feedback=_fix_issues_text(check)
+                    prompt,
+                    cfg=cfg_all,
+                    engine=fix_engine,
+                    feedback=_fix_issues_text(check),
+                    examples=lib_examples,
                 )
                 new_prompt = fb.get("rewritten") or final_prompt
                 round_kwargs = dict(kwargs)
@@ -1847,6 +1899,10 @@ def generate_with_translator(
         result["prompt_used"] = last_round.get("prompt") or final_prompt
     if warnings:
         result["warnings"] = warnings
+    result["prompt_library"] = {
+        "enabled": lib_enabled,
+        "hits": lib_hits,
+    }
     return result
 
 
@@ -1869,6 +1925,7 @@ def cmd_generate(args: argparse.Namespace) -> dict[str, Any]:
         auto_fix=getattr(args, "auto_fix", None),
         fix_mode=None if getattr(args, "fix_mode", None) in (None, "", "auto") else args.fix_mode,
         keep_best=getattr(args, "keep_best", None),
+        library_enabled=getattr(args, "library", None),
     )
 
 
@@ -2115,6 +2172,20 @@ def build_parser() -> argparse.ArgumentParser:
         dest="keep_best",
         action="store_false",
         help="关闭保留最佳",
+    )
+    lib_group = gen.add_mutually_exclusive_group()
+    lib_group.add_argument(
+        "--library",
+        dest="library",
+        action="store_true",
+        default=None,
+        help="生成时启用提示词词库检索（默认跟随配置）",
+    )
+    lib_group.add_argument(
+        "--no-library",
+        dest="library",
+        action="store_false",
+        help="生成时不使用提示词词库",
     )
     gen.add_argument("--json", action="store_true", help="输出 JSON（机器可读）")
 

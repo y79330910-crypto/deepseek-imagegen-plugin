@@ -386,6 +386,47 @@ HTML_PAGE = r"""<!doctype html>
             <div class="field m-b-0"><label for="tr_vision">视觉检查脚本路径（留空=自动查找）</label><input id="tr_vision" placeholder="vision_bridge.py 的完整路径"></div>
           </div>
         </div>
+        <div class="card glass">
+          <div class="page-head">
+            <div><h2>提示词词库（v0.6）</h2><div class="hint">把收集的提示词存进 MySQL，生成时用向量检索最相近的几条例子喂给翻译官，让第一版更稳。密钥只保存在本机</div></div>
+          </div>
+          <div class="grid grid-2">
+            <div class="field">
+              <label for="pl_enabled">启用词库</label>
+              <select id="pl_enabled">
+                <option value="1">开启</option>
+                <option value="0">关闭</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="pl_feed">喂给翻译官</label>
+              <select id="pl_feed">
+                <option value="1">开启（推荐）</option>
+                <option value="0">关闭</option>
+              </select>
+            </div>
+            <div class="field"><label for="pl_topk">初选数量</label><input id="pl_topk" type="number" min="1" max="200" placeholder="50"></div>
+            <div class="field"><label for="pl_finalk">最终参考条数</label><input id="pl_finalk" type="number" min="1" max="20" placeholder="8"></div>
+            <div class="field"><label for="pl_emb_base">Embedding 地址</label><input id="pl_emb_base" placeholder="https://api.siliconflow.com/v1/embeddings"></div>
+            <div class="field"><label for="pl_emb_key">Embedding 密钥</label><input id="pl_emb_key" type="password" placeholder="sk-..."></div>
+            <div class="field"><label for="pl_emb_model">Embedding 模型</label><input id="pl_emb_model" placeholder="Qwen/Qwen3-Embedding-8B"></div>
+            <div class="field">
+              <label for="pl_rr">Rerank 精排</label>
+              <select id="pl_rr">
+                <option value="1">开启（推荐）</option>
+                <option value="0">关闭</option>
+              </select>
+            </div>
+            <div class="field"><label for="pl_rr_base">Rerank 地址</label><input id="pl_rr_base" placeholder="https://api.siliconflow.com/v1/rerank"></div>
+            <div class="field"><label for="pl_rr_key">Rerank 密钥（留空=用 Embedding 密钥）</label><input id="pl_rr_key" type="password" placeholder="sk-..."></div>
+            <div class="field"><label for="pl_rr_model">Rerank 模型</label><input id="pl_rr_model" placeholder="Qwen/Qwen3-Reranker-8B"></div>
+            <div class="field"><label for="pl_mysql_host">MySQL 主机</label><input id="pl_mysql_host" placeholder="127.0.0.1"></div>
+            <div class="field"><label for="pl_mysql_port">MySQL 端口</label><input id="pl_mysql_port" type="number" placeholder="3306"></div>
+            <div class="field"><label for="pl_mysql_user">MySQL 账号</label><input id="pl_mysql_user" placeholder="root"></div>
+            <div class="field"><label for="pl_mysql_pass">MySQL 密码</label><input id="pl_mysql_pass" type="password" placeholder=""></div>
+            <div class="field m-b-0"><label for="pl_mysql_db">数据库名</label><input id="pl_mysql_db" placeholder="prompt_library"></div>
+          </div>
+        </div>
       </section>
 
       <section id="page-backends" class="hidden">
@@ -466,6 +507,9 @@ HTML_PAGE = r"""<!doctype html>
           <div id="preview">
             <img id="previewImg" alt="生成结果预览">
             <div class="preview-meta" id="previewMeta"></div>
+            <div class="toolbar" style="margin-top:8px">
+              <button class="btn ghost" onclick="autoFixCurrent()">🔍 看图修正当前图（手动触发）</button>
+            </div>
           </div>
         </div>
       </section>
@@ -564,6 +608,24 @@ function render() {
   $("tr_ds_model").value = tr.deepseek && tr.deepseek.model || "deepseek-v4-flash";
   $("tr_gm_model").value = tr.gemini && tr.gemini.model || "";
   $("tr_vision").value = tr.vision_bridge || "";
+  const pl = c.prompt_library || {};
+  const ple = pl.embedding || {}, plr = pl.rerank || {}, plm = pl.mysql || {};
+  $("pl_enabled").value = pl.enabled === false ? "0" : "1";
+  $("pl_feed").value = pl.use_in_translator === false ? "0" : "1";
+  $("pl_topk").value = pl.top_k != null ? pl.top_k : 50;
+  $("pl_finalk").value = pl.final_k != null ? pl.final_k : 8;
+  $("pl_emb_base").value = ple.base_url || "";
+  $("pl_emb_key").value = ple.api_key || "";
+  $("pl_emb_model").value = ple.model || "Qwen/Qwen3-Embedding-8B";
+  $("pl_rr").value = plr.enabled === false ? "0" : "1";
+  $("pl_rr_base").value = plr.base_url || "";
+  $("pl_rr_key").value = plr.api_key || "";
+  $("pl_rr_model").value = plr.model || "Qwen/Qwen3-Reranker-8B";
+  $("pl_mysql_host").value = plm.host || "127.0.0.1";
+  $("pl_mysql_port").value = plm.port || 3306;
+  $("pl_mysql_user").value = plm.user || "";
+  $("pl_mysql_pass").value = plm.password || "";
+  $("pl_mysql_db").value = plm.db || "prompt_library";
   $("vertex_dir").value = c.vertex && c.vertex.dir || "";
   $("vertex_base").value = c.vertex && c.vertex.base_url || "";
   $("vertex_key").value = c.vertex && c.vertex.api_key || "";
@@ -633,6 +695,31 @@ function collect() {
     },
     vision_bridge: $("tr_vision").value.trim(),
   });
+  const embKey = $("pl_emb_key").value.trim();
+  c.prompt_library = {
+    enabled: $("pl_enabled").value === "1",
+    use_in_translator: $("pl_feed").value === "1",
+    top_k: parseInt($("pl_topk").value) || 50,
+    final_k: parseInt($("pl_finalk").value) || 8,
+    embedding: {
+      base_url: $("pl_emb_base").value.trim() || "https://api.siliconflow.com/v1/embeddings",
+      api_key: embKey,
+      model: $("pl_emb_model").value.trim() || "Qwen/Qwen3-Embedding-8B",
+    },
+    rerank: {
+      enabled: $("pl_rr").value === "1",
+      base_url: $("pl_rr_base").value.trim() || "https://api.siliconflow.com/v1/rerank",
+      api_key: $("pl_rr_key").value.trim() || embKey,
+      model: $("pl_rr_model").value.trim() || "Qwen/Qwen3-Reranker-8B",
+    },
+    mysql: {
+      host: $("pl_mysql_host").value.trim() || "127.0.0.1",
+      port: parseInt($("pl_mysql_port").value) || 3306,
+      user: $("pl_mysql_user").value.trim(),
+      password: $("pl_mysql_pass").value,
+      db: $("pl_mysql_db").value.trim() || "prompt_library",
+    },
+  };
   c.vertex = {
     dir: $("vertex_dir").value.trim(),
     base_url: $("vertex_base").value.trim(),
@@ -743,6 +830,8 @@ async function testGenerate() {
   };
   try {
     const r = await api("/api/test-generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    state.lastPath = r.path;
+    state.lastPrompt = body.prompt;
     const img = $("previewImg");
     img.src = "/api/image?path=" + encodeURIComponent(r.path);
     img.onerror = () => { img.style.display = "none"; };
@@ -770,6 +859,28 @@ async function testGenerate() {
     state.busy = false;
     $("genBtn").disabled = false;
     $("genBtn").textContent = "✨ 开始生成";
+  }
+}
+
+async function autoFixCurrent() {
+  if (state.busy) return;
+  if (!state.lastPath) { toast("请先生成一张图片，再点看图修正", "warn"); return; }
+  state.busy = true;
+  try {
+    const r = await api("/api/auto-fix", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: state.lastPath, prompt: state.lastPrompt || "" }) });
+    if (r.error) throw new Error(r.error);
+    const img = $("previewImg");
+    img.src = "/api/image?path=" + encodeURIComponent(r.path);
+    let msg = r.fixed ? `已修正（${r.verdict === "kept" ? "保留修正版" : "修正更差，已退回原图"}）` : "检查通过，无需修正";
+    if (r.issues) msg += " · " + String(r.issues).slice(0, 150);
+    $("previewMeta").innerHTML = `<span>${msg}</span><code>${esc(r.path)}</code>`;
+    toast(msg, r.fixed ? "ok" : "info");
+  } catch (e) {
+    const box = $("errorBox");
+    box.textContent = "❌ 看图修正失败：" + e.message;
+    box.className = "show";
+  } finally {
+    state.busy = false;
   }
 }
 
@@ -942,6 +1053,53 @@ def serve_asset(name: str) -> bytes | None:
         return handle.read()
 
 
+def auto_fix_image(path: str, prompt: str) -> dict[str, Any]:
+    """手动触发看图修正：视觉检查 → 局部小修 → 保留最佳。"""
+    import time as _time
+
+    cfg_all = image_gen.load_config()
+    if not path or not os.path.isfile(path):
+        raise image_gen.GenError("图片不存在：" + str(path))
+    check = image_gen.run_vision_check(path, prompt, cfg_all, tiered=True)
+    if not check.get("ok"):
+        raise image_gen.GenError("视觉检查未完成：" + str(check.get("reason") or ""))
+    if not check.get("has_issues"):
+        return {
+            "ok": True,
+            "fixed": False,
+            "issues": check.get("issues") or "",
+            "path": path,
+        }
+    instruction = image_gen.build_fix_instruction(image_gen._fix_issues_text(check))
+    data, mime, name = image_gen.load_init_image(path)
+    width, height = image_gen.probe_image_size(data, mime) or (1024, 1024)
+    out_path = os.path.splitext(path)[0] + "-fix.png"
+    result_bytes = image_gen.gen_vertex_img2img(
+        cfg_all, instruction, width, height, "", data, mime, name
+    )
+    with open(out_path, "wb") as handle:
+        handle.write(result_bytes)
+    _time.sleep(3)
+    recheck = image_gen.run_vision_check(out_path, prompt, cfg_all, tiered=True)
+    accepted, why = image_gen._fix_accepted(check, recheck)
+    if not accepted:
+        return {
+            "ok": True,
+            "fixed": True,
+            "verdict": "reverted",
+            "reason": why,
+            "path": path,
+            "issues": recheck.get("issues") or "",
+        }
+    return {
+        "ok": True,
+        "fixed": True,
+        "verdict": "kept",
+        "path": out_path,
+        "issues": recheck.get("issues") or "",
+    }
+
+
 def run_doctor_json() -> dict[str, Any]:
     try:
         report = image_gen.cmd_doctor(type("A", (), {"json": True})())
@@ -1037,6 +1195,11 @@ class Handler(BaseHTTPRequestHandler):
                     auto_fix=body.get("auto_fix"),
                 )
                 return self._send_json(result)
+            if path == "/api/auto-fix":
+                body = self._read_json()
+                return self._send_json(
+                    auto_fix_image(str(body.get("path") or ""), str(body.get("prompt") or ""))
+                )
         except image_gen.GenError as exc:
             return self._send_json({"ok": False, "error": str(exc)}, 400)
         except Exception as exc:  # noqa: BLE001

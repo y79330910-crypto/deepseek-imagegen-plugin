@@ -662,6 +662,68 @@ def test_auto_fix_edit_loop() -> None:
             check("重画模式给出提示", any("背景" in str(w) for w in result3.get("warnings") or []))
 
 
+def test_prompt_lib_config_merge() -> None:
+    import prompt_lib  # noqa: PLC0415
+
+    with tempfile.TemporaryDirectory() as tmp:
+        old = prompt_lib.CONFIG_FILE
+        fake = Path(tmp) / "config.json"
+        fake.write_text(
+            json.dumps(
+                {
+                    "prompt_library": {
+                        "enabled": True,
+                        "embedding": {"api_key": "sk-test"},
+                        "rerank": {"enabled": False},
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        prompt_lib.CONFIG_FILE = fake
+        try:
+            pl = prompt_lib.load_config()
+            check("词库配置合并：enabled", pl["enabled"] is True)
+            check("词库配置合并：embedding key", pl["embedding"]["api_key"] == "sk-test")
+            check("词库配置合并：默认 base_url", pl["embedding"]["base_url"].startswith("https://api.siliconflow.com"))
+            check("词库配置合并：rerank 覆盖", pl["rerank"]["enabled"] is False)
+            check("词库配置合并：mysql 默认", pl["mysql"]["db"] == "prompt_library")
+        finally:
+            prompt_lib.CONFIG_FILE = old
+
+
+def test_prompt_lib_read_import() -> None:
+    import prompt_lib  # noqa: PLC0415
+
+    with tempfile.TemporaryDirectory() as tmp:
+        jf = Path(tmp) / "p.json"
+        jf.write_text(
+            json.dumps(
+                {
+                    "prompts": [
+                        {"content": "a cute chibi girl illustration", "category": "插画"},
+                        {"content": "product photography, minimal", "category": "摄影"},
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        items = prompt_lib.read_import_file(str(jf))
+        check("导入 JSON 数组解析", len(items) == 2)
+        check("导入保留分类", items[0].get("category") == "插画")
+
+        jl = Path(tmp) / "p.jsonl"
+        jl.write_text('{"content":"line one"}\n{"content":"line two"}\n', encoding="utf-8")
+        items2 = prompt_lib.read_import_file(str(jl))
+        check("导入 JSONL 解析", len(items2) == 2)
+
+        csvf = Path(tmp) / "p.csv"
+        csvf.write_text("content,category\n\"a cat, with comma\",插画\n", encoding="utf-8")
+        items3 = prompt_lib.read_import_file(str(csvf))
+        check("导入 CSV 解析", len(items3) == 1)
+        check("导入 CSV 内容", items3[0]["content"] == "a cat, with comma")
+
+
 def main() -> int:
     print("=== deepseek-imagegen 冒烟测试 ===")
     test_parse_size()
@@ -694,6 +756,8 @@ def main() -> int:
     test_build_fix_instruction()
     test_fix_accepted()
     test_auto_fix_edit_loop()
+    test_prompt_lib_config_merge()
+    test_prompt_lib_read_import()
     print()
     if FAILURES:
         print(f"失败 {len(FAILURES)} 项：{', '.join(FAILURES)}")
