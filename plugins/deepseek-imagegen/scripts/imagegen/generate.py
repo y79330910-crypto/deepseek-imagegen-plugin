@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from . import characters as char_mod
+from . import reference as ref_mod
 from .composition import (
     composition_checklist,
     composition_prompt_suffix,
@@ -73,6 +74,7 @@ def generate(
     character: str = "",
     character_image: str = "",
     library_enabled: Optional[bool] = None,
+    ref_type: str = "auto",
 ) -> dict[str, Any]:
     """v1.0 出图主流程。"""
     if not prompt or not prompt.strip():
@@ -108,12 +110,60 @@ def generate(
         warnings.append(char["warning"])
     char_desc = char["desc"]
 
+    # ---- 参考图三段式：提取禁止项、处理角色禁忌冲突、自动分类并生成简报
+    avoid_items = ref_mod.detect_avoid_items(prompt)
+    if avoid_items:
+        char_desc = ref_mod.filter_taboo_conflicts(char_desc, avoid_items)
+    ref_brief = ""
+    ref_info: dict[str, Any] = {
+        "type": "",
+        "label": "",
+        "method": "",
+        "preserve": "",
+        "avoid": avoid_items,
+        "brief": "",
+    }
+    user_ref = (init_image or "").strip()
+    if user_ref:
+        manual_type = (ref_type or "").strip().lower()
+        classify: dict[str, Any] = {}
+        if manual_type and manual_type != "auto":
+            manual_type = ref_mod.validate_ref_type(manual_type)
+        else:
+            manual_type = ""
+            classify = ref_mod.classify_reference(user_ref, cfg)
+        resolved_type, method = ref_mod.resolve_ref_type(
+            manual_type, prompt, bool(char["used"]), classify
+        )
+        preserve = str(classify.get("preserve") or "") if classify else ""
+        identity_list = ""
+        if char_desc:
+            identity_list = char_desc.split("禁忌", 1)[0].strip()
+        elif resolved_type in ("character", "generic"):
+            identity_list = preserve
+        ref_brief = ref_mod.build_reference_brief(
+            resolved_type, prompt, preserve, avoid_items, identity_list
+        )
+        ref_info = {
+            "type": resolved_type,
+            "label": ref_mod.REF_TYPE_LABELS.get(
+                resolved_type, ref_mod.REF_TYPE_LABELS["generic"]
+            ),
+            "method": method,
+            "preserve": preserve,
+            "identity_list": identity_list,
+            "avoid": avoid_items,
+            "brief": ref_brief,
+        }
+
     # ---- 翻译官输入 = 用户需求 + 构图约束 + 角色设定
     user_prompt = prompt
     if comp_suffix:
         user_prompt += "\n【构图要求】" + comp_suffix
     if char_desc:
         user_prompt += "\n【角色设定（已核实，必须严格遵守）】" + char_desc
+    if ref_brief:
+        user_prompt += "\n\n" + ref_brief
 
     tr = cfg.get("translator") or {}
     if not isinstance(tr, dict):
@@ -146,7 +196,10 @@ def generate(
         examples: list[str] = []
 
     if tr_enabled:
-        tr_info = translate_prompt(user_prompt, cfg=cfg, engine=engine, examples=examples)
+        tr_info = translate_prompt(
+            user_prompt, cfg=cfg, engine=engine, examples=examples,
+            reference_brief=ref_brief,
+        )
         tr_info["library_hits"] = lib_hits
         final_prompt = tr_info.get("rewritten") or prompt
     else:
@@ -156,6 +209,10 @@ def generate(
         final_prompt += "\n（构图硬性要求）" + comp_suffix
     if char_desc:
         final_prompt += "\n（角色设定，必须严格遵守）" + char_desc
+    if ref_brief:
+        final_prompt += "\n" + ref_mod.build_reference_suffix(
+            ref_info["type"], avoid_items, ref_info.get("identity_list") or ""
+        )
 
     # ---- 参考图：用户 --image 优先，其次角色参考图（读不了时降级纯文字）
     ref_source = (init_image or "").strip() or char["image"]
@@ -311,6 +368,7 @@ def generate(
             "reference": bool(ref_is_character and ref_source),
             "warning": char["warning"],
         },
+        "reference": ref_info,
         "prompt_library": {"enabled": lib_enabled, "hits": lib_hits},
     }
     if init_data is not None:

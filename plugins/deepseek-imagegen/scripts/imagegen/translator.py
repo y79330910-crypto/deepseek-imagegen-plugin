@@ -167,7 +167,11 @@ def _looks_broken(text: str, had_cjk: bool) -> bool:
     return any(m in low for m in markers)
 
 
-def build_translator_system(lang: str = "zh", examples: Optional[list[str]] = None) -> str:
+def build_translator_system(
+    lang: str = "zh",
+    examples: Optional[list[str]] = None,
+    reference_brief: str = "",
+) -> str:
     """生成翻译官系统提示词。"""
     if lang == "en":
         base = (
@@ -197,6 +201,20 @@ def build_translator_system(lang: str = "zh", examples: Optional[list[str]] = No
             "5. 画面中的文字优先使用英文并放进引号。\n"
             "6. 只输出提示词正文：不要解释、不要 Markdown、不要编号列表、不要用引号包裹全文。"
         )
+    if reference_brief:
+        base += (
+            "\n\n参考图模式硬性规则（本次有参考图时强制）：\n"
+            "1. 必须按三段式结构输出，保持段在最前：第1段·保持 → 第2段·改变 → 第3段·场景。\n"
+            "2. 第1段必须逐项点名身份锚点清单中的每一项（清单里有就全部写出，"
+            "禁止只写“保持所有特征”这类笼统话）；同时明确“不保留参考图中的姿势、"
+            "面部朝向、角度、构图与背景”。\n"
+            "3. 第2段必须正向表达“参考图只提供身份与外观，姿势、表情、角度、构图"
+            "全部全新创作”；用户要求移除的元素写成“不作为保留项”，"
+            "不要用大段“不要X”堆砌；若用户没有指定新姿态，"
+            "必须具体编一个自然的新姿态（例如重心放在一条腿上、微微侧身、侧头看向某处）。\n"
+            "4. 第3段场景全新创作：只描述新环境、光线与构图；"
+            "不得沿用参考图的背景、棚拍光或构图。\n"
+        )
     if examples:
         base += (
             "\n\n参考示例：以下是来自已验证提示词库的优秀提示词（可能中英文混合）。"
@@ -214,6 +232,7 @@ def translate_prompt(
     feedback: str = "",
     max_tokens: int = 4096,
     examples: Optional[list[str]] = None,
+    reference_brief: str = "",
 ) -> dict[str, Any]:
     """翻译官：deepseek 默认、gemini 走本地代理、off 直传。"""
     cfg = cfg if cfg is not None else load_config()
@@ -237,8 +256,10 @@ def translate_prompt(
         engine = "deepseek"
 
     lang = str(tr.get("output_lang") or "zh").lower()
-    system = build_translator_system(lang, examples)
+    system = build_translator_system(lang, examples, reference_brief)
     user_msg = str(user_text).strip()
+    if reference_brief and str(reference_brief).strip():
+        user_msg += "\n\n【参考图简报】\n" + str(reference_brief).strip()
     if feedback and str(feedback).strip():
         user_msg += "\n\n【上次生成后发现的问题，请在重写时重点修正】\n" + str(feedback).strip()
     messages = [

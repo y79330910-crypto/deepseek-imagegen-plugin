@@ -63,6 +63,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "tolerance": 0.06,
         "probe_cache": {},
     },
+    "reference": {
+        "auto_classify": True,
+        "vision_script": "",
+        "classify_timeout": 90,
+    },
     "characters": {
         "洛天依": {
             "aliases": ["洛天依-V4公式服"],

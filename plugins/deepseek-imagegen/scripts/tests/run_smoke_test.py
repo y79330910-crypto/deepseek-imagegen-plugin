@@ -27,7 +27,7 @@ SCRIPTS_DIR = SCRIPT_DIR.parent
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from imagegen import characters, generate  # noqa: E402
+from imagegen import characters, generate, reference  # noqa: E402
 from imagegen.composition import resolve_composition  # noqa: E402
 from imagegen.config import load_config, mask_config  # noqa: E402
 from imagegen.http import GenError  # noqa: E402
@@ -161,6 +161,105 @@ class TestCharacters(unittest.TestCase):
             self.assertEqual(probe_image_size(data), (128, 128))
 
 
+class TestReferencePrompts(unittest.TestCase):
+    def test_template_order_all_types(self):
+        for ref_type in reference.REFERENCE_TEMPLATES:
+            brief = reference.build_reference_brief(ref_type, "画一张图")
+            keep = brief.find("第1段·保持")
+            change = brief.find("第2段·改变")
+            scene = brief.find("第3段·场景")
+            self.assertTrue(0 <= keep < change < scene, ref_type)
+            label = reference.REF_TYPE_LABELS.get(
+                ref_type, reference.REF_TYPE_LABELS["generic"]
+            )
+            self.assertIn(label, brief)
+            self.assertLess(keep, change)
+            self.assertLess(change, scene)
+
+    def test_detect_avoid_items(self):
+        self.assertIn("耳机", reference.detect_avoid_items("不要耳机，场景改为樱花公园"))
+        items = reference.detect_avoid_items("把耳机上的圆点去掉")
+        self.assertTrue(any("圆点" in item for item in items))
+        self.assertIn("描点", reference.detect_avoid_items("去除描点"))
+        self.assertEqual(
+            reference.detect_avoid_items("不要耳机，不要出现任何耳机"),
+            ["耳机"],
+        )
+        self.assertEqual(reference.detect_avoid_items("画一张春天的公园"), [])
+
+    def test_suffix_contains_avoid(self):
+        suffix = reference.build_reference_suffix("character", ["耳机"])
+        self.assertIn("用户划除（不作为保留项）：耳机", suffix)
+        self.assertIn("第1段·保持", suffix)
+        self.assertIn("不保留（场景锚点", suffix)
+
+    def test_brief_with_identity_list(self):
+        brief = reference.build_reference_brief(
+            "character",
+            "不要耳机",
+            identity_list="银灰双马尾；八字环发髻；黄色领带",
+        )
+        self.assertIn("身份锚点清单（必须逐项保留）", brief)
+        self.assertIn("银灰双马尾；八字环发髻；黄色领带", brief)
+        self.assertIn("不保留（场景锚点", brief)
+        self.assertIn("不作为保留项", brief)
+
+    def test_taboo_conflict_removed(self):
+        desc = (
+            "银灰色头发；戴天蓝色科技感圆盘耳机（带金属圈环）；"
+            "禁忌：不得漏掉双马尾、八字环发髻、耳机、黄色领带等标志性元素。"
+        )
+        filtered = reference.filter_taboo_conflicts(desc, ["耳机"])
+        self.assertNotIn("耳机", filtered)
+        self.assertIn("双马尾", filtered)
+        self.assertIn("黄色领带", filtered)
+
+    def test_ref_type_manual_and_fallback(self):
+        self.assertEqual(
+            reference.resolve_ref_type("character", "", False),
+            ("character", "manual"),
+        )
+        self.assertEqual(
+            reference.resolve_ref_type("", "不要耳机", True),
+            ("character", "fallback"),
+        )
+        self.assertEqual(
+            reference.resolve_ref_type("", "画风景", False),
+            ("generic", "fallback"),
+        )
+        classify = {"ok": True, "type": "style", "preserve": "水彩质感"}
+        self.assertEqual(
+            reference.resolve_ref_type("", "画图", False, classify),
+            ("style", "vision"),
+        )
+
+    def test_classify_disabled_and_missing(self):
+        cfg = load_config()
+        cfg["reference"] = {"auto_classify": False, "vision_script": ""}
+        result = reference.classify_reference("x.png", cfg)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["method"], "disabled")
+        cfg["reference"] = {
+            "auto_classify": True,
+            "vision_script": r"C:\不存在的目录\vision_bridge.py",
+        }
+        result = reference.classify_reference("x.png", cfg)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["method"], "fallback")
+
+    def test_cli_rejects_multi_image(self):
+        from imagegen.cli import main
+
+        buf = io.StringIO()
+        with mock.patch("sys.stdout", buf):
+            code = main(
+                ["generate", "测试", "--image", "a.png", "--image", "b.png", "--json"]
+            )
+        self.assertEqual(code, 1)
+        data = json.loads(buf.getvalue())
+        self.assertIn("多图", data["error"])
+
+
 class TestGenerateFlow(unittest.TestCase):
     def _fake_gen(self, cfg, prompt, width, height, model, **kwargs):
         return make_png_bytes(width, height)
@@ -173,12 +272,14 @@ class TestGenerateFlow(unittest.TestCase):
             save_dir = Path(tmp) / "out"
             mirror_dir = Path(tmp) / "mirror"
             cfg = load_config()
+            cfg["characters"]["洛天依"]["image"] = ""
             cfg["save_dir"] = str(save_dir)
             cfg["mirror_dir"] = str(mirror_dir)
             with (
                 mock.patch.object(generate, "load_config", return_value=cfg),
                 mock.patch.object(generate, "gen_vertex_canvas_first", side_effect=self._fake_gen),
                 mock.patch.object(generate, "gen_vertex", side_effect=self._fake_gen),
+                mock.patch.object(generate, "gen_vertex_img2img", side_effect=self._fake_img2img),
             ):
                 result = generate.generate(
                     "画一张洛天依 V4 公式服全身",
@@ -195,6 +296,59 @@ class TestGenerateFlow(unittest.TestCase):
             self.assertTrue(result["size_check"]["match"])
             self.assertIn("画布优先", " ".join(result.get("warnings") or []))
             self.assertTrue((mirror_dir / Path(result["path"]).name).is_file())
+
+    def test_generate_user_reference_three_stage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            save_dir = Path(tmp) / "out"
+            ref = Path(tmp) / "ref.png"
+            ref.write_bytes(make_png_bytes(50, 50))
+            cfg = load_config()
+            cfg["save_dir"] = str(save_dir)
+            with (
+                mock.patch.object(generate, "load_config", return_value=cfg),
+                mock.patch.object(generate, "gen_vertex_img2img", side_effect=self._fake_img2img),
+            ):
+                result = generate.generate(
+                    "保持参考图中的角色不变；不要耳机；场景改为春日樱花公园",
+                    size="1024x1024",
+                    seed=9,
+                    translator="off",
+                    init_image=str(ref),
+                    ref_type="character",
+                )
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["reference"]["type"], "character")
+            self.assertEqual(result["reference"]["method"], "manual")
+            self.assertIn("耳机", result["reference"]["avoid"])
+            self.assertIn("参考图硬性要求", result["prompt_used"])
+            self.assertIn("用户划除（不作为保留项）：耳机", result["prompt_used"])
+            self.assertIn("第1段·保持", result["prompt_used"])
+            self.assertIn("不保留（场景锚点", result["prompt_used"])
+
+    def test_generate_character_identity_list_filtered(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            save_dir = Path(tmp) / "out"
+            ref = Path(tmp) / "ref.png"
+            ref.write_bytes(make_png_bytes(50, 50))
+            cfg = load_config()
+            cfg["save_dir"] = str(save_dir)
+            with (
+                mock.patch.object(generate, "load_config", return_value=cfg),
+                mock.patch.object(generate, "gen_vertex_img2img", side_effect=self._fake_img2img),
+            ):
+                result = generate.generate(
+                    "洛天依保持参考图设定；不要耳机；场景改为樱花公园",
+                    size="1024x1024",
+                    seed=11,
+                    translator="off",
+                    init_image=str(ref),
+                    ref_type="character",
+                )
+            self.assertTrue(result["ok"])
+            self.assertIn("身份锚点清单", result["prompt_used"])
+            self.assertIn("双马尾", result["prompt_used"])
+            self.assertIn("用户划除（不作为保留项）：耳机", result["prompt_used"])
+            self.assertNotIn("圆盘耳机", result["prompt_used"])
 
     def test_generate_with_character_reference(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -34,13 +34,16 @@ def configure_console_utf8() -> None:
 
 
 def cmd_generate(args: argparse.Namespace) -> dict[str, Any]:
+    images = list(args.image or [])
+    if len(images) > 1:
+        raise GenError("当前版本仅支持 1 张参考图（多图组合将在后续版本支持）。")
     return gen_mod.generate(
         args.prompt,
         out=args.out,
         size=args.size,
         seed=args.seed,
         model=args.model,
-        init_image=args.image or None,
+        init_image=images[0] if images else None,
         denoise=args.denoise,
         translator=args.translator,
         composition=args.composition,
@@ -48,6 +51,7 @@ def cmd_generate(args: argparse.Namespace) -> dict[str, Any]:
         character=args.character,
         character_image=args.character_image,
         library_enabled=getattr(args, "library", None),
+        ref_type=getattr(args, "ref_type", "auto"),
     )
 
 
@@ -106,6 +110,12 @@ def _print_result(result: dict[str, Any], use_json: bool) -> int:
             char_name = result["character"].get("name") or ""
             ref = "（含参考图）" if result["character"].get("reference") else ""
             print(f"角色注入：{char_name}{ref}")
+        refinfo = result.get("reference") or {}
+        if refinfo.get("type"):
+            print(
+                f"参考图类型：{refinfo.get('label') or refinfo.get('type')}"
+                f"（识别方式：{refinfo.get('method')}）"
+            )
         if result.get("init_image"):
             print(
                 f"图生图：原图 {result['init_image']}"
@@ -167,7 +177,20 @@ def build_parser() -> argparse.ArgumentParser:
     gen.add_argument("--size", default="", help="分辨率，如 1024x1024（图生图省略时自动取原图尺寸）")
     gen.add_argument("--seed", type=int, default=None, help="随机种子")
     gen.add_argument("--model", default="", help="模型（默认自动选最佳图像模型）")
-    gen.add_argument("--image", default="", help="参考图片（图生图）：本地路径或 http(s) 链接")
+    gen.add_argument(
+        "--image",
+        action="append",
+        default=None,
+        help="参考图片（图生图）：本地路径或 http(s) 链接；当前仅支持 1 张",
+    )
+    gen.add_argument(
+        "--ref-type",
+        dest="ref_type",
+        default="auto",
+        choices=["auto", "character", "outfit", "style", "scene", "composition", "pose", "object"],
+        help="参考图类型：auto 自动识别（默认）/ character 角色 / outfit 服装 / style 风格 / "
+             "scene 场景 / composition 构图 / pose 姿势 / object 物品",
+    )
     gen.add_argument("--denoise", type=float, default=None, help="去噪强度 0~1（图生图，默认 0.6）")
     gen.add_argument(
         "--translator",
