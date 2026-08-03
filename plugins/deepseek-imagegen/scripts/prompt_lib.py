@@ -292,7 +292,10 @@ def search(pl: dict[str, Any], query: str, top_k: Optional[int] = None, final_k:
             order = _cosine_top_k(query_vec, [vectors[i] for i in ids if i in vectors], min(top_k, count))
             docs = [str(rows[i][1]) for i in order]
             if pl.get("rerank", {}).get("enabled"):
-                order = [order[i] for i in rerank_docs(pl, query, docs, final_k)]
+                try:
+                    order = [order[i] for i in rerank_docs(pl, query, docs, final_k)]
+                except LibError:
+                    order = order[:final_k]
             else:
                 order = order[:final_k]
             results = []
@@ -350,7 +353,14 @@ def import_prompts(
         with conn.cursor() as cur:
             cur.execute("SELECT content_hash FROM prompts")
             existing = {str(row[0]) for row in cur.fetchall()}
-        new_items = [it for it in cleaned if _sha1(it["content"]) not in existing]
+        new_items = []
+        seen_local: set[str] = set()
+        for it in cleaned:
+            h = _sha1(it["content"])
+            if h in existing or h in seen_local:
+                continue
+            seen_local.add(h)
+            new_items.append(it)
         skipped = len(cleaned) - len(new_items)
         if not new_items:
             return {"total": len(items), "inserted": 0, "skipped": skipped}
