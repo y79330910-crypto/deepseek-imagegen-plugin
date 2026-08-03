@@ -1,7 +1,7 @@
 {
   "name": "deepseek-imagegen",
-  "version": "0.7.0",
-  "description": "为 Codex 中的 DeepSeek 等纯文本模型补齐图像生成能力：默认绑定本地 Vertex Proxy（自动读取端口/密钥/模型列表并选用最佳图像模型），也可用免费 Pollinations、SiliconFlow（FLUX 等）与本地 Stable Diffusion WebUI / ComfyUI；内置可视化设置页面；v0.7 新增构图预设、真实尺寸校验与画布优先兜底、分类自动修复、后端降级与角色卡。",
+  "version": "1.0.0",
+  "description": "为 Codex 中的 DeepSeek 等纯文本模型补齐图像生成能力：绑定本地 Vertex Proxy（自动读取端口/密钥/模型列表并选用最佳图像模型）；内置提示词翻译官（DeepSeek 默认 + Gemini 兜底）、构图预设与真实尺寸校验（画布优先兜底）、轻量角色表（洛天依设定自动注入 + 可选参考图）、提示词词库（MySQL 向量检索）。v1.0 精简为单一本地后端。",
   "author": {
     "name": "y79330910-crypto",
     "url": "https://github.com/y79330910-crypto"
@@ -16,17 +16,14 @@
     "codex",
     "vertex-proxy",
     "gemini",
-    "flux",
-    "stable-diffusion",
-    "comfyui",
-    "pollinations",
-    "siliconflow"
+    "prompt-library",
+    "mysql"
   ],
   "skills": "./skills/",
   "interface": {
     "displayName": "DeepSeek ImageGen",
-    "shortDescription": "让 DeepSeek 生成图片：默认绑定 Vertex Proxy 最佳图像模型",
-    "longDescription": "DeepSeek 等纯文本模型本身无法生成图片。本插件提供图像生成桥接：默认绑定本地 Vertex Proxy，自动读取其端口、API Key 与模型列表并选用最佳图像模型（如 gemini-3-pro-image），也可切换免费免密钥的 Pollinations、OpenAI 兼容的 SiliconFlow FLUX 或本地 Stable Diffusion WebUI / ComfyUI。v0.7 起支持全身/半身/特写/横版构图预设、生成后真实尺寸校验（代理不遵守尺寸时自动用画布优先兜底）、按构图/细节分类的自动看图修复、空数据自动重试与后端降级、doctor 尺寸探针，以及本机 MySQL 角色卡（洛天依 V4 公式服等已核实设定自动注入）。内置提示词翻译官（DeepSeek/Gemini 可选），API Key 只保存在本地配置文件，不进入仓库。",
+    "shortDescription": "让 DeepSeek 生成图片：本地 Vertex Proxy 最佳图像模型",
+    "longDescription": "DeepSeek 等纯文本模型本身无法生成图片。本插件提供图像生成桥接：绑定本地 Vertex Proxy，自动读取端口、API Key 与模型列表并选用最佳图像模型（如 gemini-3-pro-image）。内置提示词翻译官（DeepSeek 默认、本地 Gemini 自动兜底、off 直传）、全身/半身/特写/横版构图预设、生成后真实尺寸校验（代理不守尺寸时自动画布优先兜底）、轻量角色表（提示词精确点名洛天依等角色自动注入已核实设定，可配参考图）与提示词词库（MySQL 向量检索，生成时喂示例给翻译官）。v1.0 精简为单一本地后端：删除其余云端/本地后端、自动看图改图、外扩画布与可视化设置页；改图需求由 Codex 写编辑指令、以原图为参考让图像模型单轮完成。",
     "developerName": "y79330910-crypto",
     "category": "Productivity",
     "capabilities": [
@@ -37,8 +34,8 @@
     "composerIcon": "./assets/icon.png",
     "defaultPrompt": [
       "生成一张科技风网页横幅图：深蓝渐变背景、发光网格线",
-      "打开图像生成插件的设置页面",
-      "用本地 Stable Diffusion 画一个像素风游戏角色，输出到项目目录"
+      "画一张洛天依 V4 公式服全身演唱会图",
+      "把这张图片的裙子改成红色"
     ]
   }
 }

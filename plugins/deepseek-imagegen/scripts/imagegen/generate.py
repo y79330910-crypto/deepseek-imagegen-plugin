@@ -1,0 +1,324 @@
+"""出图编排：角色注入/参考图 → 词库检索 → 翻译官 → 构图预设 → Vertex 出图 → 尺寸校验。"""
+
+from __future__ import annotations
+
+import random
+from pathlib import Path
+from typing import Any, Optional
+
+from . import characters as char_mod
+from .composition import (
+    composition_checklist,
+    composition_prompt_suffix,
+    resolve_composition,
+)
+from .config import load_config
+from .http import DEFAULT_TIMEOUT, GenError
+from .image_utils import (
+    aspect_ratio_key,
+    default_output_path,
+    load_init_image,
+    mirror_output,
+    parse_size,
+    probe_image_size_ext,
+    sizes_match,
+)
+from .translator import translate_prompt
+from .vertex import (
+    gen_vertex,
+    gen_vertex_canvas_first,
+    gen_vertex_img2img,
+)
+
+
+def _library_search(user_prompt: str, cfg: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str], str]:
+    """词库检索：返回 (命中摘要, 示例文本, 警告)。"""
+    pl = cfg.get("prompt_library") or {}
+    if not isinstance(pl, dict):
+        pl = {}
+    try:
+        from .library import LibError, load_config as lib_load, search as lib_search
+
+        lib_cfg = lib_load()
+        hits = lib_search(
+            lib_cfg,
+            user_prompt,
+            top_k=int(pl.get("top_k") or 30),
+            final_k=int(pl.get("final_k") or 6),
+            categories=pl.get("categories") or None,
+        )
+        examples = [str(h.get("content") or "") for h in hits if h.get("content")]
+        summary = [
+            {"id": h.get("id"), "category": h.get("category") or ""} for h in hits
+        ]
+        return summary, examples, ""
+    except LibError as exc:
+        return [], [], str(exc)
+    except Exception as exc:  # noqa: BLE001
+        return [], [], f"词库检索异常：{exc}"
+
+
+def generate(
+    prompt: str,
+    *,
+    out: Optional[str] = None,
+    size: str = "",
+    seed: Optional[int] = None,
+    model: str = "",
+    init_image: Optional[str] = None,
+    denoise: Optional[float] = None,
+    translator: str = "auto",
+    composition: str = "auto",
+    size_policy: str = "",
+    character: str = "",
+    character_image: str = "",
+    library_enabled: Optional[bool] = None,
+) -> dict[str, Any]:
+    """v1.0 出图主流程。"""
+    if not prompt or not prompt.strip():
+        raise GenError("提示词不能为空。")
+    if denoise is not None and not (0 < denoise <= 1):
+        raise GenError("--denoise 必须是 0~1 之间的小数（默认 0.6）。")
+    cfg = load_config()
+    warnings: list[str] = []
+
+    # ---- 构图预设：未指定尺寸时采用预设画幅
+    comp_preset = resolve_composition(composition, cfg)
+    comp_suffix = composition_prompt_suffix(comp_preset, cfg)
+    _checklist = composition_checklist(comp_preset, cfg)
+    if not size.strip() and comp_preset != "auto":
+        preset_cfg = (cfg.get("composition") or {}).get("presets") or {}
+        preset_size = str((preset_cfg.get(comp_preset) or {}).get("size") or "")
+        if preset_size:
+            size = preset_size
+
+    # ---- 尺寸策略（代码默认：auto / 重试 2 次 / 容差 6%）
+    policy = (size_policy or str(cfg.get("size_policy", {}).get("mode") or "auto")).strip().lower()
+    if policy not in ("strict", "auto", "warn"):
+        policy = "auto"
+    sp_cfg = cfg.get("size_policy") or {}
+    tolerance = float(sp_cfg.get("tolerance", 0.06) or 0.06)
+    size_retries = max(0, int(sp_cfg.get("retries", 2) or 0))
+    empty_retries = 2
+    retry_delay_base = 6.0
+
+    # ---- 角色解析（精确文字匹配 > 手动 --character；不中断出图）
+    char = char_mod.resolve_character(cfg, prompt, manual=character, character_image=character_image)
+    if char["warning"]:
+        warnings.append(char["warning"])
+    char_desc = char["desc"]
+
+    # ---- 翻译官输入 = 用户需求 + 构图约束 + 角色设定
+    user_prompt = prompt
+    if comp_suffix:
+        user_prompt += "\n【构图要求】" + comp_suffix
+    if char_desc:
+        user_prompt += "\n【角色设定（已核实，必须严格遵守）】" + char_desc
+
+    tr = cfg.get("translator") or {}
+    if not isinstance(tr, dict):
+        tr = {}
+    engine = str(translator or "auto")
+    if engine in ("", "auto"):
+        engine = str(tr.get("engine") or "deepseek")
+    tr_enabled = engine.strip().lower() not in ("off", "none", "direct", "直传")
+
+    # ---- 词库检索（仅翻译官开启时喂示例）
+    tr_info: dict[str, Any] = {
+        "ok": True,
+        "engine": "off",
+        "engine_used": "off",
+        "model": "",
+        "original": prompt,
+        "rewritten": prompt,
+        "fallback": False,
+    }
+    lib_hits: list[dict[str, Any]] = []
+    lib_warning = ""
+    pl_cfg = cfg.get("prompt_library") or {}
+    lib_enabled = library_enabled if library_enabled is not None else bool(pl_cfg.get("enabled", False))
+    if tr_enabled and lib_enabled and bool(pl_cfg.get("use_in_translator", True)):
+        lib_hits, examples, lib_warning = _library_search(user_prompt, cfg)
+        if lib_warning:
+            tr_info["library_warning"] = lib_warning
+        tr_info["library_hits"] = lib_hits
+    else:
+        examples: list[str] = []
+
+    if tr_enabled:
+        tr_info = translate_prompt(user_prompt, cfg=cfg, engine=engine, examples=examples)
+        tr_info["library_hits"] = lib_hits
+        final_prompt = tr_info.get("rewritten") or prompt
+    else:
+        final_prompt = user_prompt
+    # 最终提示词再补一遍硬约束（防止翻译官漏掉构图/角色设定）
+    if comp_suffix:
+        final_prompt += "\n（构图硬性要求）" + comp_suffix
+    if char_desc:
+        final_prompt += "\n（角色设定，必须严格遵守）" + char_desc
+
+    # ---- 参考图：用户 --image 优先，其次角色参考图（读不了时降级纯文字）
+    ref_source = (init_image or "").strip() or char["image"]
+    ref_is_character = bool(char["image"]) and not (init_image or "").strip()
+    if (init_image or "").strip() and char["image"]:
+        warnings.append("同时给了 --image 与角色参考图：本次以 --image 为准，角色参考图未使用。")
+    init_data: Optional[tuple[bytes, str, str]] = None
+    if ref_source:
+        try:
+            if ref_is_character:
+                width, height = parse_size(size or "1024x1024")
+                init_data = char_mod.load_character_reference(ref_source, width, height)
+                final_prompt += "\n（请保持图中人物设定不变，生成新场景）"
+            else:
+                init_data = load_init_image(ref_source)
+                if size:
+                    width, height = parse_size(size)
+                else:
+                    probed = probe_image_size_ext(init_data[0], init_data[1])
+                    width, height = probed or parse_size("1024x1024")
+        except GenError as exc:
+            if ref_is_character:
+                warnings.append(f"角色参考图读取失败，已降级为纯文字出图：{exc}")
+                ref_source = ""
+            else:
+                raise
+    if not ref_source:
+        width, height = parse_size(size or str(cfg.get("default_size") or "1024x1024"))
+
+    seed = seed if seed is not None else random.randint(0, 2**31 - 1)
+    used_canvas_first = False
+    size_actions: list[str] = []
+
+    # ---- Vertex 出图：图生图直走 edits；文生图仅 3:2 直出，其余画布优先
+    if init_data is not None:
+        data = gen_vertex_img2img(
+            cfg,
+            final_prompt.strip(),
+            width,
+            height,
+            model,
+            init_data[0],
+            init_data[1],
+            init_data[2],
+        )
+    else:
+        if aspect_ratio_key(width, height) == (3, 2) or (width, height) == (1408, 768):
+            data = gen_vertex(
+                cfg,
+                final_prompt.strip(),
+                width,
+                height,
+                model,
+                empty_retries=empty_retries,
+                retry_delay_base=retry_delay_base,
+            )
+        else:
+            data = gen_vertex_canvas_first(
+                cfg,
+                final_prompt.strip(),
+                width,
+                height,
+                model,
+                empty_retries=empty_retries,
+                retry_delay_base=retry_delay_base,
+            )
+            used_canvas_first = True
+
+    # ---- 真实尺寸校验 + 画布优先兜底（文生图且尺寸不符时重试）
+    actual_size = probe_image_size_ext(data, "")
+    requested = (width, height)
+    match = sizes_match(requested, actual_size, tolerance)
+    if (
+        not match["ok"]
+        and actual_size is not None
+        and init_data is None
+    ):
+        from .image_utils import canvas_size_for
+
+        canvas_w, canvas_h = canvas_size_for(width, height)
+        for _attempt in range(max(1, size_retries + 1)):
+            try:
+                data = gen_vertex_canvas_first(
+                    cfg,
+                    final_prompt.strip(),
+                    width,
+                    height,
+                    model,
+                    empty_retries=empty_retries,
+                    retry_delay_base=retry_delay_base,
+                )
+                actual_size = probe_image_size_ext(data, "")
+                match = sizes_match(requested, actual_size, tolerance)
+                used_canvas_first = True
+                size_actions.append(f"画布优先重试（{canvas_w}x{canvas_h} 画布）")
+                if match["ok"]:
+                    break
+            except GenError as exc:
+                warnings.append(f"画布优先兜底失败：{str(exc)[:150]}")
+                break
+    if match["ok"]:
+        if used_canvas_first:
+            warnings.append("已启用画布优先：代理文生图不遵守尺寸，改用目标画幅画布出图。")
+    else:
+        reason = match.get("reason") or "尺寸不符"
+        if policy == "strict":
+            raise GenError(
+                f"尺寸策略为 strict：{reason}"
+                + (f"，已尝试：{'；'.join(size_actions)}" if size_actions else "")
+                + "。可改用 --size-policy auto 自动兜底。"
+            )
+        warnings.append(f"尺寸未完全匹配（{reason}），已按策略保留并如实记录实际尺寸。")
+
+    # ---- 保存输出与镜像副本
+    out_ext = "png"
+    if out:
+        out_path = Path(out).expanduser()
+        if out_path.suffix.lower() not in (".png", ".jpg", ".jpeg", ".webp"):
+            out_path = out_path / default_output_path(prompt, seed, cfg, ext=out_ext).name
+    else:
+        out_path = default_output_path(prompt, seed, cfg, ext=out_ext)
+    try:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+    except FileExistsError as exc:
+        raise GenError(
+            f"输出路径不可用：{out_path.parent} 位置存在同名文件，请更换 --out 路径。"
+        ) from exc
+    out_path.write_bytes(data)
+
+    result: dict[str, Any] = {
+        "ok": True,
+        "backend": "vertex",
+        "path": str(out_path),
+        "seed": seed,
+        "size": f"{width}x{height}",
+        "actual_size": f"{actual_size[0]}x{actual_size[1]}" if actual_size else "未知",
+        "size_match": bool(actual_size and match["ok"]),
+        "size_check": {
+            "requested": f"{width}x{height}",
+            "actual": f"{actual_size[0]}x{actual_size[1]}" if actual_size else None,
+            "match": bool(actual_size and match["ok"]),
+            "reason": match.get("reason") or "",
+            "canvas_first": used_canvas_first,
+        },
+        "composition": composition,
+        "composition_preset": comp_preset,
+        "bytes": len(data),
+        "translator": tr_info,
+        "prompt_used": final_prompt,
+        "character": {
+            "used": bool(char["used"]),
+            "name": char["key"],
+            "reference": bool(ref_is_character and ref_source),
+            "warning": char["warning"],
+        },
+        "prompt_library": {"enabled": lib_enabled, "hits": lib_hits},
+    }
+    if init_data is not None:
+        result["init_image"] = ref_source
+        result["denoise"] = denoise if denoise is not None else 0.6
+    if warnings:
+        result["warnings"] = warnings
+    mirror = mirror_output(str(out_path), cfg)
+    if mirror:
+        result["mirror_path"] = mirror
+    return result

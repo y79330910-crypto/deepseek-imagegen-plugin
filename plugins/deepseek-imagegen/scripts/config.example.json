@@ -1,17 +1,11 @@
 {
-  "default_backend": "vertex",
   "save_dir": "",
   "mirror_dir": "C:\\Users\\yjq\\Pictures\\codex",
   "default_size": "1024x1024",
-  "default_negative": "",
   "translator": {
     "enabled": true,
     "engine": "deepseek",
     "output_lang": "zh",
-    "auto_fix": false,
-    "max_fix_rounds": 1,
-    "fix_mode": "edit",
-    "fix_keep_best": true,
     "deepseek": {
       "base_url": "",
       "api_key": "",
@@ -19,8 +13,7 @@
     },
     "gemini": {
       "model": ""
-    },
-    "vision_bridge": ""
+    }
   },
   "composition": {
     "preset": "auto",
@@ -53,26 +46,11 @@
     "tolerance": 0.06,
     "probe_cache": {}
   },
-  "auto_fix": {
-    "max_rounds": 2,
-    "edit_redraw_threshold": 1,
-    "check_size": true
-  },
-  "robustness": {
-    "timeout": 240,
-    "empty_data_retries": 2,
-    "fallback_backends": [],
-    "retry_delay_base": 6
-  },
   "characters": {
-    "enabled": false,
-    "default_name": "",
-    "mysql": {
-      "host": "127.0.0.1",
-      "port": 3306,
-      "user": "",
-      "password": "",
-      "db": "deepseek_imagegen"
+    "洛天依": {
+      "aliases": ["洛天依-V4公式服"],
+      "text": "银灰色长发；绿色瞳孔；蓝白配色公式服，腰部有中国结装饰，整体为日系少女风；禁忌：不得改成Q版/大头比例；不得改变发色瞳色；不得漏掉耳机等标志性元素；不得写错服装配色",
+      "image": ""
     }
   },
   "prompt_library": {
@@ -102,36 +80,10 @@
       "db": "prompt_library"
     }
   },
-  "pollinations": {
-    "base_url": "https://image.pollinations.ai/prompt",
-    "model": ""
-  },
-  "siliconflow": {
-    "base_url": "https://api.siliconflow.cn/v1/images/generations",
-    "api_key": "",
-    "model": "black-forest-labs/FLUX.1-schnell",
-    "size": "1024x1024"
-  },
   "vertex": {
     "dir": "C:\\Users\\yjq\\Documents\\Codex\\2026-07-31\\new-chat\\outputs\\vertex-proxy\\dist",
     "base_url": "",
     "api_key": "",
     "model": ""
-  },
-  "sd_webui": {
-    "base_url": "http://127.0.0.1:7860",
-    "sampler_name": "Euler a",
-    "steps": 28,
-    "cfg_scale": 7,
-    "denoising_strength": 0.6
-  },
-  "comfyui": {
-    "base_url": "http://127.0.0.1:8188",
-    "checkpoint": "",
-    "sampler_name": "euler",
-    "scheduler": "normal",
-    "steps": 28,
-    "cfg": 7,
-    "denoise": 0.6
   }
 }

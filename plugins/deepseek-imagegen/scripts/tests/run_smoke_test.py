@@ -1,770 +1,302 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""离线冒烟测试：不依赖网络，验证 image_gen.py 的核心逻辑。"""
+"""DeepSeek ImageGen v1.0.0 冒烟测试（单文件）。
+
+覆盖：配置合并与密钥打码、尺寸工具、模型挑选、构图预设、翻译官 off、
+角色注入专项、参考图适配与降级、出图编排（模拟后端）、输出路径与镜像副本、
+CLI JSON 输出、词库统计（演练库，无网络）。
+
+运行：python scripts/tests/run_smoke_test.py
+"""
 
 from __future__ import annotations
 
+import io
 import json
-import base64
+import os
+import shutil
 import sys
 import tempfile
+import unittest
 from pathlib import Path
-
-
-SCRIPT_DIR = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(SCRIPT_DIR))
-
-import image_gen  # noqa: E402
-
-
-FAILURES: list[str] = []
-
-
-def check(name: str, condition: bool, detail: str = "") -> None:
-    status = "PASS" if condition else "FAIL"
-    print(f"[{status}] {name}" + (f"  ({detail})" if detail else ""))
-    if not condition:
-        FAILURES.append(name)
-
-
-def test_parse_size() -> None:
-    check("parse_size 1024x1024", image_gen.parse_size("1024x1024") == (1024, 1024))
-    check("parse_size 1536x1024", image_gen.parse_size("1536x1024") == (1536, 1024))
-    try:
-        image_gen.parse_size("1024")
-        check("parse_size 拒绝非法格式", False)
-    except image_gen.GenError:
-        check("parse_size 拒绝非法格式", True)
-
-
-def test_slugify() -> None:
-    check("slugify 中文", image_gen.slugify("一只柴犬 宇航员") == "一只柴犬-宇航员")
-    check("slugify 英文", image_gen.slugify("Hello World!") == "Hello-World")
-    check("slugify 空串回退", image_gen.slugify("!!!") == "image")
-
-
-def test_config_merge() -> None:
-    with tempfile.TemporaryDirectory() as tmp:
-        fake = Path(tmp) / "config.json"
-        fake.write_text(
-            json.dumps({"default_backend": "siliconflow", "siliconflow": {"api_key": "sk-test"}}),
-            encoding="utf-8",
-        )
-        old = image_gen.CONFIG_FILE
-        image_gen.CONFIG_FILE = fake
-        try:
-            cfg = image_gen.load_config()
-            check("config 合并默认值", cfg["default_backend"] == "siliconflow")
-            check("config 嵌套覆盖", cfg["siliconflow"]["api_key"] == "sk-test")
-            check(
-                "config 保留未覆盖字段",
-                cfg["siliconflow"]["base_url"].startswith("https://api.siliconflow.cn"),
-            )
-            check(
-                "config 保留其他后端",
-                cfg["sd_webui"]["base_url"].startswith("http://127.0.0.1"),
-            )
-        finally:
-            image_gen.CONFIG_FILE = old
-
-
-def test_pollinations_url() -> None:
-    cfg = image_gen.load_config()
-    captured: dict = {}
-
-    def fake_http(url: str, **kwargs):
-        captured["url"] = url
-        return 200, b"fake-png", "image/png"
-
-    original = image_gen._http
-    image_gen._http = fake_http
-    try:
-        image_gen.gen_pollinations(cfg, "a cat & dog 中文", 512, 512, 42, "")
-    finally:
-        image_gen._http = original
-    url = captured.get("url", "")
-    check("pollinations URL 编码提示词", "/a%20cat%20%26%20dog%20%E4%B8%AD%E6%96%87" in url)
-    check("pollinations URL 含尺寸", "width=512" in url and "height=512" in url)
-    check("pollinations URL 含种子", "seed=42" in url)
-    check("pollinations URL 去水印", "nologo=true" in url)
-
-
-def test_comfyui_workflow() -> None:
-    workflow = image_gen._comfyui_workflow(
-        "sd_xl_base_1.0.safetensors",
-        "hello",
-        "bad",
-        1024,
-        1024,
-        7,
-        28,
-        7.0,
-        "euler",
-        "normal",
-    )
-    check("comfyui 工作流包含提示词", workflow["6"]["inputs"]["text"] == "hello")
-    check("comfyui 工作流包含负面提示词", workflow["7"]["inputs"]["text"] == "bad")
-    check(
-        "comfyui 工作流包含 checkpoint",
-        workflow["4"]["inputs"]["ckpt_name"] == "sd_xl_base_1.0.safetensors",
-    )
-    check("comfyui 工作流包含尺寸", workflow["5"]["inputs"]["width"] == 1024)
-
-
-def test_comfyui_img2img_workflow() -> None:
-    workflow = image_gen._comfyui_workflow(
-        "sd_xl_base_1.0.safetensors",
-        "hello",
-        "bad",
-        1024,
-        1024,
-        7,
-        28,
-        7.0,
-        "euler",
-        "normal",
-        init_image="my_photo.png",
-        denoise=0.6,
-    )
-    check("comfyui 图生图 LoadImage", workflow["10"]["class_type"] == "LoadImage")
-    check(
-        "comfyui 图生图文件名",
-        workflow["10"]["inputs"]["image"] == "my_photo.png",
-    )
-    check("comfyui 图生图 VaeEncode", workflow["5"]["class_type"] == "VaeEncode")
-    check(
-        "comfyui 图生图 latent 来源",
-        workflow["5"]["inputs"]["pixels"] == ["10", 0],
-    )
-    check("comfyui 图生图 denoise", workflow["3"]["inputs"]["denoise"] == 0.6)
-
-
-def test_probe_image_size() -> None:
-    png = (
-        b"\x89PNG\r\n\x1a\n"
-        + b"\x00\x00\x00\rIHDR"
-        + (640).to_bytes(4, "big")
-        + (480).to_bytes(4, "big")
-        + b"\x08\x02\x00\x00\x00"
-        + b"\x00\x00\x00\x00IEND\xaeB`\x82"
-    )
-    check("PNG 宽高解析", image_gen.probe_image_size(png) == (640, 480))
-    jpeg = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x02\x00\x00\x01\x00\x01\x00\x00" + (
-        b"\xff\xc0\x00\x11\x08\x01\x2c\x02\x80\x03\x01\x11\x00\x02\x11\x00\x03\x11\x00"
-    )
-    check("JPEG 宽高解析", image_gen.probe_image_size(jpeg) == (640, 300))
-    webp = (
-        b"RIFF\x24\x00\x00\x00WEBPVP8X"
-        + b"\x00" * 8  # chunk size(4) + flags(1) + reserved(3)
-        + (639).to_bytes(3, "little")
-        + (479).to_bytes(3, "little")
-    )
-    check("WebP 宽高解析", image_gen.probe_image_size(webp) == (640, 480))
-    check("垃圾数据返回 None", image_gen.probe_image_size(b"not an image") is None)
-
-
-def test_load_init_image_local() -> None:
-    png = b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + (64).to_bytes(4, "big") + (64).to_bytes(4, "big")
-    with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "photo.PNG"
-        path.write_bytes(png)
-        data, mime, name = image_gen.load_init_image(str(path))
-        check("本地图片读取", data == png)
-        check("MIME 嗅探", mime == "image/png")
-        check("文件名保留", name == "photo.PNG")
-        try:
-            image_gen.load_init_image(str(Path(tmp) / "missing.png"))
-            check("缺失文件报错", False)
-        except image_gen.GenError:
-            check("缺失文件报错", True)
-
-
-def test_multipart() -> None:
-    body, content_type = image_gen._multipart(
-        {"model": "gemini-3-pro-image", "prompt": "hi", "n": "1", "size": "512x512"},
-        [("image", "a.png", b"\x89PNG-data", "image/png")],
-    )
-    check("multipart 含字段", b'name="model"' in body and b'name="prompt"' in body)
-    check("multipart 含文件", b'name="image"; filename="a.png"' in body)
-    check("multipart 含图片内容", b"\x89PNG-data" in body)
-    check("multipart Content-Type", content_type.startswith("multipart/form-data; boundary="))
-
-
-def test_vertex_img2img() -> None:
-    with tempfile.TemporaryDirectory() as tmp:
-        cfg_dir = Path(tmp) / "config"
-        cfg_dir.mkdir()
-        (cfg_dir / "config.json").write_text(json.dumps({"port_api": 2199}), encoding="utf-8")
-        (cfg_dir / "api_keys.txt").write_text("waqeq:sk-testkey123\n", encoding="utf-8")
-        (cfg_dir / "models.json").write_text(
-            json.dumps({"models": ["gemini-3-pro-image", "gemini-3.6-flash"]}), encoding="utf-8"
-        )
-        cfg = image_gen.load_config()
-        cfg["vertex"] = {"dir": tmp, "base_url": "", "api_key": "", "model": ""}
-        captured: dict = {}
-
-        def fake_http(url: str, **kwargs):
-            captured["url"] = url
-            captured["headers"] = kwargs.get("headers", {})
-            captured["raw_body"] = kwargs.get("raw_body")
-            fake_png = base64.b64encode(b"fake-image-bytes").decode("ascii")
-            return 200, json.dumps({"data": [{"b64_json": fake_png}]}).encode("utf-8"), "application/json"
-
-        original = image_gen._http
-        image_gen._http = fake_http
-        try:
-            data = image_gen.gen_vertex_img2img(
-                cfg, "make it red", 512, 512, "", b"\x89PNG-raw", "image/png", "a.png"
-            )
-        finally:
-            image_gen._http = original
-        check("vertex 图生图走 /images/edits", captured.get("url", "").endswith("/images/edits"))
-        check("vertex 图生图带鉴权", "Bearer sk-testkey123" in captured.get("headers", {}).get("Authorization", ""))
-        check("vertex 图生图 multipart 请求体", b'name="image"; filename="a.png"' in captured.get("raw_body", b""))
-        check("vertex 图生图返回图片", data == b"fake-image-bytes")
-
-
-def test_sd_webui_img2img() -> None:
-    cfg = image_gen.load_config()
-    captured: dict = {}
-
-    def fake_http(url: str, **kwargs):
-        captured["url"] = url
-        captured["payload"] = kwargs.get("payload")
-        fake_png = base64.b64encode(b"fake-image-bytes").decode("ascii")
-        return 200, json.dumps({"images": [fake_png]}).encode("utf-8"), "application/json"
-
-    original = image_gen._http
-    image_gen._http = fake_http
-    try:
-        data = image_gen.gen_sd_webui_img2img(
-            cfg, "make it red", "bad", 512, 512, 42, 28, 7.0, "Euler a",
-            (b"\x89PNG-raw", "image/png", "a.png"), 0.6,
-        )
-    finally:
-        image_gen._http = original
-    payload = captured.get("payload", {})
-    check("sd-webui 图生图走 /img2img", captured.get("url", "").endswith("/sdapi/v1/img2img"))
-    check("sd-webui init_images 为 base64", payload.get("init_images") == [base64.b64encode(b"\x89PNG-raw").decode("ascii")])
-    check("sd-webui denoising_strength", payload.get("denoising_strength") == 0.6)
-    check("sd-webui 返回图片", data == b"fake-image-bytes")
-
-
-def test_comfyui_upload_image() -> None:
-    cfg = image_gen.load_config()
-    captured: dict = {}
-
-    def fake_http(url: str, **kwargs):
-        captured["url"] = url
-        captured["raw_body"] = kwargs.get("raw_body")
-        return 200, json.dumps({"name": "img2img.png", "subfolder": "", "type": "input"}).encode("utf-8"), "application/json"
-
-    original = image_gen._http
-    image_gen._http = fake_http
-    try:
-        name = image_gen.upload_comfyui_image(cfg, b"\x89PNG-raw", "photo.png", "image/png")
-    finally:
-        image_gen._http = original
-    check("comfyui 上传走 /upload/image", captured.get("url", "").endswith("/upload/image"))
-    check("comfyui 上传 multipart 含文件", b'name="image"; filename="deepseek-imagegen_' in captured.get("raw_body", b""))
-    check("comfyui 上传返回文件名", name == "img2img.png")
-
-
-def test_img2img_routing() -> None:
-    png = b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + (64).to_bytes(4, "big") + (64).to_bytes(4, "big")
-    with tempfile.TemporaryDirectory() as tmp:
-        ref = Path(tmp) / "ref.png"
-        ref.write_bytes(png)
-        out_dir = Path(tmp) / "out"
-
-        cfg = image_gen.load_config()
-        cfg["save_dir"] = str(out_dir)
-        cfg["mirror_dir"] = ""
-        cfg["default_backend"] = "sd-webui"
-        original_load = image_gen.load_config
-        image_gen.load_config = lambda: cfg  # type: ignore[method-assign]
-
-        captured: dict = {}
-        original = image_gen.gen_sd_webui_img2img
-
-        def fake_gen_sd_img2img(c, p, n, w, h, s, st, cf, sm, init, den):
-            captured.update({"w": w, "h": h, "den": den, "init": init})
-            return b"fake-image-bytes"
-
-        image_gen.gen_sd_webui_img2img = fake_gen_sd_img2img  # type: ignore[method-assign]
-        try:
-            result = image_gen.generate_image(
-                "make it red", backend="sd-webui", init_image=str(ref)
-            )
-        finally:
-            image_gen.gen_sd_webui_img2img = original
-            image_gen.load_config = original_load  # type: ignore[method-assign]
-
-        check("图生图自动沿用原图尺寸", captured.get("w") == 64 and captured.get("h") == 64)
-        check("图生图默认去噪 0.6", captured.get("den") == 0.6)
-        check("图生图结果含 init_image", result.get("init_image") == str(ref))
-        check("图生图结果含 denoise", result.get("denoise") == 0.6)
-        check("图生图输出文件存在", Path(result["path"]).exists())
-
-        try:
-            image_gen.generate_image("x", backend="pollinations", init_image=str(ref))
-            check("pollinations 图生图拒绝", False)
-        except image_gen.GenError:
-            check("pollinations 图生图拒绝", True)
-
-
-def test_resolve_backend() -> None:
-    cfg = image_gen.load_config()
-    check("resolve auto -> 默认", image_gen.resolve_backend("auto", cfg) == "vertex")
-    check("resolve 别名", image_gen.resolve_backend("webui", cfg) == "sd-webui")
-    check("resolve comfy", image_gen.resolve_backend("comfy", cfg) == "comfyui")
-    check("resolve vertex 别名", image_gen.resolve_backend("vproxy", cfg) == "vertex")
-
-
-def test_default_output_path() -> None:
-    cfg = image_gen.load_config()
-    with tempfile.TemporaryDirectory() as tmp:
-        cfg["save_dir"] = tmp
-        path = image_gen.default_output_path("测试 图片", 42, cfg)
-        check(
-            "默认输出文件名",
-            path.name.startswith("deepseek-imagegen_") and path.name.endswith(".png"),
-        )
-        check("默认输出目录生效", str(path.parent) == str(Path(tmp).resolve()))
-
-
-def test_mask_key() -> None:
-    check("mask_key 未设置", image_gen.mask_key("") == "(未设置)")
-    check("mask_key 打码", image_gen.mask_key("sk-abcdefghijkl") == "sk-a*******ijkl")
-
-
-def test_read_first_api_key() -> None:
-    text = "# 注释\nwaqeq:sk-aaaabbbb\n第三方:sk-ccccdddd\n"
-    check("api_keys 解析 name:key", image_gen.read_first_api_key(text) == "sk-aaaabbbb")
-    check("api_keys 解析裸 key", image_gen.read_first_api_key("sk-xxxx") == "sk-xxxx")
-    check("api_keys 空返回", image_gen.read_first_api_key("# only comment") == "")
-
-
-def test_pick_best_image_model() -> None:
-    models = [
-        "gemini-2.5-flash-image",
-        "gemini-3.1-flash-image",
-        "gemini-3.1-flash-image-preview",
-        "gemini-3-pro-image",
-        "gemini-3-pro-image-preview",
-        "gemini-3.1-flash-lite-image",
-        "gemini-2.5-flash",
-        "gemini-3.6-flash",
-    ]
-    check("最佳图像模型", image_gen.pick_best_image_model(models) == "gemini-3-pro-image")
-    check("无图像模型返回空", image_gen.pick_best_image_model(["gemini-3.6-flash"]) == "")
-
-
-def test_discover_vertex() -> None:
-    with tempfile.TemporaryDirectory() as tmp:
-        cfg_dir = Path(tmp) / "config"
-        cfg_dir.mkdir()
-        (cfg_dir / "config.json").write_text(json.dumps({"port_api": 2199}), encoding="utf-8")
-        (cfg_dir / "api_keys.txt").write_text("waqeq:sk-testkey123\n", encoding="utf-8")
-        (cfg_dir / "models.json").write_text(
-            json.dumps({"models": ["gemini-3-pro-image", "gemini-3.6-flash"]}), encoding="utf-8"
-        )
-        cfg = image_gen.load_config()
-        cfg["vertex"] = {"dir": tmp, "base_url": "", "api_key": "", "model": ""}
-        info = image_gen.discover_vertex(cfg)
-        check("vertex 端口读取", info["port"] == 2199)
-        check("vertex base_url", info["base_url"] == "http://127.0.0.1:2199/v1")
-        check("vertex 密钥读取", info["api_key"] == "sk-testkey123")
-        check("vertex 最佳模型", info["model"] == "gemini-3-pro-image")
-        check("vertex 图像模型列表", info["image_models"] == ["gemini-3-pro-image"])
-
-
-def test_ext_from_content_type() -> None:
-    check("jpg 扩展名", image_gen.ext_from_content_type("image/jpeg") == "jpg")
-    check("webp 扩展名", image_gen.ext_from_content_type("image/webp; charset=binary") == "webp")
-    check("png 扩展名", image_gen.ext_from_content_type("image/png") == "png")
-
-
-def test_mirror_output() -> None:
-    with tempfile.TemporaryDirectory() as tmp:
-        src = Path(tmp) / "img.png"
-        src.write_bytes(b"fake-png")
-        mirror = Path(tmp) / "mirror"
-        cfg = {"mirror_dir": str(mirror)}
-        dest = image_gen.mirror_output(str(src), cfg)
-        check("mirror 副本创建", dest is not None and Path(dest).exists())
-        check("mirror 副本内容一致", Path(dest).read_bytes() == b"fake-png")
-        check("mirror 留空不复制", image_gen.mirror_output(str(src), {"mirror_dir": ""}) is None)
-
-
-def test_pick_best_text_model() -> None:
-    models = [
-        "gemini-2.5-pro",
-        "gemini-3.5-flash",
-        "gemini-3.6-flash",
-        "gemini-3.1-pro-preview",
-        "gemini-3-pro-image",
-        "veo-3.0-generate-001",
-        "fake-gemini-3.6-flash",
-    ]
-    best = image_gen.pick_best_text_model(models)
-    check("最佳文本模型选中 3.6-flash", best == "gemini-3.6-flash")
-    check("无文本模型返回空", image_gen.pick_best_text_model(["gemini-3-pro-image", "veo-3.0"]) == "")
-
-
-def test_translator_system_prompt() -> None:
-    zh = image_gen.build_translator_system("zh")
-    en = image_gen.build_translator_system("en")
-    check("中文系统提示词包含结构要求", "主体" in zh and "画面文字" in zh)
-    check("英文系统提示词包含结构要求", "subject" in en.lower() and "composition" in en.lower())
-
-
-def test_translate_off_passthrough() -> None:
-    cfg = json.loads(json.dumps(image_gen.DEFAULT_CONFIG))
-    cfg["translator"]["engine"] = "off"
-    r = image_gen.translate_prompt("测试需求", cfg=cfg)
-    check("直传模式原文返回", r["engine_used"] == "off" and r["rewritten"] == "测试需求")
-
-
-def test_looks_broken() -> None:
-    check("问号回复判为异常", image_gen._looks_broken("你似乎只发了问号", had_cjk=True))
-    check("正常中文回复不判异常", not image_gen._looks_broken("少女站在雪地中", had_cjk=True))
-    check("纯英文回复不判异常", not image_gen._looks_broken("A girl in snow", had_cjk=False))
-
-
-def test_parse_tiered_issues() -> None:
-    sample = (
-        "人物问题：无\n"
-        "背景问题：\n"
-        "1. 地面缺少圆形阴影\n"
-        "2. 背景音符太少"
-    )
-    parts = image_gen._parse_tiered_issues(sample)
-    check("tiered 解析出人物问题", parts["character"] == "")
-    check("tiered 解析出背景问题", "地面缺少圆形阴影" in parts["background"])
-    check("tiered 解析出第二条", "背景音符太少" in parts["background"])
-    check("tiered 标记已解析", parts.get("parsed") is True)
-
-    sample2 = "人物问题：\n1. 耳机只画了一只耳罩\n背景问题：无"
-    parts2 = image_gen._parse_tiered_issues(sample2)
-    check("tiered 解析人物问题", "耳机只画了一只耳罩" in parts2["character"])
-    check("tiered 人物背景都无", parts2["background"] == "")
-
-    sample3 = "这个画面整体不错"
-    parts3 = image_gen._parse_tiered_issues(sample3)
-    check("tiered 无标题时整段按人物级", parts3["character"] == sample3)
-    check("tiered 无标题标记未解析", parts3.get("parsed") is False)
-
-
-def test_count_issues() -> None:
-    check("计数 0", image_gen._count_issues("无") == 0)
-    check("计数空串", image_gen._count_issues("") == 0)
-    check("计数单条", image_gen._count_issues("1. 耳机少一只") == 1)
-    check("计数多条", image_gen._count_issues("1. 耳机少一只\n2. 缺阴影\n3. 背景太乱") == 3)
-
-
-def test_build_fix_instruction() -> None:
-    instruction = image_gen.build_fix_instruction("1. 耳机只画了一只耳罩\n2. 地面缺少圆形阴影")
-    check("修正指令要求保持原样", "保持原样" in instruction)
-    check("修正指令包含问题", "耳机只画了一只耳罩" in instruction)
-    check("修正指令包含问题2", "地面缺少圆形阴影" in instruction)
-    check("修正指令禁止文字", "不要出现任何文字" in instruction)
-    empty = image_gen.build_fix_instruction("无")
-    check("修正指令空问题处理", "无需修改" in empty)
-
-
-def test_fix_accepted() -> None:
-    old = {
-        "ok": True,
-        "has_issues": True,
-        "has_character_issues": False,
-        "issue_counts": {"character": 0, "background": 1},
-    }
-    good = {
-        "ok": True,
-        "has_issues": False,
-        "has_character_issues": False,
-        "issue_counts": {"character": 0, "background": 0},
-    }
-    bad = {
-        "ok": True,
-        "has_issues": True,
-        "has_character_issues": True,
-        "issue_counts": {"character": 1, "background": 0},
-    }
-    unchanged = {
-        "ok": True,
-        "has_issues": True,
-        "has_character_issues": False,
-        "issue_counts": {"character": 0, "background": 1},
-    }
-    more_bg = {
-        "ok": True,
-        "has_issues": True,
-        "has_character_issues": False,
-        "issue_counts": {"character": 0, "background": 2},
-    }
-    improved_char = {
-        "ok": True,
-        "has_issues": True,
-        "has_character_issues": True,
-        "issue_counts": {"character": 1, "background": 0},
-    }
-    accepted, _ = image_gen._fix_accepted(old, good)
-    check("保留最佳：修好则保留", accepted)
-    accepted, why = image_gen._fix_accepted(old, bad)
-    check("保留最佳：引入人物错误则退回", not accepted)
-    check("保留最佳：退回原因含人物", "人物" in why)
-    accepted, _ = image_gen._fix_accepted(old, unchanged)
-    check("保留最佳：没有变差则保留", accepted)
-    accepted, _ = image_gen._fix_accepted(old, more_bg)
-    check("保留最佳：背景问题变多则退回", not accepted)
-    accepted, _ = image_gen._fix_accepted(
-        {"ok": True, "has_issues": True, "has_character_issues": True,
-         "issue_counts": {"character": 3, "background": 2}},
-        improved_char,
-    )
-    check("保留最佳：人物级错误减少则保留", accepted)
-
-
-def test_auto_fix_edit_loop() -> None:
-    """全流程离线测试：编辑模式 + 保留最佳（改坏退回 / 修好保留 / 背景细节不重画）。"""
-    base_check = {
-        "ok": True,
-        "has_issues": True,
-        "has_character_issues": False,
-        "issues": "人物问题：\n无\n\n背景问题：\n1. 缺阴影",
-        "character_issues": "",
-        "background_issues": "1. 缺阴影",
-        "issue_counts": {"character": 0, "background": 1},
-    }
-    good_check = {
-        "ok": True,
-        "has_issues": False,
-        "has_character_issues": False,
-        "issues": "人物问题：\n无\n\n背景问题：\n无",
-        "character_issues": "",
-        "background_issues": "",
-        "issue_counts": {"character": 0, "background": 0},
-    }
-    bad_check = {
-        "ok": True,
-        "has_issues": True,
-        "has_character_issues": True,
-        "issues": "人物问题：\n1. 耳机少一只\n背景问题：\n无",
-        "character_issues": "1. 耳机少一只",
-        "background_issues": "",
-        "issue_counts": {"character": 1, "background": 0},
-    }
-
-    with tempfile.TemporaryDirectory() as tmp:
-        orig_png = Path(tmp) / "orig.png"
-        orig_png.write_bytes(b"\x89PNG-original")
-        calls: dict = {"vision": [], "gen": []}
-
-        def fake_check(path, user_text, cfg, tiered=False, **kwargs):
-            calls["vision"].append(str(path))
-            if str(path).endswith("out-fix1.png"):
-                return dict(bad_check)
-            if len(calls["vision"]) > 1:
-                return dict(good_check)
-            return dict(base_check)
-
-        def fake_gen(prompt, **kwargs):
-            calls["gen"].append(prompt)
-            out = Path(kwargs["out"])
-            out.parent.mkdir(parents=True, exist_ok=True)
-            out.write_bytes(b"\x89PNG-new")
-            return {"ok": True, "path": str(out), "backend": "vertex", "seed": 1}
-
-        orig_check = image_gen.run_vision_check
-        orig_gen = image_gen.generate_image
-        image_gen.run_vision_check = fake_check
-        image_gen.generate_image = fake_gen
-        try:
-            # 场景1：编辑模式，修正版更差 -> 自动退回
-            result = image_gen.generate_with_translator(
-                "测试需求",
-                backend="vertex",
-                out=str(Path(tmp) / "out.png"),
-                init_image=str(orig_png),
-                translator="off",
-                auto_fix=True,
-                fix_mode="edit",
-                keep_best=True,
-            )
-        finally:
-            image_gen.run_vision_check = orig_check
-            image_gen.generate_image = orig_gen
-        af = result.get("auto_fix") or {}
-        check(
-            "编辑模式修正指令为局部小修",
-            any("保持原样" in p for p in calls["gen"]),
-        )
-        check("改坏时自动退回", af.get("reverted") is True)
-        check("退回后结果回到上一版（交付命名 _final）", result["path"].endswith("out_final.png"))
-        check("退回轮次记录完整", len(af.get("history") or []) == 2)
-        check("退回原因含人物", "人物" in (af["history"][-1].get("reason") or ""))
-
-        with tempfile.TemporaryDirectory() as tmp2:
-            orig2 = Path(tmp2) / "orig.png"
-            orig2.write_bytes(b"\x89PNG-original")
-            calls2: dict = {"vision": [], "gen": []}
-
-            def fake_check2(path, user_text, cfg, tiered=False, **kwargs):
-                calls2["vision"].append(str(path))
-                if str(path).endswith("out-fix1.png"):
-                    return dict(good_check)
-                return dict(base_check)
-
-            def fake_gen2(prompt, **kwargs):
-                calls2["gen"].append(prompt)
-                out = Path(kwargs["out"])
-                out.parent.mkdir(parents=True, exist_ok=True)
-                out.write_bytes(b"\x89PNG-new")
-                return {"ok": True, "path": str(out), "backend": "vertex", "seed": 1}
-
-            image_gen.run_vision_check = fake_check2
-            image_gen.generate_image = fake_gen2
-            try:
-                # 场景2：编辑模式，修正版修好 -> 保留
-                result2 = image_gen.generate_with_translator(
-                    "测试需求",
-                    backend="vertex",
-                    out=str(Path(tmp2) / "out.png"),
-                    init_image=str(orig2),
+from unittest import mock
+
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+SCRIPTS_DIR = SCRIPT_DIR.parent
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+from imagegen import characters, generate  # noqa: E402
+from imagegen.composition import resolve_composition  # noqa: E402
+from imagegen.config import load_config, mask_config  # noqa: E402
+from imagegen.http import GenError  # noqa: E402
+from imagegen.image_utils import (  # noqa: E402
+    aspect_ratio_key,
+    canvas_size_for,
+    default_output_path,
+    fit_reference_to_canvas,
+    mirror_output,
+    parse_size,
+    probe_image_size,
+    sizes_match,
+    slugify,
+)
+from imagegen.translator import translate_prompt  # noqa: E402
+from imagegen.vertex import pick_best_image_model, pick_best_text_model  # noqa: E402
+
+
+def make_png_bytes(width: int = 64, height: int = 64) -> bytes:
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (width, height), (120, 180, 240)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+class TestConfig(unittest.TestCase):
+    def test_merge_and_mask(self):
+        cfg = load_config()
+        self.assertIn("characters", cfg)
+        self.assertIn("洛天依", cfg["characters"])
+        self.assertIn("presets", cfg["composition"])
+        safe = mask_config(cfg)
+        text = json.dumps(safe, ensure_ascii=False)
+        self.assertNotIn(cfg.get("vertex", {}).get("api_key") or "sk-NOT-SET", text)
+        self.assertIn("(未设置)", text)
+
+
+class TestImageUtils(unittest.TestCase):
+    def test_parse_size(self):
+        self.assertEqual(parse_size("1024x768"), (1024, 768))
+        self.assertEqual(parse_size("768×1408"), (768, 1408))
+        with self.assertRaises(GenError):
+            parse_size("abc")
+
+    def test_slugify(self):
+        self.assertEqual(slugify("画一张 洛天依 -- 全身"), "画一张-洛天依-全身")
+
+    def test_aspect_and_canvas(self):
+        self.assertEqual(aspect_ratio_key(768, 1408), (9, 16))
+        self.assertEqual(canvas_size_for(768, 1408), (768, 1408))
+        self.assertEqual(canvas_size_for(1024, 1024), (1024, 1024))
+
+    def test_sizes_match(self):
+        self.assertTrue(sizes_match((768, 1408), (768, 1408))["ok"])
+        self.assertTrue(sizes_match((768, 1408), (1152, 2112))["ok"])  # 画幅一致（9:16）
+        self.assertFalse(sizes_match((768, 1408), (1408, 768))["ok"])  # 方向不符
+        self.assertFalse(sizes_match((1024, 1024), (1408, 768))["ok"])
+
+    def test_probe_and_fit(self):
+        png = make_png_bytes(32, 64)
+        self.assertEqual(probe_image_size(png), (32, 64))
+        fitted, mime, name = fit_reference_to_canvas(png, "image/png", 100, 100)
+        self.assertEqual(mime, "image/png")
+        self.assertEqual(probe_image_size(fitted), (100, 100))
+        self.assertEqual(name, "reference-fit.png")
+
+
+class TestModelPicking(unittest.TestCase):
+    def test_pick_best_image_model(self):
+        models = ["gemini-2.5-flash-image-preview", "gemini-3-pro-image", "imagen-4.0"]
+        self.assertEqual(pick_best_image_model(models), "gemini-3-pro-image")
+
+    def test_pick_best_text_model(self):
+        models = ["gemini-3-pro-image", "gemini-3-pro", "gemini-2.5-flash"]
+        self.assertNotIn("image", pick_best_text_model(models))
+
+
+class TestComposition(unittest.TestCase):
+    def test_resolve(self):
+        cfg = load_config()
+        self.assertEqual(resolve_composition("全身", cfg), "full-body")
+        self.assertEqual(resolve_composition("auto", cfg), "auto")
+        with self.assertRaises(GenError):
+            resolve_composition("不存在的预设", cfg)
+
+
+class TestTranslator(unittest.TestCase):
+    def test_off_passthrough(self):
+        result = translate_prompt("画一只柴犬", engine="off")
+        self.assertEqual(result["engine_used"], "off")
+        self.assertEqual(result["rewritten"], "画一只柴犬")
+
+
+class TestCharacters(unittest.TestCase):
+    def setUp(self):
+        self.cfg = load_config()
+
+    def test_exact_match(self):
+        self.assertEqual(characters.detect_character(self.cfg, "画一张洛天依 V4 公式服全身"), "洛天依")
+        self.assertEqual(characters.detect_character(self.cfg, "洛天依-V4公式服 演唱会"), "洛天依")
+
+    def test_style_not_a_mention(self):
+        self.assertIsNone(characters.detect_character(self.cfg, "洛天依风格原创角色"))
+        self.assertIsNone(characters.detect_character(self.cfg, "洛天依风 的画法"))
+
+    def test_other_subject_no_injection(self):
+        self.assertIsNone(characters.detect_character(self.cfg, "画一只柴犬晒太阳"))
+        self.assertIsNone(characters.detect_character(self.cfg, "城市夜景"))
+
+    def test_manual_fallback(self):
+        result = characters.resolve_character(self.cfg, "随便什么", manual="洛天依")
+        self.assertTrue(result["used"])
+        self.assertIn("禁忌", result["desc"])
+
+    def test_missing_character_hint(self):
+        result = characters.resolve_character(self.cfg, "画一个角色", manual="不存在的人")
+        self.assertFalse(result["used"])
+        self.assertIn("角色表里没有", result["warning"])
+
+    def test_reference_missing_degrade(self):
+        with self.assertRaises(GenError):
+            characters.load_character_reference(r"C:\不存在\的图.png", 100, 100)
+
+    def test_reference_fit(self):
+        png = make_png_bytes(40, 80)
+        with tempfile.TemporaryDirectory() as tmp:
+            ref = Path(tmp) / "ref.png"
+            ref.write_bytes(png)
+            data, mime, name = characters.load_character_reference(str(ref), 128, 128)
+            self.assertEqual(probe_image_size(data), (128, 128))
+
+
+class TestGenerateFlow(unittest.TestCase):
+    def _fake_gen(self, cfg, prompt, width, height, model, **kwargs):
+        return make_png_bytes(width, height)
+
+    def _fake_img2img(self, cfg, prompt, width, height, model, image_bytes, mime, name, **kwargs):
+        return make_png_bytes(width, height)
+
+    def test_generate_character_and_save(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            save_dir = Path(tmp) / "out"
+            mirror_dir = Path(tmp) / "mirror"
+            cfg = load_config()
+            cfg["save_dir"] = str(save_dir)
+            cfg["mirror_dir"] = str(mirror_dir)
+            with (
+                mock.patch.object(generate, "load_config", return_value=cfg),
+                mock.patch.object(generate, "gen_vertex_canvas_first", side_effect=self._fake_gen),
+                mock.patch.object(generate, "gen_vertex", side_effect=self._fake_gen),
+            ):
+                result = generate.generate(
+                    "画一张洛天依 V4 公式服全身",
+                    size="768x1408",
+                    seed=123,
                     translator="off",
-                    auto_fix=True,
-                    fix_mode="edit",
-                    keep_best=True,
+                    composition="full-body",
                 )
-                # 场景3：重画模式，仅背景问题 -> 不重画
-                result3 = image_gen.generate_with_translator(
-                    "测试需求",
-                    backend="vertex",
-                    out=str(Path(tmp2) / "out3.png"),
-                    init_image=str(orig2),
+            self.assertTrue(result["ok"])
+            self.assertTrue(Path(result["path"]).is_file())
+            self.assertEqual(result["seed"], 123)
+            self.assertTrue(result["character"]["used"])
+            self.assertIn("角色设定，必须严格遵守", result["prompt_used"])
+            self.assertTrue(result["size_check"]["match"])
+            self.assertIn("画布优先", " ".join(result.get("warnings") or []))
+            self.assertTrue((mirror_dir / Path(result["path"]).name).is_file())
+
+    def test_generate_with_character_reference(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            save_dir = Path(tmp) / "out"
+            ref = Path(tmp) / "char.png"
+            ref.write_bytes(make_png_bytes(50, 50))
+            cfg = load_config()
+            cfg["save_dir"] = str(save_dir)
+            with (
+                mock.patch.object(generate, "load_config", return_value=cfg),
+                mock.patch.object(generate, "gen_vertex_img2img", side_effect=self._fake_img2img),
+            ):
+                result = generate.generate(
+                    "洛天依 演唱会全身",
+                    size="768x1408",
+                    seed=7,
                     translator="off",
-                    auto_fix=True,
-                    fix_mode="redraw",
-                    keep_best=True,
+                    character_image=str(ref),
                 )
-            finally:
-                image_gen.run_vision_check = orig_check
-                image_gen.generate_image = orig_gen
-            af2 = result2.get("auto_fix") or {}
-            check("修好时保留修正版", af2.get("reverted") is False)
-            check("修好后结果为新图（交付命名 _final）", result2["path"].endswith("out_final.png"))
-            check("修好轮次记录完整", len(af2.get("history") or []) == 2)
-            af3 = result3.get("auto_fix") or {}
-            check("重画模式背景细节不重画", af3.get("rounds") == 0)
-            check("重画模式保留原图", result3["path"].endswith("out3.png"))
-            check("重画模式给出提示", any("背景" in str(w) for w in result3.get("warnings") or []))
+            self.assertTrue(result["character"]["reference"])
+            self.assertEqual(result["init_image"], str(ref))
+            self.assertIn("保持图中人物设定", result["prompt_used"])
+
+    def test_generate_character_reference_degrade(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = load_config()
+            cfg["save_dir"] = str(Path(tmp) / "out")
+            with (
+                mock.patch.object(generate, "load_config", return_value=cfg),
+                mock.patch.object(generate, "gen_vertex_canvas_first", side_effect=self._fake_gen),
+            ):
+                result = generate.generate(
+                    "洛天依 舞台",
+                    size="1024x1024",
+                    seed=1,
+                    translator="off",
+                    character_image=r"C:\不存在\的角色图.png",
+                )
+            self.assertTrue(result["ok"])
+            self.assertFalse(result["character"]["reference"])
+            self.assertNotIn("init_image", result)
+            self.assertTrue(any("参考图读取失败" in w for w in result.get("warnings") or []))
+
+    def test_generate_manual_missing_character(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = load_config()
+            cfg["save_dir"] = str(Path(tmp) / "out")
+            with (
+                mock.patch.object(generate, "load_config", return_value=cfg),
+                mock.patch.object(generate, "gen_vertex_canvas_first", side_effect=self._fake_gen),
+            ):
+                result = generate.generate(
+                    "画一个原创角色", seed=2, translator="off", character="不存在的人"
+                )
+            self.assertTrue(result["ok"])
+            self.assertFalse(result["character"]["used"])
+            self.assertTrue(any("角色表里没有" in w for w in result.get("warnings") or []))
 
 
-def test_prompt_lib_config_merge() -> None:
-    import prompt_lib  # noqa: PLC0415
+class TestOutputPaths(unittest.TestCase):
+    def test_save_dir_and_mirror(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            save_dir = Path(tmp) / "out"
+            mirror_dir = Path(tmp) / "mirror"
+            cfg = {"save_dir": str(save_dir), "mirror_dir": str(mirror_dir)}
+            path = default_output_path("测试提示词", 42, cfg, ext="png")
+            self.assertTrue(str(path).startswith(str(save_dir)))
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(make_png_bytes())
+            mirrored = mirror_output(str(path), cfg)
+            self.assertTrue(mirrored)
+            self.assertTrue(Path(mirrored).is_file())
 
-    with tempfile.TemporaryDirectory() as tmp:
-        old = prompt_lib.CONFIG_FILE
-        fake = Path(tmp) / "config.json"
-        fake.write_text(
-            json.dumps(
-                {
-                    "prompt_library": {
-                        "enabled": True,
-                        "embedding": {"api_key": "sk-test"},
-                        "rerank": {"enabled": False},
-                    }
-                }
-            ),
-            encoding="utf-8",
-        )
-        prompt_lib.CONFIG_FILE = fake
+
+class TestCli(unittest.TestCase):
+    def test_config_json_output(self):
+        from imagegen.cli import main
+
+        buf = io.StringIO()
+        with mock.patch("sys.stdout", buf):
+            code = main(["config", "--json"])
+        self.assertEqual(code, 0)
+        data = json.loads(buf.getvalue())
+        self.assertIn("config_file", data)
+        self.assertIn("characters", data["config"])
+
+
+class TestLibraryStats(unittest.TestCase):
+    def test_stats_on_dryrun_db(self):
         try:
-            pl = prompt_lib.load_config()
-            check("词库配置合并：enabled", pl["enabled"] is True)
-            check("词库配置合并：embedding key", pl["embedding"]["api_key"] == "sk-test")
-            check("词库配置合并：默认 base_url", pl["embedding"]["base_url"].startswith("https://api.siliconflow.com"))
-            check("词库配置合并：rerank 覆盖", pl["rerank"]["enabled"] is False)
-            check("词库配置合并：mysql 默认", pl["mysql"]["db"] == "prompt_library")
-        finally:
-            prompt_lib.CONFIG_FILE = old
-
-
-def test_prompt_lib_read_import() -> None:
-    import prompt_lib  # noqa: PLC0415
-
-    with tempfile.TemporaryDirectory() as tmp:
-        jf = Path(tmp) / "p.json"
-        jf.write_text(
-            json.dumps(
-                {
-                    "prompts": [
-                        {"content": "a cute chibi girl illustration", "category": "插画"},
-                        {"content": "product photography, minimal", "category": "摄影"},
-                    ]
-                }
-            ),
-            encoding="utf-8",
-        )
-        items = prompt_lib.read_import_file(str(jf))
-        check("导入 JSON 数组解析", len(items) == 2)
-        check("导入保留分类", items[0].get("category") == "插画")
-
-        jl = Path(tmp) / "p.jsonl"
-        jl.write_text('{"content":"line one"}\n{"content":"line two"}\n', encoding="utf-8")
-        items2 = prompt_lib.read_import_file(str(jl))
-        check("导入 JSONL 解析", len(items2) == 2)
-
-        csvf = Path(tmp) / "p.csv"
-        csvf.write_text("content,category\n\"a cat, with comma\",插画\n", encoding="utf-8")
-        items3 = prompt_lib.read_import_file(str(csvf))
-        check("导入 CSV 解析", len(items3) == 1)
-        check("导入 CSV 内容", items3[0]["content"] == "a cat, with comma")
-
-
-def main() -> int:
-    print("=== deepseek-imagegen 冒烟测试 ===")
-    test_parse_size()
-    test_slugify()
-    test_config_merge()
-    test_pollinations_url()
-    test_comfyui_workflow()
-    test_comfyui_img2img_workflow()
-    test_probe_image_size()
-    test_load_init_image_local()
-    test_multipart()
-    test_vertex_img2img()
-    test_sd_webui_img2img()
-    test_comfyui_upload_image()
-    test_img2img_routing()
-    test_resolve_backend()
-    test_default_output_path()
-    test_mask_key()
-    test_read_first_api_key()
-    test_pick_best_image_model()
-    test_discover_vertex()
-    test_ext_from_content_type()
-    test_mirror_output()
-    test_pick_best_text_model()
-    test_translator_system_prompt()
-    test_translate_off_passthrough()
-    test_looks_broken()
-    test_parse_tiered_issues()
-    test_count_issues()
-    test_build_fix_instruction()
-    test_fix_accepted()
-    test_auto_fix_edit_loop()
-    test_prompt_lib_config_merge()
-    test_prompt_lib_read_import()
-    print()
-    if FAILURES:
-        print(f"失败 {len(FAILURES)} 项：{', '.join(FAILURES)}")
-        return 1
-    print("全部通过。")
-    return 0
+            from imagegen import library
+        except Exception:  # noqa: BLE001
+            self.skipTest("library 导入失败")
+        pl = library.load_config()
+        pl["mysql"]["db"] = "prompt_library_dryrun"
+        try:
+            st = library.stats(pl)
+        except Exception as exc:  # noqa: BLE001
+            self.skipTest(f"演练库不可用：{exc}")
+        self.assertEqual(st["active"] + st["archived"], st["total"])
+        self.assertEqual(st["archived"], 2000)
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    unittest.main(verbosity=2)
