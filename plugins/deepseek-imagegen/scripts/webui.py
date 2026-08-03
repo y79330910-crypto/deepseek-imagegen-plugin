@@ -407,6 +407,9 @@ HTML_PAGE = r"""<!doctype html>
             </div>
             <div class="field"><label for="pl_topk">初选数量</label><input id="pl_topk" type="number" min="1" max="200" placeholder="50"></div>
             <div class="field"><label for="pl_finalk">最终参考条数</label><input id="pl_finalk" type="number" min="1" max="20" placeholder="8"></div>
+            <div class="field"><label for="pl_cats">分类过滤（逗号分隔，留空=全部）</label><input id="pl_cats" placeholder="Anime &amp; Comic,角色设定"></div>
+            <div class="field"><label for="pl_prio">优先分类（永远混入几条）</label><input id="pl_prio" placeholder="自家精品"></div>
+            <div class="field"><label for="pl_prio_n">优先条数</label><input id="pl_prio_n" type="number" min="0" max="10" placeholder="3"></div>
             <div class="field"><label for="pl_emb_base">Embedding 地址</label><input id="pl_emb_base" placeholder="https://api.siliconflow.com/v1/embeddings"></div>
             <div class="field"><label for="pl_emb_key">Embedding 密钥</label><input id="pl_emb_key" type="password" placeholder="sk-..."></div>
             <div class="field"><label for="pl_emb_model">Embedding 模型</label><input id="pl_emb_model" placeholder="Qwen/Qwen3-Embedding-8B"></div>
@@ -612,8 +615,11 @@ function render() {
   const ple = pl.embedding || {}, plr = pl.rerank || {}, plm = pl.mysql || {};
   $("pl_enabled").value = pl.enabled === false ? "0" : "1";
   $("pl_feed").value = pl.use_in_translator === false ? "0" : "1";
-  $("pl_topk").value = pl.top_k != null ? pl.top_k : 50;
-  $("pl_finalk").value = pl.final_k != null ? pl.final_k : 8;
+  $("pl_topk").value = pl.top_k != null ? pl.top_k : 30;
+  $("pl_finalk").value = pl.final_k != null ? pl.final_k : 6;
+  $("pl_cats").value = (pl.categories || []).join(", ");
+  $("pl_prio").value = pl.priority_category || "";
+  $("pl_prio_n").value = pl.priority_count != null ? pl.priority_count : 3;
   $("pl_emb_base").value = ple.base_url || "";
   $("pl_emb_key").value = ple.api_key || "";
   $("pl_emb_model").value = ple.model || "Qwen/Qwen3-Embedding-8B";
@@ -699,8 +705,11 @@ function collect() {
   c.prompt_library = {
     enabled: $("pl_enabled").value === "1",
     use_in_translator: $("pl_feed").value === "1",
-    top_k: parseInt($("pl_topk").value) || 50,
-    final_k: parseInt($("pl_finalk").value) || 8,
+    top_k: parseInt($("pl_topk").value) || 30,
+    final_k: parseInt($("pl_finalk").value) || 6,
+    categories: $("pl_cats").value.split(",").map(s => s.trim()).filter(Boolean),
+    priority_category: $("pl_prio").value.trim(),
+    priority_count: parseInt($("pl_prio_n").value) || 3,
     embedding: {
       base_url: $("pl_emb_base").value.trim() || "https://api.siliconflow.com/v1/embeddings",
       api_key: embKey,

@@ -79,8 +79,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "prompt_library": {
         "enabled": False,
         "use_in_translator": True,
-        "top_k": 50,
-        "final_k": 8,
+        "top_k": 30,
+        "final_k": 6,
+        "categories": [],
+        "priority_category": "",
+        "priority_count": 3,
     },
     "pollinations": {
         "base_url": "https://image.pollinations.ai/prompt",
@@ -1744,6 +1747,7 @@ def generate_with_translator(
                     prompt,
                     top_k=int(tr_pl.get("top_k") or 50),
                     final_k=int(tr_pl.get("final_k") or 8),
+                    categories=tr_pl.get("categories") or None,
                 )
                 lib_examples = [str(h.get("content") or "") for h in _hits if h.get("content")]
                 lib_hits = [

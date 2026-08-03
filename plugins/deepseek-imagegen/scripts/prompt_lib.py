@@ -27,8 +27,11 @@ CONFIG_FILE = CONFIG_DIR / "config.json"
 DEFAULTS: dict[str, Any] = {
     "enabled": False,
     "use_in_translator": True,
-    "top_k": 50,
-    "final_k": 8,
+    "top_k": 30,
+    "final_k": 6,
+    "categories": [],
+    "priority_category": "",
+    "priority_count": 3,
     "embedding": {
         "base_url": "https://api.siliconflow.com/v1/embeddings",
         "api_key": "",
@@ -121,6 +124,16 @@ def init_db(pl: dict[str, Any]) -> None:
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                 """
             )
+            # 老库迁移：补上"原始需求向量"列（自家精品双向量用）
+            cur.execute(
+                """
+                SELECT COUNT(*) FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'prompts'
+                AND COLUMN_NAME = 'requirement_embedding'
+                """
+            )
+            if int(cur.fetchone()[0]) == 0:
+                cur.execute("ALTER TABLE prompts ADD COLUMN requirement_embedding LONGBLOB NULL")
     finally:
         conn.close()
 
@@ -271,36 +284,90 @@ def _load_vectors(cur, ids: list[int]) -> dict[int, list[float]]:
     return out
 
 
-def search(pl: dict[str, Any], query: str, top_k: Optional[int] = None, final_k: Optional[int] = None) -> list[dict[str, Any]]:
-    """向量检索：需求 → 向量 → 余弦相似度取 top_k → Rerank 精排取 final_k。"""
-    top_k = int(top_k or pl.get("top_k") or 50)
-    final_k = int(final_k or pl.get("final_k") or 8)
+def _pick_vec(embedding_blob: Any, requirement_blob: Any) -> list[float]:
+    """优先使用"原始需求向量"（口语对口语最准），没有则用提示词向量。"""
+    blob = requirement_blob or embedding_blob
+    if not blob:
+        return []
+    import struct
+
+    raw = bytes(blob)
+    n = len(raw) // 4
+    return list(struct.unpack(f"<{n}f", raw))
+
+
+def search(
+    pl: dict[str, Any],
+    query: str,
+    top_k: Optional[int] = None,
+    final_k: Optional[int] = None,
+    categories: Optional[list[str]] = None,
+) -> list[dict[str, Any]]:
+    """向量检索：需求 → 向量 → 余弦相似度取 top_k → 混入优先分类 → Rerank 精排取 final_k。"""
+    top_k = int(top_k or pl.get("top_k") or 30)
+    final_k = int(final_k or pl.get("final_k") or 6)
     if not str(query or "").strip():
         raise LibError("检索关键词不能为空。")
+    cats = [str(c).strip() for c in (categories or pl.get("categories") or []) if str(c).strip()]
+    priority = str(pl.get("priority_category") or "").strip()
+    priority_count = max(0, int(pl.get("priority_count") or 3))
     conn = mysql_conn(pl)
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) FROM prompts")
+            where = ""
+            params: list[Any] = []
+            if cats:
+                where = " WHERE category IN (" + ",".join(["%s"] * len(cats)) + ")"
+                params = cats
+            cur.execute("SELECT COUNT(*) FROM prompts" + where, params)
             count = int(cur.fetchone()[0])
             if count == 0:
-                raise LibError("词库还是空的：请先用 prompt_lib.py import 导入提示词。")
+                raise LibError(
+                    "词库（或所选分类）还是空的：请先用 prompt_lib.py import / add 导入提示词。"
+                )
             query_vec = embed_texts(pl, [query], input_type="query")[0]
-            cur.execute("SELECT id, content, category, tags, source FROM prompts")
+            cur.execute(
+                "SELECT id, content, category, tags, source, embedding, requirement_embedding"
+                " FROM prompts" + where,
+                params,
+            )
             rows = cur.fetchall()
             ids = [int(r[0]) for r in rows]
-            vectors = _load_vectors(cur, ids)
-            order = _cosine_top_k(query_vec, [vectors[i] for i in ids if i in vectors], min(top_k, count))
-            docs = [str(rows[i][1]) for i in order]
-            if pl.get("rerank", {}).get("enabled"):
+            vectors = [_pick_vec(r[5], r[6]) for r in rows]
+            order = _cosine_top_k(query_vec, vectors, min(top_k, len(ids)))
+            candidates = [(ids[i], rows[i]) for i in order]
+            seen = set(ids[i] for i in order)
+            # 优先分类（如自家精品）永远混入几条
+            prio_cands: list[tuple[int, tuple[Any, ...]]] = []
+            if priority and priority_count > 0:
+                cur.execute(
+                    "SELECT id, content, category, tags, source, embedding, requirement_embedding"
+                    " FROM prompts WHERE category=%s ORDER BY id DESC LIMIT %s",
+                    (priority, priority_count * 3),
+                )
+                for prow in cur.fetchall():
+                    pid = int(prow[0])
+                    if pid in seen:
+                        continue
+                    seen.add(pid)
+                    prio_cands.append((pid, prow))
+            pool = candidates + prio_cands
+            prio_ids = {pid for pid, _ in prio_cands}
+            docs = [str(r[1]) for _, r in pool]
+            if pl.get("rerank", {}).get("enabled") and len(docs) > final_k:
                 try:
-                    order = [order[i] for i in rerank_docs(pl, query, docs, final_k)]
+                    pool_order = [pool[i] for i in rerank_docs(pl, query, docs, len(docs))]
                 except LibError:
-                    order = order[:final_k]
+                    pool_order = pool
             else:
-                order = order[:final_k]
+                pool_order = pool
+            # 组装最终结果：优先分类先占位（最多 priority_count 条），其余按相关度补满
+            prio_pool = [(pid, row) for pid, row in pool_order if pid in prio_ids][:priority_count]
+            others = [(pid, row) for pid, row in pool_order if pid not in prio_ids]
+            final_order = (prio_pool + others)[:final_k]
             results = []
-            for i in order:
-                rid, content, category, tags, source = rows[i]
+            for rid, row in final_order:
+                _rid, content, category, tags, source = row[:5]
                 results.append(
                     {
                         "id": int(rid),
@@ -313,6 +380,102 @@ def search(pl: dict[str, Any], query: str, top_k: Optional[int] = None, final_k:
             return results
     finally:
         conn.close()
+
+
+def add_prompt(
+    pl: dict[str, Any],
+    content: str,
+    *,
+    category: str = "自家精品",
+    tags: str = "",
+    requirement: str = "",
+    source: str = "",
+    source_url: str = "",
+    notes: str = "",
+) -> dict[str, Any]:
+    """单条入库：正文 + 可选原始需求（双向量），自动去重。"""
+    content = str(content or "").strip()
+    if len(content) < 8:
+        raise LibError("提示词内容太短（至少 8 个字）。")
+    req = str(requirement or "").strip()
+    conn = mysql_conn(pl)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM prompts WHERE content_hash=%s", (_sha1(content),))
+            if cur.fetchone():
+                return {"added": False, "reason": "已存在相同内容的提示词"}
+        texts = [content]
+        if req:
+            texts.append(req)
+        vectors = embed_texts(pl, texts, input_type="document")
+        content_vec = vectors[0]
+        req_vec = vectors[1] if len(vectors) > 1 else None
+        import struct
+
+        blob = struct.pack(f"<{len(content_vec)}f", *content_vec)
+        req_blob = struct.pack(f"<{len(req_vec)}f", *req_vec) if req_vec is not None else None
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO prompts
+                    (content, content_hash, lang, category, tags, source, source_url, embedding,
+                     requirement_embedding, notes)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    content,
+                    _sha1(content),
+                    "zh",
+                    str(category or "").strip()[:64] or "未分类",
+                    str(tags or "").strip()[:512],
+                    str(source or "").strip()[:255],
+                    str(source_url or "").strip()[:512],
+                    blob,
+                    req_blob,
+                    str(notes or "").strip()[:512],
+                ),
+            )
+            pid = int(cur.lastrowid)
+        return {"added": True, "id": pid, "vectors": 2 if req_vec is not None else 1}
+    finally:
+        conn.close()
+
+
+def backup(pl: dict[str, Any], out_path: str = "") -> dict[str, Any]:
+    """把全部提示词导出为 JSONL 备份文件。"""
+    conn = mysql_conn(pl)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT content, lang, category, tags, source, source_url, notes"
+                " FROM prompts ORDER BY id"
+            )
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+    if not out_path:
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        out_path = str(CONFIG_DIR / "backup" / f"prompts-{stamp}.jsonl")
+    out = Path(out_path).expanduser()
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with open(out, "w", encoding="utf-8") as handle:
+        for r in rows:
+            handle.write(
+                json.dumps(
+                    {
+                        "content": r[0],
+                        "lang": r[1],
+                        "category": r[2],
+                        "tags": r[3],
+                        "source": r[4],
+                        "source_url": r[5],
+                        "notes": r[6],
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+    return {"count": len(rows), "path": str(out)}
 
 
 def _sha1(text: str) -> str:
@@ -473,6 +636,16 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--json", action="store_true", help="机器可读输出")
     sub.add_parser("init", help="创建数据表")
     sub.add_parser("stats", help="词库统计")
+    addp = sub.add_parser("add", help="单条入库（自家精品等）")
+    addp.add_argument("content", help="提示词正文")
+    addp.add_argument("--category", default="自家精品", help="分类（默认：自家精品）")
+    addp.add_argument("--tags", default="", help="标签，逗号分隔")
+    addp.add_argument("--requirement", default="", help="原始用户需求（用于双向量检索）")
+    addp.add_argument("--source", default="", help="来源名称")
+    addp.add_argument("--source-url", default="", help="来源链接")
+    addp.add_argument("--notes", default="", help="备注")
+    bk = sub.add_parser("backup", help="导出全部提示词为 JSONL 备份")
+    bk.add_argument("out", nargs="?", default="", help="输出文件（留空=默认备份目录）")
     return parser
 
 
@@ -511,6 +684,29 @@ def main(argv: Optional[list[str]] = None) -> int:
             else:
                 for r in results:
                     print(f"[{r['id']}] ({r.get('category') or '未分类'}) {r['content'][:120]}")
+            return 0
+        if args.command == "add":
+            result = add_prompt(
+                pl,
+                args.content,
+                category=args.category,
+                tags=args.tags,
+                requirement=args.requirement,
+                source=args.source,
+                source_url=args.source_url,
+                notes=args.notes,
+            )
+            if result.get("added"):
+                print(
+                    f"已入库 id={result['id']}，向量 {result.get('vectors')} 个"
+                    f"（分类：{args.category}）"
+                )
+            else:
+                print("未入库：" + str(result.get("reason") or ""))
+            return 0
+        if args.command == "backup":
+            result = backup(pl, args.out)
+            print(f"备份完成：{result['count']} 条 → {result['path']}")
             return 0
     except LibError as exc:
         print("错误：" + str(exc), file=sys.stderr)
