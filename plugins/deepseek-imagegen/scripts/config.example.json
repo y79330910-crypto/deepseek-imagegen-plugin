@@ -105,7 +105,9 @@
     "dragtokens": {
       "base_url": "https://draw.dragtokens.com/v1",
       "api_key": "",
-      "model": "gpt-image-2"
+      "model": "gpt-image-2",
+      "sizes": "1254x1254,1536x1024,1024x1536",
+      "quality": "auto"
     }
   }
 }

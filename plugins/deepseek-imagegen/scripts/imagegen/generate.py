@@ -25,6 +25,8 @@ from .image_utils import (
 )
 from .translator import translate_prompt
 from .vertex import (
+    discover_extra_backend,
+    extra_backend_sizes,
     extra_size_aspect,
     gen_extra_image,
     gen_extra_img2img,
@@ -75,6 +77,7 @@ def generate(
     composition: str = "auto",
     size_policy: str = "",
     backend: str = "",
+    quality: str = "",
     library_enabled: Optional[bool] = None,
     ref_type: str = "auto",
 ) -> dict[str, Any]:
@@ -223,6 +226,8 @@ def generate(
     backend_name = (backend or "").strip().lower()
     if backend_name in ("", "vertex"):
         backend_name = "vertex"
+    if quality and backend_name == "vertex":
+        warnings.append("quality 参数仅备用后端生效，本地 Vertex 出图已忽略。")
     if backend_name == "vertex":
         if init_data is not None:
             data = gen_vertex_img2img(
@@ -258,8 +263,11 @@ def generate(
                 )
                 used_canvas_first = True
     else:
-        size_str = normalize_extra_size(width, height)
+        binfo = discover_extra_backend(cfg, backend_name)
+        size_str = normalize_extra_size(width, height, extra_backend_sizes(cfg, backend_name, model))
         aspect = extra_size_aspect(size_str)
+        if size_str != f"{width}x{height}".lower():
+            warnings.append(f"备用后端按白名单把尺寸调整为 {size_str}（最接近的可用档位）。")
         size_hint = (
             f"（画面尺寸要求：生成 {aspect}、{size_str} 尺寸的图片）"
             if aspect
@@ -278,6 +286,7 @@ def generate(
                 init_data[1],
                 init_data[2],
                 size_str=size_str,
+                quality=quality,
             )
         else:
             data = gen_extra_image(
@@ -288,6 +297,7 @@ def generate(
                 height,
                 model,
                 size_str=size_str,
+                quality=quality,
                 empty_retries=empty_retries,
                 retry_delay_base=retry_delay_base,
             )
@@ -357,6 +367,7 @@ def generate(
     result: dict[str, Any] = {
         "ok": True,
         "backend": backend_name,
+        "quality": quality,
         "size_hint": size_hint if backend_name != "vertex" else "",
         "path": str(out_path),
         "seed": seed,

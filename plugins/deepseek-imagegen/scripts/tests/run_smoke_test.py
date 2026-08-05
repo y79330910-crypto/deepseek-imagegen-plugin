@@ -44,6 +44,10 @@ from imagegen.image_utils import (  # noqa: E402
 )
 from imagegen.translator import translate_prompt  # noqa: E402
 from imagegen.vertex import (  # noqa: E402
+    OPENAI_IMAGE_SIZES,
+    extra_backend_sizes,
+    extra_size_whitelist,
+    normalize_extra_size,
     parse_models_list,
     pick_best_image_model,
     pick_best_text_model,
@@ -337,6 +341,42 @@ class TestLibraryStats(unittest.TestCase):
             self.skipTest(f"演练库不可用：{exc}")
         self.assertEqual(st["active"] + st["archived"], st["total"])
         self.assertEqual(st["archived"], 2000)
+
+
+class TestExtraBackend(unittest.TestCase):
+    def test_whitelist_presets(self):
+        self.assertEqual(
+            extra_size_whitelist({"model": "gpt-image-2-4k超分"}),
+            ["2048x2048", "2560x1440", "3840x2160", "2160x3840", "3696x1584"],
+        )
+        self.assertEqual(
+            extra_size_whitelist({"model": "gpt-image-2-原生4k"}),
+            ["2048x2048", "3840x2160", "2160x3840"],
+        )
+        self.assertEqual(extra_size_whitelist({"model": "gpt-image-2"}), OPENAI_IMAGE_SIZES)
+        self.assertEqual(
+            extra_size_whitelist({"model": "gpt-image-2", "sizes": "1024x1024, 2048x2048"}),
+            ["1024x1024", "2048x2048"],
+        )
+
+    def test_normalize_whitelist(self):
+        self.assertEqual(normalize_extra_size(3840, 2160, ["2048x2048", "3840x2160"]), "3840x2160")
+        self.assertEqual(normalize_extra_size(1024, 1024, ["2048x2048", "3840x2160"]), "2048x2048")
+        self.assertEqual(normalize_extra_size(768, 1408, None), "1024x1536")
+        self.assertEqual(normalize_extra_size(2000, 1000, None), "1536x1024")
+
+    def test_model_override_whitelist(self):
+        cfg = {
+            "extra_backends": {
+                "dragtokens": {
+                    "base_url": "https://x",
+                    "api_key": "sk-test",
+                    "model": "gpt-image-2",
+                }
+            }
+        }
+        self.assertEqual(extra_backend_sizes(cfg, "dragtokens", "gpt-image-2-原生4k"), ["2048x2048", "3840x2160", "2160x3840"])
+        self.assertEqual(extra_backend_sizes(cfg, "dragtokens", ""), OPENAI_IMAGE_SIZES)
 
 
 if __name__ == "__main__":

@@ -49,6 +49,7 @@ def cmd_generate(args: argparse.Namespace) -> dict[str, Any]:
         composition=args.composition,
         size_policy=args.size_policy,
         backend=getattr(args, "backend", ""),
+        quality=getattr(args, "quality", ""),
         library_enabled=getattr(args, "library", None),
         ref_type=getattr(args, "ref_type", "auto"),
     )
@@ -210,6 +211,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--backend",
         default="",
         help="出图后端：vertex(默认，本地代理) / extra_backends 里的备用后端名（如 dragtokens）",
+    )
+    gen.add_argument(
+        "--quality",
+        default="",
+        choices=["", "auto", "low", "medium", "high"],
+        help="渲染质量（仅备用后端生效）：auto/low/medium/high；默认不传（上游默认 auto，ultra 不支持）",
     )
     lib_group = gen.add_mutually_exclusive_group()
     lib_group.add_argument(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import time
@@ -216,6 +217,7 @@ def gen_openai_image(
     height: int,
     *,
     size_str: str = "",
+    quality: str = "",
     empty_retries: int = 2,
     retry_delay_base: float = 6.0,
 ) -> bytes:
@@ -227,6 +229,8 @@ def gen_openai_image(
         "n": 1,
         "size": size_str or f"{width}x{height}",
     }
+    if quality:
+        payload["quality"] = quality
     last_err = ""
     for attempt in range(max(1, empty_retries + 1)):
         status, body, content_type = http(
@@ -350,22 +354,117 @@ def gen_vertex_canvas_first(
 # ============ 备用后端（extra_backends，如 DragToken） ============
 OPENAI_IMAGE_SIZES = ["1254x1254", "1536x1024", "1024x1536"]
 
+# 按模型名关键词预置的尺寸白名单（未在配置里自定义 sizes 时使用）
+EXTRA_BACKEND_SIZE_PRESETS = [
+    ("原生4k", ["2048x2048", "3840x2160", "2160x3840"]),
+    ("4k超分", ["2048x2048", "2560x1440", "3840x2160", "2160x3840", "3696x1584"]),
+]
+EXTRA_QUALITIES = ("auto", "low", "medium", "high")
 
-def normalize_extra_size(width: int, height: int) -> str:
-    """把目标尺寸映射到 OpenAI 标准三档，方向优先：竖版→1024x1536，横版→1536x1024，方形→1254x1254。"""
-    wanted = f"{width}x{height}"
-    if wanted in OPENAI_IMAGE_SIZES:
+
+def parse_size_list(raw: Any) -> list[str]:
+    """把配置里的尺寸白名单解析成列表（支持逗号分隔字符串或数组）。"""
+    if isinstance(raw, list):
+        items = [str(x) for x in raw]
+    else:
+        items = [str(x) for x in str(raw or "").split(",")]
+    out: list[str] = []
+    seen: set[str] = set()
+    for s in items:
+        s = s.strip().lower()
+        if s and s not in seen:
+            seen.add(s)
+            out.append(s)
+    return out
+
+
+def extra_size_whitelist(info: dict[str, Any]) -> list[str]:
+    """备用后端尺寸白名单：配置 sizes > 按模型关键词预置 > 标准三档。"""
+    custom = parse_size_list(info.get("sizes"))
+    if custom:
+        return custom
+    model = str(info.get("model") or "").lower()
+    for keyword, sizes in EXTRA_BACKEND_SIZE_PRESETS:
+        if keyword in model:
+            return sizes
+    return list(OPENAI_IMAGE_SIZES)
+
+
+def _size_ratio(size_str: str) -> float:
+    try:
+        w, h = (int(x) for x in str(size_str).lower().split("x", 1))
+        return w / h if h else 1.0
+    except (ValueError, AttributeError):
+        return 0.0
+
+
+def _size_kind(size_str: str) -> str:
+    try:
+        w, h = (int(x) for x in str(size_str).lower().split("x", 1))
+    except (ValueError, AttributeError):
+        return "square"
+    if h > w:
+        return "portrait"
+    if w > h:
+        return "landscape"
+    return "square"
+
+
+def normalize_extra_size(
+    width: int, height: int, whitelist: Optional[list[str]] = None
+) -> str:
+    """把目标尺寸映射到白名单：方向优先 + 画幅最接近 + 像素量最接近。
+
+    whitelist 缺省时退回 OpenAI 标准三档（保持旧行为）。
+    """
+    sizes = whitelist if whitelist else OPENAI_IMAGE_SIZES
+    if not sizes:
+        raise GenError("备用后端尺寸白名单为空，请检查配置 extra_backends.<name>.sizes。")
+    wanted = f"{width}x{height}".lower()
+    if wanted in sizes:
         return wanted
-    if height > width:
-        return "1024x1536"
-    if width > height:
-        return "1536x1024"
-    return "1254x1254"
+    target_kind = "portrait" if height > width else ("landscape" if width > height else "square")
+    same_kind = [s for s in sizes if _size_kind(s) == target_kind]
+    pool = same_kind or sizes
+    target_ratio = width / height if height else 1.0
+    target_area = width * height
+    best, best_key = "", None
+    for s in pool:
+        sw, sh = 0, 0
+        try:
+            sw, sh = (int(x) for x in s.split("x", 1))
+        except (ValueError, AttributeError):
+            pass
+        key = (abs(_size_ratio(s) - target_ratio), abs(sw * sh - target_area))
+        if best_key is None or key < best_key:
+            best, best_key = s, key
+    return best
 
 
 def extra_size_aspect(size_str: str) -> str:
-    """把标准尺寸字符串转成画幅比例标签（用于写进提示词）。"""
-    return {"1254x1254": "1:1", "1536x1024": "3:2", "1024x1536": "2:3"}.get(str(size_str), "")
+    """把尺寸字符串转成画幅比例标签（用于写进提示词）。"""
+    known = {"1254x1254": "1:1", "1536x1024": "3:2", "1024x1536": "2:3"}
+    key = str(size_str)
+    if key in known:
+        return known[key]
+    try:
+        w, h = (int(x) for x in key.lower().split("x", 1))
+    except (ValueError, AttributeError):
+        return ""
+    if w <= 0 or h <= 0:
+        return ""
+    g = math.gcd(w, h)
+    return f"{w // g}:{h // g}"
+
+
+def extra_backend_sizes(cfg: dict[str, Any], name: str, model_override: str = "") -> list[str]:
+    """备用后端实际尺寸白名单：--model 覆盖优先于配置里的 model。"""
+    backends = cfg.get("extra_backends") or {}
+    info = backends.get(name) if isinstance(backends, dict) else None
+    if not isinstance(info, dict):
+        raise GenError(f"未找到备用后端「{name}」，请检查配置 extra_backends。")
+    eff_model = model_override or str(info.get("model") or "").strip()
+    return extra_size_whitelist({"model": eff_model, "sizes": info.get("sizes")})
 
 
 def discover_extra_backend(cfg: dict[str, Any], name: str) -> dict[str, Any]:
@@ -385,7 +484,20 @@ def discover_extra_backend(cfg: dict[str, Any], name: str) -> dict[str, Any]:
         raise GenError(f"备用后端「{name}」缺少 api_key。")
     if not model:
         raise GenError(f"备用后端「{name}」缺少 model。")
-    return {"name": name, "base_url": base_url, "api_key": api_key, "model": model}
+    sizes = extra_size_whitelist(info)
+    quality = str(info.get("quality") or "").strip().lower()
+    if quality and quality not in EXTRA_QUALITIES:
+        raise GenError(
+            f"备用后端「{name}」的 quality 只支持 {'/'.join(EXTRA_QUALITIES)}（不支持 ultra）。"
+        )
+    return {
+        "name": name,
+        "base_url": base_url,
+        "api_key": api_key,
+        "model": model,
+        "sizes": sizes,
+        "quality": quality,
+    }
 
 
 def gen_extra_image(
@@ -396,13 +508,15 @@ def gen_extra_image(
     height: int,
     model: str = "",
     size_str: str = "",
+    quality: str = "",
     empty_retries: int = 2,
     retry_delay_base: float = 6.0,
 ) -> bytes:
     """备用后端文生图（OpenAI 兼容 /images/generations）。"""
     info = discover_extra_backend(cfg, name)
     model = model or info["model"]
-    size = size_str or normalize_extra_size(width, height)
+    size = size_str or normalize_extra_size(width, height, extra_backend_sizes(cfg, name, model))
+    q = quality or info.get("quality") or ""
     return gen_openai_image(
         info["base_url"],
         info["api_key"],
@@ -411,6 +525,7 @@ def gen_extra_image(
         width,
         height,
         size_str=size,
+        quality=q,
         empty_retries=empty_retries,
         retry_delay_base=retry_delay_base,
     )
@@ -427,13 +542,18 @@ def gen_extra_img2img(
     image_mime: str,
     image_name: str,
     size_str: str = "",
+    quality: str = "",
 ) -> bytes:
     """备用后端图生图（OpenAI 兼容 /images/edits）。"""
     info = discover_extra_backend(cfg, name)
     model = model or info["model"]
-    size_field = size_str or normalize_extra_size(width, height)
+    size_field = size_str or normalize_extra_size(width, height, extra_backend_sizes(cfg, name, model))
+    fields: dict[str, Any] = {"model": model, "prompt": prompt, "n": "1", "size": size_field}
+    q = quality or info.get("quality") or ""
+    if q:
+        fields["quality"] = q
     body, content_type = multipart(
-        {"model": model, "prompt": prompt, "n": "1", "size": size_field},
+        fields,
         [("image", image_name, image_bytes, image_mime)],
     )
     status, resp_body, resp_ctype = http(

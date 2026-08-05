@@ -43,7 +43,7 @@ OUT_DIR_DEFAULT = WEBUI_DIR / "outputs"
 HISTORY_FILE = APP_DIR / "history.json"
 WALLPAPER_FILE = WEBUI_DIR / "wallpaper.png"
 DEFAULT_WALLPAPER = Path(r"C:\Users\yjq\Downloads\【哲风壁纸】洛天依-虚拟歌姬.png")
-HISTORY_LIMIT = 50
+HISTORY_LIMIT = 200
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 MAX_BODY_BYTES = 40 * 1024 * 1024
 IMG_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
@@ -166,6 +166,15 @@ def normalize_edits(edits: dict) -> dict:
     ref = edits.get("reference")
     if isinstance(ref, dict) and isinstance(ref.get("auto_classify"), str):
         ref["auto_classify"] = ref["auto_classify"] in ("true", "on", "1")
+    eb = edits.get("extra_backends")
+    if isinstance(eb, dict):
+        for name, info in eb.items():
+            if not isinstance(info, dict):
+                continue
+            if isinstance(info.get("sizes"), str):
+                info["sizes"] = [s.strip() for s in info["sizes"].split(",") if s.strip()]
+            if info.get("quality") in ("", None):
+                info.pop("quality", None)
     return edits
 
 
@@ -252,6 +261,12 @@ def run_generate(payload: dict) -> dict:
         cmd += ["--library"]
     elif lib == "off":
         cmd += ["--no-library"]
+    backend = str(payload.get("backend") or "").strip().lower()
+    if backend and backend != "vertex":
+        cmd += ["--backend", backend]
+    quality = str(payload.get("quality") or "").strip()
+    if quality and quality != "auto":
+        cmd += ["--quality", quality]
 
     img_path = ""
     b64 = payload.get("image_base64") or ""
@@ -296,8 +311,11 @@ def run_generate(payload: dict) -> dict:
         return {"ok": False, "error": str(res.get("error") or "生成失败")[:800]}
 
     add_history({
+        "id": f"{int(time.time() * 1000)}-{len(load_history())}",
         "path": str(res.get("path") or ""),
         "prompt": prompt,
+        "prompt_used": str((res.get("translator") or {}).get("rewritten") or ""),
+        "backend": str(res.get("backend") or backend or "vertex"),
         "seed": res.get("seed"),
         "size": str(res.get("size") or ""),
         "actual_size": str(res.get("actual_size") or ""),
@@ -454,6 +472,28 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:  # noqa: BLE001
             self._json({"ok": False, "error": f"服务器错误：{exc}"}, 500)
 
+    def do_DELETE(self):  # noqa: N802
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
+        query = urllib.parse.parse_qs(parsed.query)
+        try:
+            if path == "/api/history":
+                items = load_history()
+                target = query.get("id", [""])[0]
+                if target:
+                    items = [it for it in items if str(it.get("id") or "") != target]
+                else:
+                    items = []
+                save_history(items)
+                self._json({"ok": True, "history": items})
+            elif path == "/api/history/clear":
+                save_history([])
+                self._json({"ok": True, "history": []})
+            else:
+                self._json({"ok": False, "error": "未找到该接口。"}, 404)
+        except Exception as exc:  # noqa: BLE001
+            self._json({"ok": False, "error": f"服务器错误：{exc}"}, 500)
+
 
 # ---------- 页面 ----------
 
@@ -545,7 +585,12 @@ textarea{min-height:96px;resize:vertical}
       </div>
     </div>
     <div class="grid">
+      <div class="field"><label>出图后端</label><select id="backend"><option value="vertex">本地 Vertex（默认）</option></select></div>
       <div class="field"><label>尺寸（宽x高，留空=默认）</label><input id="size" placeholder="1024x1024"></div>
+      <div class="field"><label>质量（仅备用后端）</label>
+        <select id="quality"><option value="auto">auto（默认）</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select>
+      </div>
+      <div class="field"><label>批量张数（1~10）</label><input id="count" type="number" min="1" max="10" value="1"></div>
       <div class="field"><label>构图预设</label>
         <select id="composition">
           <option value="auto">自动</option><option value="full-body">全身（竖版）</option><option value="half-body">半身</option><option value="portrait">特写</option><option value="landscape">横版广角</option>
@@ -570,6 +615,7 @@ textarea{min-height:96px;resize:vertical}
         </select>
       </div>
     </div>
+    <div class="row" style="margin-top:4px"><span class="hint">快捷尺寸：</span><span id="sizeChips"></span></div>
     <div class="row">
       <button class="btn main" id="genBtn">开始生成</button>
       <span class="hint">生成可能要 1~3 分钟，请耐心等待</span>
@@ -577,6 +623,7 @@ textarea{min-height:96px;resize:vertical}
     <div id="status"></div>
     <div id="error"></div>
     <div id="result">
+      <div class="gal" id="resultStrip" style="margin-bottom:12px"></div>
       <img id="resultImg" alt="生成结果">
       <div class="row" style="justify-content:center;margin-bottom:10px">
         <a class="btn main small" id="dlLink" download>下载图片</a>
@@ -651,6 +698,17 @@ textarea{min-height:96px;resize:vertical}
         <div class="field"><label>图像模型（留空=自动最佳）</label><input data-path="vertex.model" placeholder="自动"></div>
       </div>
     </div>
+    <div class="set-group"><h4>备用后端（dragtokens）</h4>
+      <div class="grid">
+        <div class="field"><label>地址</label><input data-path="extra_backends.dragtokens.base_url" placeholder="https://draw.dragtokens.com/v1"></div>
+        <div class="field"><label>密钥</label><input data-path="extra_backends.dragtokens.api_key" type="password" placeholder="sk-..."></div>
+        <div class="field"><label>模型</label><input data-path="extra_backends.dragtokens.model" placeholder="gpt-image-2 / gpt-image-2-4k超分 / gpt-image-2-原生4k"></div>
+        <div class="field"><label>尺寸白名单（逗号分隔，留空=按模型自动）</label><input data-path="extra_backends.dragtokens.sizes" placeholder="1254x1254,1536x1024,1024x1536"></div>
+        <div class="field"><label>默认质量</label>
+          <select data-path="extra_backends.dragtokens.quality"><option value="auto">auto</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select>
+        </div>
+      </div>
+    </div>
     <div class="set-group"><h4>参考图识别与壁纸</h4>
       <div class="grid">
         <div class="field"><label>参考图自动分类</label><select data-path="reference.auto_classify"><option value="true">开启</option><option value="false">关闭</option></select></div>
@@ -666,8 +724,15 @@ textarea{min-height:96px;resize:vertical}
   </section>
 
   <section class="glass card" id="page-gallery" style="display:none">
-    <h3>🖼 历史画廊（最近 50 张）</h3>
-    <div class="gal" id="gal"></div>
+    <div class="row" style="justify-content:space-between">
+      <h3 style="margin:0">🖼 历史画廊（最近 200 张）</h3>
+      <button class="btn ghost small" id="galClear">清空历史</button>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <div class="field" style="flex:1;margin:0"><input id="galSearch" placeholder="搜索提示词…"></div>
+      <div class="field" style="margin:0"><select id="galFilter"><option value="">全部后端</option></select></div>
+    </div>
+    <div class="gal" id="gal" style="margin-top:12px"></div>
     <div class="hint" id="galEmpty" style="display:none">还没有生成记录，先去生成一张吧。</div>
   </section>
 </div><script>
@@ -676,8 +741,31 @@ let refBase64=null,refName="";
 const api=async(url,opt)=>{const r=await fetch(url,opt);let j;try{j=await r.json()}catch(e){throw new Error("服务器响应异常")}if(!r.ok||j.ok===false){throw new Error(j.error||"请求失败")}return j};
 const getPath=(o,p)=>{let v=o;for(const k of p.split(".")){if(v==null)return undefined;v=v[k]}return v};
 const setPath=(o,p,v)=>{const ks=p.split(".");let t=o;for(let i=0;i<ks.length-1;i++){if(t[ks[i]]==null||typeof t[ks[i]]!=="object")t[ks[i]]={};t=t[ks[i]]}t[ks[ks.length-1]]=v};
+const esc=s=>String(s??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 function switchTab(name){document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("on",t.dataset.tab===name));["generate","settings","gallery"].forEach(p=>$("page-"+p).style.display=p===name?"":"none");}
 document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{switchTab(t.dataset.tab);if(t.dataset.tab==="gallery")loadHistory()});
+const SIZE_PRESETS={
+ "vertex":["1024x1024","768x1408","1408x768","1536x1024"],
+ "gpt-image-2":["1254x1254","1536x1024","1024x1536"],
+ "4k超分":["2048x2048","2560x1440","3840x2160","2160x3840","3696x1584"],
+ "原生4k":["2048x2048","3840x2160","2160x3840"],
+};
+function presetFor(backend,model){
+ const m=(model||"").toLowerCase();
+ if(m.includes("原生4k"))return SIZE_PRESETS["原生4k"];
+ if(m.includes("4k超分"))return SIZE_PRESETS["4k超分"];
+ if(backend!=="vertex")return SIZE_PRESETS["gpt-image-2"];
+ return SIZE_PRESETS.vertex;
+}
+function renderSizeChips(){
+ const chips=$("sizeChips");chips.innerHTML="";
+ presetFor($("backend").value,$("model").value.trim()).forEach(s=>{
+  const b=document.createElement("button");b.type="button";b.className="btn ghost small";b.style.marginRight="6px";b.style.marginBottom="6px";b.textContent=s;
+  b.onclick=()=>{$("size").value=s};chips.appendChild(b);
+ });
+}
+$("backend").onchange=renderSizeChips;
+$("model").oninput=renderSizeChips;
 const drop=$("drop"),refFile=$("refFile");
 drop.onclick=()=>refFile.click();
 drop.ondragover=e=>{e.preventDefault();drop.classList.add("over")};
@@ -690,23 +778,47 @@ $("refClear").onclick=()=>{refBase64=null;refName="";$("refPreview").style.displ
 function showErr(m){const e=$("error");e.textContent=m;e.style.display="block"}
 function hideErr(){$("error").style.display="none"}
 function setStatus(s){$("status").textContent=s||""}
+function showResult(res){
+ const enc=encodeURIComponent(res.path);
+ $("resultImg").src="/api/image?path="+enc;$("dlLink").href="/api/image?path="+enc;$("dlLink").download="result.png";
+ const ref=res.reference||{};const tr=res.translator||{};const warns=res.warnings||[];
+ let info="<b>后端：</b>"+esc(res.backend||"vertex")+" · <b>文件：</b>"+esc(res.path)+"<br><b>种子：</b>"+esc(res.seed)+"<br><b>尺寸：</b>请求 "+esc(res.size)+" → 实际 "+(res.actual_size||"未知")+" "+(res.size_match?"✓":"✗")+"<br>";
+ if(res.quality)info+="<b>质量：</b>"+esc(res.quality)+"<br>";
+ if(res.composition_preset&&res.composition_preset!=="auto")info+="<b>构图：</b>"+esc(res.composition_preset)+"<br>";
+ if(ref.type)info+="<b>参考图类型：</b>"+esc(ref.label||ref.type)+"（"+(ref.method||"")+"）<br>";
+ if(tr.engine_used&&tr.engine_used!=="off")info+="<b>翻译官：</b>"+esc(tr.engine_used)+(tr.fallback?"（已自动降级）":"")+"<br>";
+ info+="<b>镜像副本：</b>"+esc(res.mirror_path||"无");
+ if(tr.rewritten)info+='<br><details><summary style="cursor:pointer"><b>实际生效提示词</b></summary>'+esc(tr.rewritten)+'</details>';
+ if(tr.original)info+='<details><summary style="cursor:pointer"><b>你的原文</b></summary>'+esc(tr.original)+'</details>';
+ if(warns.length)info+="<br><span class=\"warn\">提示："+esc(warns.join("；"))+"</span>";
+ $("resultInfo").innerHTML=info;$("result").style.display="block";setStatus("✅ 生成完成");
+ $("mirrorNote").textContent=res.mirror_path?"已自动备份一份到镜像目录":"";
+}
+function addStripCard(res){
+ const strip=$("resultStrip");
+ const card=document.createElement("div");card.className="gcard";
+ const enc=encodeURIComponent(res.path);
+ card.innerHTML='<img src="/api/image?path='+enc+'" alt="结果"><div class="gbody"><div class="gm">'+(res.actual_size||"")+' · '+(res.backend||"")+'</div><a class="btn ghost small" href="/api/image?path='+enc+'" download="result.png">下载</a></div>';
+ card.querySelector("img").onclick=()=>{window.open("/api/image?path="+enc)};
+ strip.appendChild(card);
+}
 $("genBtn").onclick=async()=>{
  const prompt=$("prompt").value.trim();if(!prompt){showErr("请先输入提示词");return}
- hideErr();setStatus("⏳ 正在改写提示词并生成，请耐心等待（1~3 分钟）……");$("genBtn").disabled=true;$("result").style.display="none";
+ const count=Math.min(10,Math.max(1,parseInt($("count").value||"1",10)||1));
+ hideErr();$("result").style.display="none";$("resultStrip").innerHTML="";$("genBtn").disabled=true;
+ let firstRes=null,errs=[];
  try{
-  const body={prompt,image_base64:refBase64,image_name:refName,size:$("size").value.trim(),composition:$("composition").value,ref_type:$("ref_type").value,denoise:$("denoise").value.trim(),seed:$("seed").value.trim(),model:$("model").value.trim(),translator:$("translator").value,library:$("library").value};
-  const r=await api("/api/generate",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-  const res=r.result;const enc=encodeURIComponent(res.path);
-  $("resultImg").src="/api/image?path="+enc;$("dlLink").href="/api/image?path="+enc;$("dlLink").download="result.png";
-  const ref=res.reference||{};const tr=res.translator||{};const warns=res.warnings||[];
-  let info="<b>文件：</b>"+res.path+"<br><b>种子：</b>"+res.seed+"<br><b>尺寸：</b>请求 "+res.size+" → 实际 "+(res.actual_size||"未知")+" "+(res.size_match?"✓":"✗")+"<br>";
-  if(res.composition_preset&&res.composition_preset!=="auto")info+="<b>构图：</b>"+res.composition_preset+"<br>";
-  if(ref.type)info+="<b>参考图类型：</b>"+(ref.label||ref.type)+"（"+(ref.method||"")+"）<br>";
-  if(tr.engine_used&&tr.engine_used!=="off")info+="<b>翻译官：</b>"+tr.engine_used+(tr.fallback?"（已自动降级）":"")+"<br>";
-  info+="<b>镜像副本：</b>"+(res.mirror_path||"无");
-  if(warns.length)info+="<br><span class=\"warn\">提示："+warns.join("；")+"</span>";
-  $("resultInfo").innerHTML=info;$("result").style.display="block";setStatus("✅ 生成完成");
-  $("mirrorNote").textContent=res.mirror_path?"已自动备份一份到镜像目录":"";
+  for(let i=1;i<=count;i++){
+   setStatus("⏳ 正在生成第 "+i+"/"+count+" 张，请耐心等待（约 1~3 分钟）…");
+   const body={prompt,image_base64:refBase64,image_name:refName,size:$("size").value.trim(),composition:$("composition").value,ref_type:$("ref_type").value,denoise:$("denoise").value.trim(),seed:(i===1?$("seed").value.trim():""),model:$("model").value.trim(),translator:$("translator").value,library:$("library").value,backend:$("backend").value,quality:$("quality").value};
+   try{
+    const r=await api("/api/generate",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    const res=r.result;
+    if(i===1){firstRes=res;showResult(res)}
+    addStripCard(res);
+   }catch(err){errs.push("第 "+i+" 张失败："+err.message)}
+  }
+  if(count>1){setStatus(errs.length?"⚠ 生成完成，成功 "+(count-errs.length)+" 张，失败 "+errs.length+" 张":"✅ 全部生成完成（共 "+count+" 张）");if(errs.length)showErr(errs.join("\n"));}
   loadHistory();
  }catch(err){showErr("生成失败："+err.message);setStatus("")}
  finally{$("genBtn").disabled=false;}
@@ -714,6 +826,15 @@ $("genBtn").onclick=async()=>{
 async function loadConfig(){const r=await api("/api/config");const c=r.config;
  document.querySelectorAll("[data-path]").forEach(el=>{const v=getPath(c,el.dataset.path);if(v===undefined)return;
   if(el.tagName==="SELECT"){el.value=String(v)}else if(el.type==="checkbox"){el.checked=!!v}else{el.value=Array.isArray(v)?v.join(", "):v}});
+ const names=Object.keys(c.extra_backends||{});
+ const sel=$("backend");const cur=sel.value||"vertex";
+ sel.innerHTML='<option value="vertex">本地 Vertex（默认）</option>'+names.map(n=>'<option value="'+esc(n)+'">'+esc(n)+'</option>').join("");
+ sel.value=names.includes(cur)?cur:"vertex";
+ const all=["vertex"].concat(names.filter(n=>n!=="vertex"));
+ const flt=$("galFilter");const fcur=flt.value;
+ flt.innerHTML='<option value="">全部后端</option>'+all.map(n=>'<option value="'+esc(n)+'">'+esc(n)+'</option>').join("");
+ flt.value=all.includes(fcur)?fcur:"";
+ renderSizeChips();
  $("wallPrev").src="/api/wallpaper?"+Date.now();}
 function collect(){const o={};document.querySelectorAll("[data-path]").forEach(el=>{
  let v;if(el.tagName==="SELECT")v=el.value;else if(el.type==="checkbox")v=el.checked;else v=el.value.trim();
@@ -723,15 +844,22 @@ $("saveBtn").onclick=async()=>{hideErr();try{await api("/api/config",{method:"PO
 $("wallFile").onchange=async()=>{const f=$("wallFile").files[0];if(!f)return;if(f.size>20*1024*1024){showErr("壁纸超过 20MB");return}
  const rd=new FileReader();rd.onload=async()=>{try{const s=String(rd.result);await api("/api/wallpaper",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({image_base64:s.slice(s.indexOf(",")+1)})});
   location.reload()}catch(err){showErr("壁纸保存失败："+err.message)}};rd.readAsDataURL(f)};
-async function loadHistory(){const r=await api("/api/history");const h=r.history;const g=$("gal");g.innerHTML="";
+async function loadHistory(){
+ const r=await api("/api/history");let h=r.history||[];
+ const kw=$("galSearch").value.trim().toLowerCase();const fb=$("galFilter").value;
+ if(fb)h=h.filter(it=>(it.backend||"vertex")===fb);
+ if(kw)h=h.filter(it=>String(it.prompt||"").toLowerCase().includes(kw)||String(it.prompt_used||"").toLowerCase().includes(kw));
+ const g=$("gal");g.innerHTML="";
  if(!h.length){$("galEmpty").style.display="block";return}$("galEmpty").style.display="none";
  h.forEach(it=>{const card=document.createElement("div");card.className="gcard";
-  card.innerHTML="<img src=\"/api/image?path="+encodeURIComponent(it.path||"")+"\" alt=\"缩略图\"><div class=\"gbody\"><div class=\"gp\">"+esc(it.prompt||"")+"</div><div class=\"gm\">种子 "+(it.seed??"-")+" · "+(it.size||"")+" · "+(it.actual_size||"")+"<br>"+(it.ts||"")+"</div><div class=\"gbtn\"><button class=\"btn ghost small\" data-act=\"fill\">回填重掷</button><a class=\"btn ghost small\" href=\"/api/image?path="+encodeURIComponent(it.path||"")+"\" download=\"result.png\">下载</a></div></div>";
+  card.innerHTML='<img src="/api/image?path='+encodeURIComponent(it.path||"")+'" alt="缩略图"><div class="gbody"><div class="gp">'+esc(it.prompt||"")+'</div><div class="gm">'+esc(it.backend||"vertex")+' · 种子 '+(it.seed??"-")+' · '+(it.size||"")+' · '+(it.actual_size||"")+'<br>'+esc(it.ts||"")+'</div>'+(it.prompt_used?'<details class="gm"><summary style="cursor:pointer">生效提示词</summary><div class="gp">'+esc(it.prompt_used)+'</div></details>':"")+'<div class="gbtn"><button class="btn ghost small" data-act="fill">回填重搞</button><button class="btn ghost small" data-act="del">删除</button><a class="btn ghost small" href="/api/image?path='+encodeURIComponent(it.path||"")+'" download="result.png">下载</a></div></div>';
   card.querySelector("img").onclick=()=>{window.open("/api/image?path="+encodeURIComponent(it.path||""))};
-  card.querySelector("[data-act=\"fill\"]").onclick=()=>{fillForm(it);switchTab("generate")};
+  card.querySelector('[data-act="fill"]').onclick=()=>{fillForm(it);switchTab("generate")};
+  card.querySelector('[data-act="del"]').onclick=async()=>{if(!confirm("删除这张历史记录？"))return;try{await api("/api/history?id="+encodeURIComponent(it.id||""),{method:"DELETE"});loadHistory()}catch(e){showErr("删除失败："+e.message)}};
   g.appendChild(card)});}
-function fillForm(it){$("prompt").value=it.prompt||"";if(it.seed!=null&&it.seed!=="")$("seed").value=it.seed;if(it.size)$("size").value=it.size;if(it.composition&&it.composition!=="auto")$("composition").value=it.composition;}
-function esc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}
+$("galSearch").oninput=loadHistory;$("galFilter").onchange=loadHistory;
+$("galClear").onclick=async()=>{if(!confirm("确定清空全部历史记录？此操作不可恢复。"))return;try{await api("/api/history/clear",{method:"DELETE"});loadHistory()}catch(e){showErr("清空失败："+e.message)}};
+function fillForm(it){$("prompt").value=it.prompt||"";if(it.seed!=null&&it.seed!=="")$("seed").value=it.seed;if(it.size)$("size").value=it.size;if(it.composition&&it.composition!=="auto")$("composition").value=it.composition;if(it.backend){const sel=$("backend");if(Array.from(sel.options).some(o=>o.value===it.backend))sel.value=it.backend;renderSizeChips();}}
 loadConfig().catch(e=>showErr("加载配置失败："+e.message));
 </script>
 </body>
