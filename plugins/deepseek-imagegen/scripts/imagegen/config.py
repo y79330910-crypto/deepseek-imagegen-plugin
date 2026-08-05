@@ -101,6 +101,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "api_key": "",
         "model": "",
     },
+    "extra_backends": {},
 }
 
 

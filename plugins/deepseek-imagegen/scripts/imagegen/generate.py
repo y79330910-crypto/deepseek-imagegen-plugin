@@ -25,6 +25,8 @@ from .image_utils import (
 )
 from .translator import translate_prompt
 from .vertex import (
+    gen_extra_image,
+    gen_extra_img2img,
     gen_vertex,
     gen_vertex_canvas_first,
     gen_vertex_img2img,
@@ -70,6 +72,7 @@ def generate(
     translator: str = "auto",
     composition: str = "auto",
     size_policy: str = "",
+    backend: str = "",
     library_enabled: Optional[bool] = None,
     ref_type: str = "auto",
 ) -> dict[str, Any]:
@@ -214,32 +217,61 @@ def generate(
     used_canvas_first = False
     size_actions: list[str] = []
 
-    # ---- Vertex 出图：图生图直走 edits；文生图仅 3:2 直出，其余画布优先
-    if init_data is not None:
-        data = gen_vertex_img2img(
-            cfg,
-            final_prompt.strip(),
-            width,
-            height,
-            model,
-            init_data[0],
-            init_data[1],
-            init_data[2],
-        )
-    else:
-        if aspect_ratio_key(width, height) == (3, 2) or (width, height) == (1408, 768):
-            data = gen_vertex(
+    # ---- 出图后端：默认 vertex（本地代理）；其他走 extra_backends 备用后端
+    backend_name = (backend or "").strip().lower()
+    if backend_name in ("", "vertex"):
+        backend_name = "vertex"
+    if backend_name == "vertex":
+        if init_data is not None:
+            data = gen_vertex_img2img(
                 cfg,
                 final_prompt.strip(),
                 width,
                 height,
                 model,
-                empty_retries=empty_retries,
-                retry_delay_base=retry_delay_base,
+                init_data[0],
+                init_data[1],
+                init_data[2],
             )
         else:
-            data = gen_vertex_canvas_first(
+            if aspect_ratio_key(width, height) == (3, 2) or (width, height) == (1408, 768):
+                data = gen_vertex(
+                    cfg,
+                    final_prompt.strip(),
+                    width,
+                    height,
+                    model,
+                    empty_retries=empty_retries,
+                    retry_delay_base=retry_delay_base,
+                )
+            else:
+                data = gen_vertex_canvas_first(
+                    cfg,
+                    final_prompt.strip(),
+                    width,
+                    height,
+                    model,
+                    empty_retries=empty_retries,
+                    retry_delay_base=retry_delay_base,
+                )
+                used_canvas_first = True
+    else:
+        if init_data is not None:
+            data = gen_extra_img2img(
                 cfg,
+                backend_name,
+                final_prompt.strip(),
+                width,
+                height,
+                model,
+                init_data[0],
+                init_data[1],
+                init_data[2],
+            )
+        else:
+            data = gen_extra_image(
+                cfg,
+                backend_name,
                 final_prompt.strip(),
                 width,
                 height,
@@ -247,7 +279,6 @@ def generate(
                 empty_retries=empty_retries,
                 retry_delay_base=retry_delay_base,
             )
-            used_canvas_first = True
 
     # ---- 真实尺寸校验 + 画布优先兜底（文生图且尺寸不符时重试）
     actual_size = probe_image_size_ext(data, "")
@@ -257,6 +288,7 @@ def generate(
         not match["ok"]
         and actual_size is not None
         and init_data is None
+        and backend_name == "vertex"
     ):
         from .image_utils import canvas_size_for
 
@@ -312,7 +344,7 @@ def generate(
 
     result: dict[str, Any] = {
         "ok": True,
-        "backend": "vertex",
+        "backend": backend_name,
         "path": str(out_path),
         "seed": seed,
         "size": f"{width}x{height}",

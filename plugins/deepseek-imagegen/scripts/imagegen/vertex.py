@@ -345,3 +345,101 @@ def gen_vertex_canvas_first(
                 continue
             raise
     raise GenError(last_err or "画布优先生成失败（上游未返回图片）")
+
+
+# ============ ?????extra_backends?? DragToken? ============
+OPENAI_IMAGE_SIZES = ["1024x1024", "1536x1024", "1024x1536"]
+
+
+def normalize_extra_size(width: int, height: int) -> str:
+    """???????? OpenAI ??????????????????"""
+    wanted = f"{width}x{height}"
+    if wanted in OPENAI_IMAGE_SIZES:
+        return wanted
+    best = "1024x1024"
+    best_area = width * height
+    best_dist = abs(best_area - 1024 * 1024)
+    for s in OPENAI_IMAGE_SIZES:
+        w, h = (int(x) for x in s.split("x"))
+        dist = abs(best_area - w * h)
+        if dist < best_dist:
+            best, best_dist = s, dist
+    return best
+
+
+def discover_extra_backend(cfg: dict[str, Any], name: str) -> dict[str, Any]:
+    """?????? extra_backends.<name>????????"""
+    backends = cfg.get("extra_backends") or {}
+    if not isinstance(backends, dict):
+        backends = {}
+    info = backends.get(name)
+    if not isinstance(info, dict):
+        raise GenError(f"????????{name}??????? extra_backends?")
+    base_url = str(info.get("base_url") or "").strip().rstrip("/")
+    api_key = str(info.get("api_key") or "").strip()
+    model = str(info.get("model") or "").strip()
+    if not base_url:
+        raise GenError(f"?????{name}??? base_url?")
+    if not api_key:
+        raise GenError(f"?????{name}??? api_key?")
+    if not model:
+        raise GenError(f"?????{name}??? model?")
+    return {"name": name, "base_url": base_url, "api_key": api_key, "model": model}
+
+
+def gen_extra_image(
+    cfg: dict[str, Any],
+    name: str,
+    prompt: str,
+    width: int,
+    height: int,
+    model: str = "",
+    empty_retries: int = 2,
+    retry_delay_base: float = 6.0,
+) -> bytes:
+    """????????OpenAI ?? /images/generations??"""
+    info = discover_extra_backend(cfg, name)
+    model = model or info["model"]
+    return gen_openai_image(
+        info["base_url"],
+        info["api_key"],
+        model,
+        prompt,
+        width,
+        height,
+        size_str=normalize_extra_size(width, height),
+        empty_retries=empty_retries,
+        retry_delay_base=retry_delay_base,
+    )
+
+
+def gen_extra_img2img(
+    cfg: dict[str, Any],
+    name: str,
+    prompt: str,
+    width: int,
+    height: int,
+    model: str,
+    image_bytes: bytes,
+    image_mime: str,
+    image_name: str,
+) -> bytes:
+    """????????OpenAI ?? /images/edits??"""
+    info = discover_extra_backend(cfg, name)
+    model = model or info["model"]
+    size_field = normalize_extra_size(width, height)
+    body, content_type = multipart(
+        {"model": model, "prompt": prompt, "n": "1", "size": size_field},
+        [("image", image_name, image_bytes, image_mime)],
+    )
+    status, resp_body, resp_ctype = http(
+        f"{info['base_url'].rstrip('/')}/images/edits",
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {info['api_key']}",
+            "Content-Type": content_type,
+            "User-Agent": f"{APP_NAME}/1.0",
+        },
+        raw_body=body,
+    )
+    return _extract_image_from_response(resp_body)

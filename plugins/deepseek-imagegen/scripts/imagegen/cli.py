@@ -48,6 +48,7 @@ def cmd_generate(args: argparse.Namespace) -> dict[str, Any]:
         translator=args.translator,
         composition=args.composition,
         size_policy=args.size_policy,
+        backend=getattr(args, "backend", ""),
         library_enabled=getattr(args, "library", None),
         ref_type=getattr(args, "ref_type", "auto"),
     )
@@ -204,6 +205,11 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         choices=["", "strict", "auto", "warn"],
         help="尺寸不符策略：strict 严格报错 / auto 自动兜底重试(默认) / warn 仅警告",
+    )
+    gen.add_argument(
+        "--backend",
+        default="",
+        help="出图后端：vertex(默认，本地代理) / extra_backends 里的备用后端名（如 dragtokens）",
     )
     lib_group = gen.add_mutually_exclusive_group()
     lib_group.add_argument(
