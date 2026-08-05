@@ -193,6 +193,143 @@ def build_reference_suffix(
     return "\n".join(lines)
 
 
+# ---------- 多参考图（多图分工） ----------
+
+MAX_REF_IMAGES = 4
+AUTO_ROLE_ORDER = ["outfit", "pose", "style", "scene", "object"]
+
+ROLE_QUESTION_TMPL = (
+    "这张图片作为生图参考图的「{label}」用途。请只回答 JSON，不要其他文字："
+    '{{"preserve":"一句话列出这张图里最需要保持的{label}关键特征"}}'
+)
+
+
+def _parse_preserve_result(raw: str) -> str:
+    """从视觉桥接结果里提取 preserve 一句话（不要求 type 字段）。"""
+    if not raw:
+        return ""
+    block = re.search(r"\{.*\}", raw, re.S)
+    candidates = [raw.strip()]
+    if block:
+        candidates.append(block.group(0))
+    for candidate in candidates:
+        try:
+            data = json.loads(candidate)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if isinstance(data, dict):
+            return str(data.get("preserve") or "").strip()
+    return ""
+
+
+def extract_reference_features(
+    image: str,
+    explicit_role: str = "",
+    cfg: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """按用途提取参考图关键特征：显式用途走用途提问，auto 走自动分类。
+
+    返回 {ok, type, preserve, method, error}；识别失败时降级（preserve 为空、type 保留显式用途）。
+    """
+    cfg = cfg if cfg is not None else {}
+    role = (explicit_role or "").strip().lower()
+    if role and role != "auto":
+        try:
+            role = validate_ref_type(role)
+        except GenError:
+            role = "auto"
+    ref_cfg = cfg.get("reference") or {}
+    if not isinstance(ref_cfg, dict):
+        ref_cfg = {}
+    if not bool(ref_cfg.get("auto_classify", True)):
+        method = "manual" if role and role != "auto" else "disabled"
+        return {"ok": False, "type": role, "preserve": "", "method": method,
+                "error": "auto_classify=false，已跳过特征提取"}
+    script = find_vision_bridge(cfg)
+    if not script:
+        method = "manual" if role and role != "auto" else "fallback"
+        return {"ok": False, "type": role, "preserve": "", "method": method,
+                "error": "vision_bridge 未找到"}
+    timeout = int(ref_cfg.get("classify_timeout") or 90)
+    if role and role != "auto":
+        label = REF_TYPE_LABELS.get(role, role)
+        question = ROLE_QUESTION_TMPL.format(label=label)
+        try:
+            proc = subprocess.run(
+                [sys.executable, script, "ask", image, question, "--json"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=timeout,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "type": role, "preserve": "", "method": "fallback",
+                    "error": f"vision_bridge 调用失败：{exc}"[:200]}
+        if proc.returncode != 0:
+            return {"ok": False, "type": role, "preserve": "", "method": "fallback",
+                    "error": proc.stderr.strip()[:200]}
+        try:
+            data = json.loads(proc.stdout)
+            raw = str((data or {}).get("result") or "").strip()
+        except (json.JSONDecodeError, TypeError):
+            raw = proc.stdout.strip()
+        preserve = _parse_preserve_result(raw)
+        return {"ok": bool(preserve), "type": role, "preserve": preserve,
+                "method": "manual", "error": "" if preserve else "用途特征识别结果无法解析"}
+    return classify_reference(image, cfg)
+
+
+def build_multi_reference_brief(
+    items: list[dict[str, Any]],
+    avoid: Optional[list[str]] = None,
+) -> str:
+    """多图分工简报：每张图一段 + 按用途的隔离硬规则 + 禁止项。"""
+    avoid = avoid or []
+    lines = ["【参考图简报】", f"参考图数量：{len(items)}，多图分工如下："]
+    for idx, it in enumerate(items, 1):
+        role = str(it.get("type") or "generic")
+        tpl = REFERENCE_TEMPLATES.get(role) or REFERENCE_TEMPLATES["generic"]
+        label = REF_TYPE_LABELS.get(role, REF_TYPE_LABELS["generic"])
+        preserve = str(it.get("preserve") or "").strip()
+        keep = tpl["keep"]
+        if preserve:
+            keep += "\n关键特征（必须逐项保留）：" + preserve
+        lines.append(f"图{idx}（{label}）：{keep}")
+    lines.append("多图分工硬性规则（必须遵守）：")
+    lines.append("- 每张图只提供自己声明的用途特征，图与图之间互不借用；")
+    by_role: dict[str, list[int]] = {}
+    for idx, it in enumerate(items, 1):
+        by_role.setdefault(str(it.get("type") or "generic"), []).append(idx)
+    for role, idxs in by_role.items():
+        label = REF_TYPE_LABELS.get(role, REF_TYPE_LABELS["generic"])
+        lines.append(f"- 用途为「{label}」的特征只取{'、'.join(f'图{i}' for i in idxs)}提供，其他图不得改变它；")
+    lines.append("- 除声明用途为姿势/场景/构图/物品的图之外，姿势、角度、背景与光线一律全新创作；")
+    if avoid:
+        lines.append("用户划除的锚点/禁止项（不作为保留项）：" + "、".join(avoid))
+    return "\n".join(lines)
+
+
+def build_multi_reference_suffix(
+    items: list[dict[str, Any]],
+    avoid: Optional[list[str]] = None,
+) -> str:
+    """多图最终提示词硬约束后缀（防翻译官漏掉分工约束）。"""
+    avoid = avoid or []
+    lines = ["（参考图硬性要求，必须遵守）"]
+    lines.append(f"多图分工：共 {len(items)} 张参考图，各图只提供自己声明的用途特征，互不借用：")
+    for idx, it in enumerate(items, 1):
+        role = str(it.get("type") or "generic")
+        tpl = REFERENCE_TEMPLATES.get(role) or REFERENCE_TEMPLATES["generic"]
+        label = REF_TYPE_LABELS.get(role, REF_TYPE_LABELS["generic"])
+        preserve = str(it.get("preserve") or "").strip()
+        keep = tpl["keep"]
+        if preserve:
+            keep += "\n关键特征（必须逐项保留）：" + preserve
+        lines.append(f"图{idx}（{label}）：{keep}")
+    lines.append("除声明用途为姿势/场景/构图/物品的图之外，姿势、角度、背景与光线一律全新创作。")
+    if avoid:
+        lines.append("用户划除（不作为保留项）：" + "、".join(avoid) + "；画面中不要出现上述元素。")
+    return "\n".join(lines)
+
+
 DEFAULT_VISION_ROOTS = [
     Path.home() / ".codex" / "plugins" / "cache" / "deepseek-vision",
 ]

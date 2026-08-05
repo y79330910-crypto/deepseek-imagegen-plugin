@@ -268,25 +268,44 @@ def run_generate(payload: dict) -> dict:
     if quality and quality != "auto":
         cmd += ["--quality", quality]
 
-    img_path = ""
-    b64 = payload.get("image_base64") or ""
-    if b64:
+    saved_refs: list[dict] = []
+    images_payload = payload.get("images")
+    if not isinstance(images_payload, list) or not images_payload:
+        b64 = payload.get("image_base64") or ""
+        if b64:
+            images_payload = [{
+                "name": str(payload.get("image_name") or "ref.png"),
+                "base64": b64,
+                "role": str(payload.get("ref_type") or "auto"),
+            }]
+    for idx, img in enumerate(images_payload or []):
+        if idx >= 4:
+            break
+        if not isinstance(img, dict):
+            continue
+        b64 = img.get("base64") or ""
+        if not b64:
+            continue
         try:
             data = base64.b64decode(b64)
         except Exception:
             return {"ok": False, "error": "参考图数据无法解码，请重新上传。"}
         if len(data) > MAX_UPLOAD_BYTES:
             return {"ok": False, "error": "参考图超过 20MB 限制。"}
-        name = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(payload.get("image_name") or "ref.png"))
+        name = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(img.get("name") or "ref.png"))
         if not Path(name).suffix.lower() in IMG_EXTS:
             name += ".png"
         UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-        img_path = str(UPLOAD_DIR / f"{int(time.time() * 1000)}_{name}")
+        img_path = str(UPLOAD_DIR / f"{int(time.time() * 1000)}_{idx}_{name}")
         try:
             Path(img_path).write_bytes(data)
         except Exception as exc:
             return {"ok": False, "error": f"参考图保存失败：{exc}"}
         cmd += ["--image", img_path]
+        role = str(img.get("role") or "").strip()
+        if role and role != "auto":
+            cmd += ["--ref-role", role]
+        saved_refs.append({"path": img_path, "role": role or "auto"})
 
     env = dict(os.environ)
     env.setdefault("PYTHONIOENCODING", "utf-8")
@@ -313,6 +332,7 @@ def run_generate(payload: dict) -> dict:
     add_history({
         "id": f"{int(time.time() * 1000)}-{len(load_history())}",
         "path": str(res.get("path") or ""),
+        "refs": saved_refs,
         "prompt": prompt,
         "prompt_used": str((res.get("translator") or {}).get("rewritten") or ""),
         "backend": str(res.get("backend") or backend or "vertex"),
@@ -576,11 +596,12 @@ textarea{min-height:96px;resize:vertical}
       <textarea id="prompt" placeholder="例如：洛天依在樱花树下弹着古筝，全身构图，日系插画风格，金色夕阳……"></textarea>
     </div>
     <div class="field">
-      <label>参考图（可选，决定角色/风格/服装等；PNG/JPG/WebP ≤20MB）</label>
-      <div class="drop" id="drop"><span id="dropText">拖拽图片到这里，或点击选择</span><img id="refPreview" style="display:none" alt="参考图预览"></div>
-      <input type="file" id="refFile" accept=".png,.jpg,.jpeg,.webp" hidden>
+      <label>参考图（可多张，最多 4 张；每张可选用途：角色/服装/风格/姿势/场景/构图/物品）</label>
+      <div class="drop" id="drop"><span id="dropText">拖拽图片到这里，或点击选择（可多张）</span></div>
+      <input type="file" id="refFile" accept=".png,.jpg,.jpeg,.webp" multiple hidden>
+      <div class="gal" id="refList" style="margin-top:10px"></div>
       <div class="row" style="margin-top:8px">
-        <button class="btn ghost small" id="refClear" type="button">清除参考图</button>
+        <button class="btn ghost small" id="refClear" type="button">清空参考图</button>
         <span class="hint" id="refName"></span>
       </div>
     </div>
@@ -737,7 +758,8 @@ textarea{min-height:96px;resize:vertical}
   </section>
 </div><script>
 const $=id=>document.getElementById(id);
-let refBase64=null,refName="";
+let refs=[];
+const ROLE_OPTIONS=[["auto","自动"],["character","角色"],["outfit","服装"],["style","风格"],["pose","姿势"],["scene","场景"],["composition","构图"],["object","物品"]];
 const api=async(url,opt)=>{const r=await fetch(url,opt);let j;try{j=await r.json()}catch(e){throw new Error("服务器响应异常")}if(!r.ok||j.ok===false){throw new Error(j.error||"请求失败")}return j};
 const getPath=(o,p)=>{let v=o;for(const k of p.split(".")){if(v==null)return undefined;v=v[k]}return v};
 const setPath=(o,p,v)=>{const ks=p.split(".");let t=o;for(let i=0;i<ks.length-1;i++){if(t[ks[i]]==null||typeof t[ks[i]]!=="object")t[ks[i]]={};t=t[ks[i]]}t[ks[ks.length-1]]=v};
@@ -770,11 +792,57 @@ const drop=$("drop"),refFile=$("refFile");
 drop.onclick=()=>refFile.click();
 drop.ondragover=e=>{e.preventDefault();drop.classList.add("over")};
 drop.ondragleave=()=>drop.classList.remove("over");
-drop.ondrop=e=>{e.preventDefault();drop.classList.remove("over");if(e.dataTransfer.files[0])handleRef(e.dataTransfer.files[0])};
-refFile.onchange=()=>{if(refFile.files[0])handleRef(refFile.files[0])};
-function handleRef(f){if(!/\.(png|jpe?g|webp)$/i.test(f.name)){showErr("仅支持 PNG/JPG/WebP");return}if(f.size>20*1024*1024){showErr("参考图超过 20MB");return}
- const rd=new FileReader();rd.onload=()=>{const s=String(rd.result);refBase64=s.slice(s.indexOf(",")+1);refName=f.name;$("refPreview").src=rd.result;$("refPreview").style.display="block";$("dropText").textContent="已选择参考图："+f.name;$("refName").textContent=f.name;hideErr()};rd.readAsDataURL(f);}
-$("refClear").onclick=()=>{refBase64=null;refName="";$("refPreview").style.display="none";$("refPreview").src="";$("dropText").textContent="拖拽图片到这里，或点击选择";$("refName").textContent="";refFile.value=""};
+drop.ondrop=e=>{e.preventDefault();drop.classList.remove("over");if(e.dataTransfer.files.length)handleRefs(e.dataTransfer.files)};
+refFile.onchange=()=>{if(refFile.files.length)handleRefs(refFile.files);refFile.value=""};
+function handleRefs(files){
+ const arr=[...files].filter(f=>/\.(png|jpe?g|webp)$/i.test(f.name));
+ if(!arr.length){showErr("仅支持 PNG/JPG/WebP");return}
+ const room=4-refs.length;
+ if(arr.length>room){showErr("参考图最多 4 张，多余的已忽略");arr.length=room}
+ if(!arr.length){renderRefList();return}
+ let pending=arr.length;
+ arr.forEach(f=>{
+  if(f.size>20*1024*1024){showErr("参考图超过 20MB："+f.name);pending--;if(!pending)renderRefList();return}
+  const rd=new FileReader();
+  rd.onload=()=>{const s=String(rd.result);
+   refs.push({name:f.name,base64:s.slice(s.indexOf(",")+1),dataUrl:s,role:refs.length===1?"character":"auto"});
+   pending--;if(!pending)renderRefList()};
+  rd.readAsDataURL(f);
+ });
+}
+function renderRefList(){
+ const box=$("refList");box.innerHTML="";
+ if(!refs.length){$("refName").textContent="";$("dropText").textContent="拖拽图片到这里，或点击选择（可多张）";return}
+ $("dropText").textContent="已选 "+refs.length+" 张参考图（再拖可继续添加，最多 4 张）";
+ refs.forEach((r,idx)=>{
+  const card=document.createElement("div");card.className="gcard";
+  const img=document.createElement("img");img.src=r.dataUrl||"";img.alt="参考图";img.onclick=()=>{window.open(img.src)};
+  const sel=document.createElement("select");
+  ROLE_OPTIONS.forEach(o=>{const op=document.createElement("option");op.value=o[0];op.textContent=o[1];if(o[0]===r.role)op.selected=true;sel.appendChild(op)});
+  sel.onchange=()=>{r.role=sel.value};
+  const del=document.createElement("button");del.type="button";del.className="btn ghost small";del.textContent="删除";
+  del.onclick=()=>{refs.splice(idx,1);renderRefList()};
+  const body=document.createElement("div");body.className="gbody";
+  const lab=document.createElement("div");lab.className="gm";lab.textContent="图"+(idx+1);
+  body.appendChild(lab);body.appendChild(sel);body.appendChild(del);
+  card.appendChild(img);card.appendChild(body);
+  box.appendChild(card);
+ });
+}
+$("refClear").onclick=()=>{refs=[];renderRefList()};
+async function restoreRefs(list){
+ refs=[];
+ for(const it of (list||[])){
+  try{
+   const resp=await fetch("/api/image?path="+encodeURIComponent(it.path||""));
+   const blob=await resp.blob();
+   const dataUrl=await new Promise((res,rej)=>{const rd=new FileReader();rd.onload=()=>res(String(rd.result));rd.onerror=rej;rd.readAsDataURL(blob)});
+   const s=String(dataUrl);
+   refs.push({name:(it.path||"ref.png").split(/[\\/]/).pop()||"ref.png",base64:s.slice(s.indexOf(",")+1),dataUrl:s,role:it.role||(refs.length===0?"character":"auto")});
+  }catch(e){}
+ }
+ renderRefList();
+}
 function showErr(m){const e=$("error");e.textContent=m;e.style.display="block"}
 function hideErr(){$("error").style.display="none"}
 function setStatus(s){$("status").textContent=s||""}
@@ -785,7 +853,8 @@ function showResult(res){
  let info="<b>后端：</b>"+esc(res.backend||"vertex")+" · <b>文件：</b>"+esc(res.path)+"<br><b>种子：</b>"+esc(res.seed)+"<br><b>尺寸：</b>请求 "+esc(res.size)+" → 实际 "+(res.actual_size||"未知")+" "+(res.size_match?"✓":"✗")+"<br>";
  if(res.quality)info+="<b>质量：</b>"+esc(res.quality)+"<br>";
  if(res.composition_preset&&res.composition_preset!=="auto")info+="<b>构图：</b>"+esc(res.composition_preset)+"<br>";
- if(ref.type)info+="<b>参考图类型：</b>"+esc(ref.label||ref.type)+"（"+(ref.method||"")+"）<br>";
+ if(ref.items&&ref.items.length>1)info+="<b>参考图分工：</b>"+ref.items.map((it,i)=>"图"+(i+1)+"·"+esc(it.label||it.type)).join(" + ")+"<br>";
+ else if(ref.type)info+="<b>参考图类型：</b>"+esc(ref.label||ref.type)+"（"+(ref.method||"")+"）<br>";
  if(tr.engine_used&&tr.engine_used!=="off")info+="<b>翻译官：</b>"+esc(tr.engine_used)+(tr.fallback?"（已自动降级）":"")+"<br>";
  info+="<b>镜像副本：</b>"+esc(res.mirror_path||"无");
  if(tr.rewritten)info+='<br><details><summary style="cursor:pointer"><b>实际生效提示词</b></summary>'+esc(tr.rewritten)+'</details>';
@@ -810,7 +879,7 @@ $("genBtn").onclick=async()=>{
  try{
   for(let i=1;i<=count;i++){
    setStatus("⏳ 正在生成第 "+i+"/"+count+" 张，请耐心等待（约 1~3 分钟）…");
-   const body={prompt,image_base64:refBase64,image_name:refName,size:$("size").value.trim(),composition:$("composition").value,ref_type:$("ref_type").value,denoise:$("denoise").value.trim(),seed:(i===1?$("seed").value.trim():""),model:$("model").value.trim(),translator:$("translator").value,library:$("library").value,backend:$("backend").value,quality:$("quality").value};
+   const body={prompt,images:refs.map(r=>({name:r.name,base64:r.base64,role:r.role})),size:$("size").value.trim(),composition:$("composition").value,ref_type:$("ref_type").value,denoise:$("denoise").value.trim(),seed:(i===1?$("seed").value.trim():""),model:$("model").value.trim(),translator:$("translator").value,library:$("library").value,backend:$("backend").value,quality:$("quality").value};
    try{
     const r=await api("/api/generate",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
     const res=r.result;
@@ -852,14 +921,14 @@ async function loadHistory(){
  const g=$("gal");g.innerHTML="";
  if(!h.length){$("galEmpty").style.display="block";return}$("galEmpty").style.display="none";
  h.forEach(it=>{const card=document.createElement("div");card.className="gcard";
-  card.innerHTML='<img src="/api/image?path='+encodeURIComponent(it.path||"")+'" alt="缩略图"><div class="gbody"><div class="gp">'+esc(it.prompt||"")+'</div><div class="gm">'+esc(it.backend||"vertex")+' · 种子 '+(it.seed??"-")+' · '+(it.size||"")+' · '+(it.actual_size||"")+'<br>'+esc(it.ts||"")+'</div>'+(it.prompt_used?'<details class="gm"><summary style="cursor:pointer">生效提示词</summary><div class="gp">'+esc(it.prompt_used)+'</div></details>':"")+'<div class="gbtn"><button class="btn ghost small" data-act="fill">回填重搞</button><button class="btn ghost small" data-act="del">删除</button><a class="btn ghost small" href="/api/image?path='+encodeURIComponent(it.path||"")+'" download="result.png">下载</a></div></div>';
+  card.innerHTML='<img src="/api/image?path='+encodeURIComponent(it.path||"")+'" alt="缩略图"><div class="gbody"><div class="gp">'+esc(it.prompt||"")+'</div><div class="gm">'+esc(it.backend||"vertex")+' · 种子 '+(it.seed??"-")+' · '+(it.size||"")+' · '+(it.actual_size||"")+(it.refs&&it.refs.length?' · 参考'+(it.refs.length)+'张':'')+'<br>'+esc(it.ts||"")+'</div>'+(it.prompt_used?'<details class="gm"><summary style="cursor:pointer">生效提示词</summary><div class="gp">'+esc(it.prompt_used)+'</div></details>':"")+'<div class="gbtn"><button class="btn ghost small" data-act="fill">回填重搞</button><button class="btn ghost small" data-act="del">删除</button><a class="btn ghost small" href="/api/image?path='+encodeURIComponent(it.path||"")+'" download="result.png">下载</a></div></div>';
   card.querySelector("img").onclick=()=>{window.open("/api/image?path="+encodeURIComponent(it.path||""))};
   card.querySelector('[data-act="fill"]').onclick=()=>{fillForm(it);switchTab("generate")};
   card.querySelector('[data-act="del"]').onclick=async()=>{if(!confirm("删除这张历史记录？"))return;try{await api("/api/history?id="+encodeURIComponent(it.id||""),{method:"DELETE"});loadHistory()}catch(e){showErr("删除失败："+e.message)}};
   g.appendChild(card)});}
 $("galSearch").oninput=loadHistory;$("galFilter").onchange=loadHistory;
 $("galClear").onclick=async()=>{if(!confirm("确定清空全部历史记录？此操作不可恢复。"))return;try{await api("/api/history/clear",{method:"DELETE"});loadHistory()}catch(e){showErr("清空失败："+e.message)}};
-function fillForm(it){$("prompt").value=it.prompt||"";if(it.seed!=null&&it.seed!=="")$("seed").value=it.seed;if(it.size)$("size").value=it.size;if(it.composition&&it.composition!=="auto")$("composition").value=it.composition;if(it.backend){const sel=$("backend");if(Array.from(sel.options).some(o=>o.value===it.backend))sel.value=it.backend;renderSizeChips();}}
+function fillForm(it){$("prompt").value=it.prompt||"";if(it.seed!=null&&it.seed!=="")$("seed").value=it.seed;if(it.size)$("size").value=it.size;if(it.composition&&it.composition!=="auto")$("composition").value=it.composition;if(it.backend){const sel=$("backend");if(Array.from(sel.options).some(o=>o.value===it.backend))sel.value=it.backend;renderSizeChips();}if(it.refs&&it.refs.length){restoreRefs(it.refs)}else{refs=[];renderRefList();}}
 loadConfig().catch(e=>showErr("加载配置失败："+e.message));
 </script>
 </body>

@@ -297,17 +297,16 @@ def gen_vertex_img2img(
     width: int,
     height: int,
     model: str,
-    image_bytes: bytes,
-    image_mime: str,
-    image_name: str,
+    images: list[tuple[bytes, str, str]],
 ) -> bytes:
-    """调用本地代理 /images/edits 做图生图 / 画布优先 / 参考图。"""
+    """调用本地代理 /images/edits 做图生图 / 画布优先 / 参考图（支持多图）。"""
     info = discover_vertex(cfg)
     model = model or info["model"]
     size_field = f"{width}x{height}" if width and height else "auto"
+    files = [("image", name, data, mime) for (data, mime, name) in images]
     body, content_type = multipart(
         {"model": model, "prompt": prompt, "n": "1", "size": size_field},
-        [("image", image_name, image_bytes, image_mime)],
+        files,
     )
     status, resp_body, resp_ctype = http(
         f"{info['base_url'].rstrip('/')}/images/edits",
@@ -340,7 +339,7 @@ def gen_vertex_canvas_first(
     for attempt in range(max(1, empty_retries + 1)):
         try:
             return gen_vertex_img2img(
-                cfg, prompt, canvas_w, canvas_h, model, canvas, "image/png", "canvas.png"
+                cfg, prompt, canvas_w, canvas_h, model, [(canvas, "image/png", "canvas.png")]
             )
         except EmptyImageError as exc:
             last_err = str(exc)
@@ -538,13 +537,11 @@ def gen_extra_img2img(
     width: int,
     height: int,
     model: str,
-    image_bytes: bytes,
-    image_mime: str,
-    image_name: str,
+    images: list[tuple[bytes, str, str]],
     size_str: str = "",
     quality: str = "",
 ) -> bytes:
-    """备用后端图生图（OpenAI 兼容 /images/edits）。"""
+    """备用后端图生图（OpenAI 兼容 /images/edits，支持多图）。"""
     info = discover_extra_backend(cfg, name)
     model = model or info["model"]
     size_field = size_str or normalize_extra_size(width, height, extra_backend_sizes(cfg, name, model))
@@ -552,9 +549,10 @@ def gen_extra_img2img(
     q = quality or info.get("quality") or ""
     if q:
         fields["quality"] = q
+    files = [("image", name, data, mime) for (data, mime, name) in images]
     body, content_type = multipart(
         fields,
-        [("image", image_name, image_bytes, image_mime)],
+        files,
     )
     status, resp_body, resp_ctype = http(
         f"{info['base_url'].rstrip('/')}/images/edits",

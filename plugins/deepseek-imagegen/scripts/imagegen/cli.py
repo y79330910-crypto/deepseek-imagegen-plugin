@@ -35,15 +35,14 @@ def configure_console_utf8() -> None:
 
 def cmd_generate(args: argparse.Namespace) -> dict[str, Any]:
     images = list(args.image or [])
-    if len(images) > 1:
-        raise GenError("当前版本仅支持 1 张参考图（多图组合将在后续版本支持）。")
     return gen_mod.generate(
         args.prompt,
         out=args.out,
         size=args.size,
         seed=args.seed,
         model=args.model,
-        init_image=images[0] if images else None,
+        init_images=images if images else None,
+        ref_roles=list(args.ref_role or []),
         denoise=args.denoise,
         translator=args.translator,
         composition=args.composition,
@@ -184,8 +183,17 @@ def build_parser() -> argparse.ArgumentParser:
         dest="ref_type",
         default="auto",
         choices=["auto", "character", "outfit", "style", "scene", "composition", "pose", "object"],
-        help="参考图类型：auto 自动识别（默认）/ character 角色 / outfit 服装 / style 风格 / "
+        help="参考图类型（单图）：auto 自动识别（默认）/ character 角色 / outfit 服装 / style 风格 / "
              "scene 场景 / composition 构图 / pose 姿势 / object 物品",
+    )
+    gen.add_argument(
+        "--ref-role",
+        dest="ref_role",
+        action="append",
+        default=None,
+        choices=["auto", "character", "outfit", "style", "scene", "composition", "pose", "object"],
+        help="参考图用途（可重复，按 --image 顺序对应，最多 4 张）：character/outfit/style/pose/"
+             "scene/composition/object；未指定时第 1 张=角色，其余按 服装→姿势→风格→场景→物品",
     )
     gen.add_argument("--denoise", type=float, default=None, help="去噪强度 0~1（图生图，默认 0.6）")
     gen.add_argument(

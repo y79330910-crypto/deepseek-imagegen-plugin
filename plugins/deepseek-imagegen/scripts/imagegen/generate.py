@@ -72,6 +72,8 @@ def generate(
     seed: Optional[int] = None,
     model: str = "",
     init_image: Optional[str] = None,
+    init_images: Optional[list[str]] = None,
+    ref_roles: Optional[list[str]] = None,
     denoise: Optional[float] = None,
     translator: str = "auto",
     composition: str = "auto",
@@ -109,7 +111,7 @@ def generate(
     empty_retries = 2
     retry_delay_base = 6.0
 
-    # ---- 参考图三段式：提取禁止项、自动分类并生成简报
+    # ---- 参考图（支持多图）：提取禁止项、逐张识别用途并生成分工简报
     avoid_items = ref_mod.detect_avoid_items(prompt)
     ref_brief = ""
     ref_info: dict[str, Any] = {
@@ -119,37 +121,63 @@ def generate(
         "preserve": "",
         "avoid": avoid_items,
         "brief": "",
+        "items": [],
     }
-    user_ref = (init_image or "").strip()
-    if user_ref:
-        manual_type = (ref_type or "").strip().lower()
-        classify: dict[str, Any] = {}
-        if manual_type and manual_type != "auto":
-            manual_type = ref_mod.validate_ref_type(manual_type)
+    user_refs = [str(p or "").strip().strip('"') for p in (init_images or [])]
+    if not user_refs and (init_image or "").strip():
+        user_refs = [str(init_image).strip().strip('"')]
+    user_refs = [p for p in user_refs if p]
+    if len(user_refs) > ref_mod.MAX_REF_IMAGES:
+        raise GenError(
+            f"参考图最多支持 {ref_mod.MAX_REF_IMAGES} 张，当前收到 {len(user_refs)} 张。"
+        )
+    if user_refs:
+        roles_in = [str(r or "").strip().lower() for r in (ref_roles or [])]
+        ref_items: list[dict[str, Any]] = []
+        for i, path in enumerate(user_refs):
+            explicit = roles_in[i] if i < len(roles_in) else ""
+            feat = ref_mod.extract_reference_features(path, explicit, cfg)
+            rtype = str(feat.get("type") or "").strip()
+            if not rtype or rtype == "auto":
+                rtype = "character" if i == 0 else ref_mod.AUTO_ROLE_ORDER[
+                    min(i - 1, len(ref_mod.AUTO_ROLE_ORDER) - 1)
+                ]
+            ref_items.append({
+                "path": path,
+                "type": rtype,
+                "label": ref_mod.REF_TYPE_LABELS.get(
+                    rtype, ref_mod.REF_TYPE_LABELS["generic"]
+                ),
+                "method": str(feat.get("method") or "manual"),
+                "preserve": str(feat.get("preserve") or "").strip(),
+            })
+        if len(ref_items) == 1:
+            it = ref_items[0]
+            identity_list = it["preserve"] if it["type"] in ("character", "generic") else ""
+            ref_brief = ref_mod.build_reference_brief(
+                it["type"], prompt, it["preserve"], avoid_items, identity_list
+            )
+            ref_info = {
+                "type": it["type"],
+                "label": it["label"],
+                "method": it["method"],
+                "preserve": it["preserve"],
+                "identity_list": identity_list,
+                "avoid": avoid_items,
+                "brief": ref_brief,
+                "items": ref_items,
+            }
         else:
-            manual_type = ""
-            classify = ref_mod.classify_reference(user_ref, cfg)
-        resolved_type, method = ref_mod.resolve_ref_type(
-            manual_type, prompt, classify=classify
-        )
-        preserve = str(classify.get("preserve") or "") if classify else ""
-        identity_list = ""
-        if resolved_type in ("character", "generic"):
-            identity_list = preserve
-        ref_brief = ref_mod.build_reference_brief(
-            resolved_type, prompt, preserve, avoid_items, identity_list
-        )
-        ref_info = {
-            "type": resolved_type,
-            "label": ref_mod.REF_TYPE_LABELS.get(
-                resolved_type, ref_mod.REF_TYPE_LABELS["generic"]
-            ),
-            "method": method,
-            "preserve": preserve,
-            "identity_list": identity_list,
-            "avoid": avoid_items,
-            "brief": ref_brief,
-        }
+            ref_brief = ref_mod.build_multi_reference_brief(ref_items, avoid_items)
+            ref_info = {
+                "type": ref_items[0]["type"],
+                "label": ref_items[0]["label"],
+                "method": "multi",
+                "preserve": "",
+                "avoid": avoid_items,
+                "brief": ref_brief,
+                "items": ref_items,
+            }
 
     # ---- 翻译官输入 = 用户需求 + 构图约束 + 参考图简报
     user_prompt = prompt
@@ -201,21 +229,26 @@ def generate(
     if comp_suffix:
         final_prompt += "\n（构图硬性要求）" + comp_suffix
     if ref_brief:
-        final_prompt += "\n" + ref_mod.build_reference_suffix(
-            ref_info["type"], avoid_items, ref_info.get("identity_list") or ""
-        )
+        if len(ref_info.get("items") or []) > 1:
+            final_prompt += "\n" + ref_mod.build_multi_reference_suffix(
+                ref_info["items"], avoid_items
+            )
+        else:
+            final_prompt += "\n" + ref_mod.build_reference_suffix(
+                ref_info["type"], avoid_items, ref_info.get("identity_list") or ""
+            )
 
-    # ---- 参考图：用户 --image（读不了时按错误处理）
-    ref_source = (init_image or "").strip()
-    init_data: Optional[tuple[bytes, str, str]] = None
-    if ref_source:
-        init_data = load_init_image(ref_source)
+    # ---- 参考图：用户 --image（可多张；读不了时按错误处理）
+    init_images_data: list[tuple[bytes, str, str]] = []
+    if user_refs:
+        for _p in user_refs:
+            init_images_data.append(load_init_image(_p))
         if size:
             width, height = parse_size(size)
         else:
-            probed = probe_image_size_ext(init_data[0], init_data[1])
+            probed = probe_image_size_ext(init_images_data[0][0], init_images_data[0][1])
             width, height = probed or parse_size("1024x1024")
-    if not ref_source:
+    else:
         width, height = parse_size(size or str(cfg.get("default_size") or "1024x1024"))
 
     seed = seed if seed is not None else random.randint(0, 2**31 - 1)
@@ -229,16 +262,14 @@ def generate(
     if quality and backend_name == "vertex":
         warnings.append("quality 参数仅备用后端生效，本地 Vertex 出图已忽略。")
     if backend_name == "vertex":
-        if init_data is not None:
+        if init_images_data:
             data = gen_vertex_img2img(
                 cfg,
                 final_prompt.strip(),
                 width,
                 height,
                 model,
-                init_data[0],
-                init_data[1],
-                init_data[2],
+                init_images_data,
             )
         else:
             if aspect_ratio_key(width, height) == (3, 2) or (width, height) == (1408, 768):
@@ -274,7 +305,7 @@ def generate(
             else f"（画面尺寸要求：{size_str} 尺寸的图片）"
         )
         extra_prompt = final_prompt.strip() + "\n" + size_hint
-        if init_data is not None:
+        if init_images_data:
             data = gen_extra_img2img(
                 cfg,
                 backend_name,
@@ -282,9 +313,7 @@ def generate(
                 width,
                 height,
                 model,
-                init_data[0],
-                init_data[1],
-                init_data[2],
+                init_images_data,
                 size_str=size_str,
                 quality=quality,
             )
@@ -309,7 +338,7 @@ def generate(
     if (
         not match["ok"]
         and actual_size is not None
-        and init_data is None
+        and not init_images_data
         and backend_name == "vertex"
     ):
         from .image_utils import canvas_size_for
@@ -389,8 +418,8 @@ def generate(
         "reference": ref_info,
         "prompt_library": {"enabled": lib_enabled, "hits": lib_hits},
     }
-    if init_data is not None:
-        result["init_image"] = ref_source
+    if init_images_data:
+        result["init_images"] = user_refs
         result["denoise"] = denoise if denoise is not None else 0.6
     if warnings:
         result["warnings"] = warnings

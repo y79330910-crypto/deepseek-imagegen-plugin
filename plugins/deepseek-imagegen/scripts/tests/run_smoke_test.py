@@ -224,24 +224,22 @@ class TestReferencePrompts(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["method"], "fallback")
 
-    def test_cli_rejects_multi_image(self):
-        from imagegen.cli import main
+    def test_cli_accepts_multi_image(self):
+        from imagegen.cli import build_parser
 
-        buf = io.StringIO()
-        with mock.patch("sys.stdout", buf):
-            code = main(
-                ["generate", "测试", "--image", "a.png", "--image", "b.png", "--json"]
-            )
-        self.assertEqual(code, 1)
-        data = json.loads(buf.getvalue())
-        self.assertIn("多图", data["error"])
+        args = build_parser().parse_args(
+            ["generate", "测试", "--image", "a.png", "--image", "b.png",
+             "--ref-role", "character", "--ref-role", "outfit", "--json"]
+        )
+        self.assertEqual(len(args.image), 2)
+        self.assertEqual(args.ref_role, ["character", "outfit"])
 
 
 class TestGenerateFlow(unittest.TestCase):
     def _fake_gen(self, cfg, prompt, width, height, model, **kwargs):
         return make_png_bytes(width, height)
 
-    def _fake_img2img(self, cfg, prompt, width, height, model, image_bytes, mime, name, **kwargs):
+    def _fake_img2img(self, cfg, prompt, width, height, model, images, **kwargs):
         return make_png_bytes(width, height)
 
     def test_generate_and_save(self):
@@ -279,6 +277,7 @@ class TestGenerateFlow(unittest.TestCase):
             ref.write_bytes(make_png_bytes(50, 50))
             cfg = load_config()
             cfg["save_dir"] = str(save_dir)
+            cfg["reference"] = {"auto_classify": False, "vision_script": "", "classify_timeout": 90}
             with (
                 mock.patch.object(generate, "load_config", return_value=cfg),
                 mock.patch.object(generate, "gen_vertex_img2img", side_effect=self._fake_img2img),
@@ -288,8 +287,8 @@ class TestGenerateFlow(unittest.TestCase):
                     size="1024x1024",
                     seed=9,
                     translator="off",
-                    init_image=str(ref),
-                    ref_type="character",
+                    init_images=[str(ref)],
+                    ref_roles=["character"],
                 )
             self.assertTrue(result["ok"])
             self.assertEqual(result["reference"]["type"], "character")
@@ -341,6 +340,69 @@ class TestLibraryStats(unittest.TestCase):
             self.skipTest(f"演练库不可用：{exc}")
         self.assertEqual(st["active"] + st["archived"], st["total"])
         self.assertEqual(st["archived"], 2000)
+
+
+class TestMultiReference(unittest.TestCase):
+    def test_multi_brief_has_role_isolation(self):
+        items = [
+            {"path": "a.png", "type": "character", "label": "角色人物", "method": "manual",
+             "preserve": "蓝色长发，红瞳"},
+            {"path": "b.png", "type": "outfit", "label": "服装造型", "method": "manual",
+             "preserve": "白色连衣裙"},
+        ]
+        brief = reference.build_multi_reference_brief(items, ["耳机"])
+        self.assertIn("图1（角色人物）", brief)
+        self.assertIn("图2（服装造型）", brief)
+        self.assertIn("互不借用", brief)
+        self.assertIn("蓝色长发，红瞳", brief)
+        self.assertIn("耳机", brief)
+
+    def test_generate_multi_ref_mocked(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            save_dir = Path(tmp) / "out"
+            ref1 = Path(tmp) / "ref1.png"
+            ref1.write_bytes(make_png_bytes(64, 64))
+            ref2 = Path(tmp) / "ref2.png"
+            ref2.write_bytes(make_png_bytes(64, 64))
+            cfg = load_config()
+            cfg["save_dir"] = str(save_dir)
+            cfg["reference"] = {"auto_classify": False, "vision_script": "", "classify_timeout": 90}
+            captured: dict = {}
+            def fake_img2img(cfg, prompt, width, height, model, images, **kwargs):
+                captured["images"] = images
+                return make_png_bytes(width, height)
+            with (
+                mock.patch.object(generate, "load_config", return_value=cfg),
+                mock.patch.object(generate, "gen_vertex_img2img", side_effect=fake_img2img),
+            ):
+                result = generate.generate(
+                    "保持角色不变，穿上第二张图的服装，场景全新",
+                    size="1024x1024",
+                    seed=7,
+                    translator="off",
+                    init_images=[str(ref1), str(ref2)],
+                    ref_roles=["character", "outfit"],
+                )
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["reference"]["method"], "multi")
+            self.assertEqual(len(result["reference"]["items"]), 2)
+            self.assertEqual(
+                [it["type"] for it in result["reference"]["items"]],
+                ["character", "outfit"],
+            )
+            self.assertEqual(len(captured["images"]), 2)
+            self.assertIn("图1（角色人物）", result["prompt_used"])
+            self.assertIn("图2（服装造型）", result["prompt_used"])
+            self.assertIn("互不借用", result["prompt_used"])
+
+    def test_max_refs_rejected(self):
+        cfg = load_config()
+        with mock.patch.object(generate, "load_config", return_value=cfg):
+            with self.assertRaises(GenError):
+                generate.generate(
+                    "测试", translator="off",
+                    init_images=["a.png", "b.png", "c.png", "d.png", "e.png"],
+                )
 
 
 class TestExtraBackend(unittest.TestCase):
