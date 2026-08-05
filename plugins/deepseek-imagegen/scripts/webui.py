@@ -595,6 +595,7 @@ textarea{min-height:96px;resize:vertical}
 .gcard img{width:100%;height:160px;object-fit:cover;cursor:pointer;display:block}
 .gbody{padding:9px 11px}
 .gp{font-size:11px;color:var(--mut);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:30px}
+.detail-prompt{font-size:11px;color:var(--mut);white-space:pre-wrap;word-break:break-all;max-height:320px;overflow:auto;margin:6px 0}
 .gm{font-size:11px;color:#6f8aa5;margin:5px 0}
 .gbtn{display:flex;gap:6px}
 .hint{font-size:12px;color:var(--mut);margin-top:6px}
@@ -961,10 +962,12 @@ async function loadHistory(){
  const g=$("gal");g.innerHTML="";
  if(!h.length){$("galEmpty").style.display="block";return}$("galEmpty").style.display="none";
  h.forEach(it=>{const card=document.createElement("div");card.className="gcard";
-  card.innerHTML='<img src="/api/image?path='+encodeURIComponent(it.path||"")+'" alt="缩略图"><div class="gbody"><div class="gp">'+esc(it.prompt||"")+'</div><div class="gm">'+esc(it.backend||"vertex")+' · 种子 '+(it.seed??"-")+' · '+(it.size||"")+' · '+(it.actual_size||"")+(it.refs&&it.refs.length?' · 参考'+(it.refs.length)+'张':'')+'<br>'+esc(it.ts||"")+'</div>'+(it.prompt_used?'<details class="gm"><summary style="cursor:pointer">生效提示词</summary><div class="gp">'+esc(it.prompt_used)+'</div></details>':"")+'<div class="gbtn"><button class="btn ghost small" data-act="fill">回填重搞</button><button class="btn ghost small" data-act="del">删除</button><a class="btn ghost small" href="/api/image?path='+encodeURIComponent(it.path||"")+'" download="result.png">下载</a></div></div>';
+  card.innerHTML='<img src="/api/image?path='+encodeURIComponent(it.path||"")+'" alt="缩略图"><div class="gbody"><div class="gp">'+esc(it.prompt||"")+'</div><div class="gm">'+esc(it.backend||"vertex")+' · 种子 '+(it.seed??"-")+' · '+(it.size||"")+' · '+(it.actual_size||"")+(it.refs&&it.refs.length?' · 参考'+(it.refs.length)+'张':'')+'<br>'+esc(it.ts||"")+'</div>'+(it.prompt_used?'<details class="gm"><summary style="cursor:pointer">生效提示词（点击展开）</summary><div class="detail-prompt">'+esc(it.prompt_used)+'</div><button class="btn ghost small" data-act="copy" type="button">复制提示词</button></details>':"")+'<div class="gbtn"><button class="btn ghost small" data-act="fill">回填重搞</button><button class="btn ghost small" data-act="del">删除</button><a class="btn ghost small" href="/api/image?path='+encodeURIComponent(it.path||"")+'" download="result.png">下载</a></div></div>';
   card.querySelector("img").onclick=()=>{window.open("/api/image?path="+encodeURIComponent(it.path||""))};
   card.querySelector('[data-act="fill"]').onclick=()=>{fillForm(it);switchTab("generate")};
   card.querySelector('[data-act="del"]').onclick=async()=>{if(!confirm("删除这张历史记录？"))return;try{await api("/api/history?id="+encodeURIComponent(it.id||""),{method:"DELETE"});loadHistory()}catch(e){showErr("删除失败："+e.message)}};
+  const cp=card.querySelector('[data-act="copy"]');
+  if(cp)cp.onclick=async(e)=>{e.stopPropagation();try{await navigator.clipboard.writeText(it.prompt_used||"")}catch(err){const ta=document.createElement("textarea");ta.value=it.prompt_used||"";document.body.appendChild(ta);ta.select();document.execCommand("copy");ta.remove()}cp.textContent="已复制";setTimeout(()=>cp.textContent="复制提示词",1500)};
   g.appendChild(card)});}
 $("galSearch").oninput=loadHistory;$("galFilter").onchange=loadHistory;
 $("galClear").onclick=async()=>{if(!confirm("确定清空全部历史记录？此操作不可恢复。"))return;try{await api("/api/history/clear",{method:"DELETE"});loadHistory()}catch(e){showErr("清空失败："+e.message)}};

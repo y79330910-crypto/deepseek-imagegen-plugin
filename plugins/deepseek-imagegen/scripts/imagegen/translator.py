@@ -79,6 +79,14 @@ def _chat_text(
     return text
 
 
+def _api_endpoint(base_url: str, path: str) -> str:
+    """拼接 OpenAI 兼容端点：base_url 带 /v1 或不带都兼容（避免 /v1/v1）。"""
+    base = base_url.rstrip("/")
+    if base.endswith("/v1"):
+        return base + path
+    return base + "/v1" + path
+
+
 def _deepseek_text(
     base_url: str,
     api_key: str,
@@ -112,7 +120,7 @@ def _deepseek_text(
     }
     try:
         _status, body, _ctype = http(
-            f"{base_url.rstrip('/')}/v1/responses",
+            _api_endpoint(base_url, "/responses"),
             method="POST",
             headers=headers,
             payload=payload,
@@ -138,7 +146,7 @@ def _deepseek_text(
         "stream": False,
     }
     _status, body, _ctype = http(
-        f"{base_url.rstrip('/')}/v1/chat/completions",
+        _api_endpoint(base_url, "/chat/completions"),
         method="POST",
         headers=headers,
         payload=payload,
