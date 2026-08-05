@@ -25,11 +25,13 @@ from .image_utils import (
 )
 from .translator import translate_prompt
 from .vertex import (
+    extra_size_aspect,
     gen_extra_image,
     gen_extra_img2img,
     gen_vertex,
     gen_vertex_canvas_first,
     gen_vertex_img2img,
+    normalize_extra_size,
 )
 
 
@@ -256,26 +258,36 @@ def generate(
                 )
                 used_canvas_first = True
     else:
+        size_str = normalize_extra_size(width, height)
+        aspect = extra_size_aspect(size_str)
+        size_hint = (
+            f"（画面尺寸要求：生成 {aspect}、{size_str} 尺寸的图片）"
+            if aspect
+            else f"（画面尺寸要求：{size_str} 尺寸的图片）"
+        )
+        extra_prompt = final_prompt.strip() + "\n" + size_hint
         if init_data is not None:
             data = gen_extra_img2img(
                 cfg,
                 backend_name,
-                final_prompt.strip(),
+                extra_prompt,
                 width,
                 height,
                 model,
                 init_data[0],
                 init_data[1],
                 init_data[2],
+                size_str=size_str,
             )
         else:
             data = gen_extra_image(
                 cfg,
                 backend_name,
-                final_prompt.strip(),
+                extra_prompt,
                 width,
                 height,
                 model,
+                size_str=size_str,
                 empty_retries=empty_retries,
                 retry_delay_base=retry_delay_base,
             )
@@ -345,6 +357,7 @@ def generate(
     result: dict[str, Any] = {
         "ok": True,
         "backend": backend_name,
+        "size_hint": size_hint if backend_name != "vertex" else "",
         "path": str(out_path),
         "seed": seed,
         "size": f"{width}x{height}",

@@ -1,6 +1,6 @@
 {
   "name": "deepseek-imagegen",
-  "version": "1.0.0+codex.20260805042031",
+  "version": "1.0.0+codex.20260805065006",
   "description": "为 Codex 中的 DeepSeek 等纯文本模型补齐图像生成能力：绑定本地 Vertex Proxy（自动读取端口/密钥/模型列表并选用最佳图像模型）；内置提示词翻译官（DeepSeek 默认 + Gemini 兜底）、构图预设与真实尺寸校验（画布优先兜底）、提示词词库（MySQL 向量检索）。v1.0 精简为单一本地后端。",
   "author": {
     "name": "y79330910-crypto",

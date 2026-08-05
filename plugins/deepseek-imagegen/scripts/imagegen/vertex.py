@@ -347,43 +347,44 @@ def gen_vertex_canvas_first(
     raise GenError(last_err or "画布优先生成失败（上游未返回图片）")
 
 
-# ============ ?????extra_backends?? DragToken? ============
-OPENAI_IMAGE_SIZES = ["1024x1024", "1536x1024", "1024x1536"]
+# ============ 备用后端（extra_backends，如 DragToken） ============
+OPENAI_IMAGE_SIZES = ["1254x1254", "1536x1024", "1024x1536"]
 
 
 def normalize_extra_size(width: int, height: int) -> str:
-    """???????? OpenAI ??????????????????"""
+    """把目标尺寸映射到 OpenAI 标准三档，方向优先：竖版→1024x1536，横版→1536x1024，方形→1254x1254。"""
     wanted = f"{width}x{height}"
     if wanted in OPENAI_IMAGE_SIZES:
         return wanted
-    best = "1024x1024"
-    best_area = width * height
-    best_dist = abs(best_area - 1024 * 1024)
-    for s in OPENAI_IMAGE_SIZES:
-        w, h = (int(x) for x in s.split("x"))
-        dist = abs(best_area - w * h)
-        if dist < best_dist:
-            best, best_dist = s, dist
-    return best
+    if height > width:
+        return "1024x1536"
+    if width > height:
+        return "1536x1024"
+    return "1254x1254"
+
+
+def extra_size_aspect(size_str: str) -> str:
+    """把标准尺寸字符串转成画幅比例标签（用于写进提示词）。"""
+    return {"1254x1254": "1:1", "1536x1024": "3:2", "1024x1536": "2:3"}.get(str(size_str), "")
 
 
 def discover_extra_backend(cfg: dict[str, Any], name: str) -> dict[str, Any]:
-    """?????? extra_backends.<name>????????"""
+    """读取备用后端 extra_backends.<name>，返回连接信息。"""
     backends = cfg.get("extra_backends") or {}
     if not isinstance(backends, dict):
         backends = {}
     info = backends.get(name)
     if not isinstance(info, dict):
-        raise GenError(f"????????{name}??????? extra_backends?")
+        raise GenError(f"未找到备用后端「{name}」，请检查配置 extra_backends。")
     base_url = str(info.get("base_url") or "").strip().rstrip("/")
     api_key = str(info.get("api_key") or "").strip()
     model = str(info.get("model") or "").strip()
     if not base_url:
-        raise GenError(f"?????{name}??? base_url?")
+        raise GenError(f"备用后端「{name}」缺少 base_url。")
     if not api_key:
-        raise GenError(f"?????{name}??? api_key?")
+        raise GenError(f"备用后端「{name}」缺少 api_key。")
     if not model:
-        raise GenError(f"?????{name}??? model?")
+        raise GenError(f"备用后端「{name}」缺少 model。")
     return {"name": name, "base_url": base_url, "api_key": api_key, "model": model}
 
 
@@ -394,12 +395,14 @@ def gen_extra_image(
     width: int,
     height: int,
     model: str = "",
+    size_str: str = "",
     empty_retries: int = 2,
     retry_delay_base: float = 6.0,
 ) -> bytes:
-    """????????OpenAI ?? /images/generations??"""
+    """备用后端文生图（OpenAI 兼容 /images/generations）。"""
     info = discover_extra_backend(cfg, name)
     model = model or info["model"]
+    size = size_str or normalize_extra_size(width, height)
     return gen_openai_image(
         info["base_url"],
         info["api_key"],
@@ -407,7 +410,7 @@ def gen_extra_image(
         prompt,
         width,
         height,
-        size_str=normalize_extra_size(width, height),
+        size_str=size,
         empty_retries=empty_retries,
         retry_delay_base=retry_delay_base,
     )
@@ -423,11 +426,12 @@ def gen_extra_img2img(
     image_bytes: bytes,
     image_mime: str,
     image_name: str,
+    size_str: str = "",
 ) -> bytes:
-    """????????OpenAI ?? /images/edits??"""
+    """备用后端图生图（OpenAI 兼容 /images/edits）。"""
     info = discover_extra_backend(cfg, name)
     model = model or info["model"]
-    size_field = normalize_extra_size(width, height)
+    size_field = size_str or normalize_extra_size(width, height)
     body, content_type = multipart(
         {"model": model, "prompt": prompt, "n": "1", "size": size_field},
         [("image", image_name, image_bytes, image_mime)],
