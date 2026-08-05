@@ -45,7 +45,7 @@ WALLPAPER_FILE = WEBUI_DIR / "wallpaper.png"
 DEFAULT_WALLPAPER = Path(r"C:\Users\yjq\Downloads\【哲风壁纸】洛天依-虚拟歌姬.png")
 HISTORY_LIMIT = 200
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
-MAX_BODY_BYTES = 40 * 1024 * 1024
+MAX_BODY_BYTES = 90 * 1024 * 1024
 IMG_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 
 
@@ -173,6 +173,8 @@ def normalize_edits(edits: dict) -> dict:
                 continue
             if isinstance(info.get("sizes"), str):
                 info["sizes"] = [s.strip() for s in info["sizes"].split(",") if s.strip()]
+            if isinstance(info.get("models"), str):
+                info["models"] = [s.strip() for s in info["models"].split(",") if s.strip()]
             if info.get("quality") in ("", None):
                 info.pop("quality", None)
     return edits
@@ -226,6 +228,29 @@ def add_history(entry: dict) -> None:
 
 
 # ---------- 生成 ----------
+
+def api_models() -> dict:
+    """返回可选的图像模型：本地 vertex 的图像模型 + 各备用后端的模型。"""
+    syspath()
+    cfg = load_config()
+    result: dict = {"ok": True, "vertex": [], "extras": {}, "error": ""}
+    try:
+        from imagegen.vertex import discover_vertex
+        info = discover_vertex(cfg)
+        result["vertex"] = list(info.get("image_models") or [])
+    except Exception as exc:  # noqa: BLE001
+        result["error"] = str(exc)[:200]
+    for name, eb in (cfg.get("extra_backends") or {}).items():
+        if isinstance(eb, dict):
+            ms = eb.get("models")
+            if isinstance(ms, list) and ms:
+                result["extras"][name] = [str(x).strip() for x in ms if str(x).strip()]
+            else:
+                m = str(eb.get("model") or "").strip()
+                if m:
+                    result["extras"][name] = [m]
+    return result
+
 
 def run_generate(payload: dict) -> dict:
     prompt = str(payload.get("prompt") or "").strip()
@@ -449,6 +474,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._html(PAGE_HTML)
             elif path == "/api/config":
                 self._json({"ok": True, "config": masked_config()})
+            elif path == "/api/models":
+                self._json(api_models())
             elif path == "/api/history":
                 self._json({"ok": True, "history": load_history()})
             elif path == "/api/wallpaper":
@@ -624,7 +651,7 @@ textarea{min-height:96px;resize:vertical}
       </div>
       <div class="field"><label>去噪强度（0~1，仅参考图生图）</label><input id="denoise" type="number" min="0" max="1" step="0.05" placeholder="0.6"></div>
       <div class="field"><label>种子（留空=随机）</label><input id="seed" placeholder="随机"></div>
-      <div class="field"><label>模型（留空=自动选最佳）</label><input id="model" placeholder="自动"></div>
+      <div class="field"><label>模型（默认自动选最佳）</label><select id="model"><option value="">自动（推荐）</option></select></div>
       <div class="field"><label>翻译官引擎</label>
         <select id="translator">
           <option value="auto">跟随配置</option><option value="deepseek">DeepSeek</option><option value="gemini">Gemini</option><option value="off">直传（不改写）</option>
@@ -724,6 +751,7 @@ textarea{min-height:96px;resize:vertical}
         <div class="field"><label>地址</label><input data-path="extra_backends.dragtokens.base_url" placeholder="https://draw.dragtokens.com/v1"></div>
         <div class="field"><label>密钥</label><input data-path="extra_backends.dragtokens.api_key" type="password" placeholder="sk-..."></div>
         <div class="field"><label>模型</label><input data-path="extra_backends.dragtokens.model" placeholder="gpt-image-2 / gpt-image-2-4k超分 / gpt-image-2-原生4k"></div>
+        <div class="field"><label>可选模型（逗号分隔，留空=只用下方模型）</label><input data-path="extra_backends.dragtokens.models" placeholder="gpt-image-2,gpt-image-2-4k超分,gpt-image-2-原生4k"></div>
         <div class="field"><label>尺寸白名单（逗号分隔，留空=按模型自动）</label><input data-path="extra_backends.dragtokens.sizes" placeholder="1254x1254,1536x1024,1024x1536"></div>
         <div class="field"><label>默认质量</label>
           <select data-path="extra_backends.dragtokens.quality"><option value="auto">auto</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select>
@@ -786,8 +814,20 @@ function renderSizeChips(){
   b.onclick=()=>{$("size").value=s};chips.appendChild(b);
  });
 }
-$("backend").onchange=renderSizeChips;
-$("model").oninput=renderSizeChips;
+let MODELS={vertex:[],extras:{}};
+async function loadModels(){
+ try{const r=await api("/api/models");MODELS={vertex:r.vertex||[],extras:r.extras||{}}}catch(e){MODELS={vertex:[],extras:{}}}
+ renderModelSelect();
+}
+function renderModelSelect(){
+ const sel=$("model");const cur=sel.value;const b=$("backend").value;
+ const list=(b==="vertex")?(MODELS.vertex||[]):((MODELS.extras&&MODELS.extras[b])||[]);
+ sel.innerHTML='<option value="">自动（推荐）</option>'+[...new Set(list)].map(m=>'<option value="'+esc(m)+'">'+esc(m)+'</option>').join("");
+ if(list.indexOf(cur)>=0)sel.value=cur;else sel.value="";
+ renderSizeChips();
+}
+$("backend").onchange=renderModelSelect;
+$("model").onchange=renderSizeChips;
 const drop=$("drop"),refFile=$("refFile");
 drop.onclick=()=>refFile.click();
 drop.ondragover=e=>{e.preventDefault();drop.classList.add("over")};
@@ -903,7 +943,7 @@ async function loadConfig(){const r=await api("/api/config");const c=r.config;
  const flt=$("galFilter");const fcur=flt.value;
  flt.innerHTML='<option value="">全部后端</option>'+all.map(n=>'<option value="'+esc(n)+'">'+esc(n)+'</option>').join("");
  flt.value=all.includes(fcur)?fcur:"";
- renderSizeChips();
+ await loadModels();
  $("wallPrev").src="/api/wallpaper?"+Date.now();}
 function collect(){const o={};document.querySelectorAll("[data-path]").forEach(el=>{
  let v;if(el.tagName==="SELECT")v=el.value;else if(el.type==="checkbox")v=el.checked;else v=el.value.trim();
@@ -928,7 +968,7 @@ async function loadHistory(){
   g.appendChild(card)});}
 $("galSearch").oninput=loadHistory;$("galFilter").onchange=loadHistory;
 $("galClear").onclick=async()=>{if(!confirm("确定清空全部历史记录？此操作不可恢复。"))return;try{await api("/api/history/clear",{method:"DELETE"});loadHistory()}catch(e){showErr("清空失败："+e.message)}};
-function fillForm(it){$("prompt").value=it.prompt||"";if(it.seed!=null&&it.seed!=="")$("seed").value=it.seed;if(it.size)$("size").value=it.size;if(it.composition&&it.composition!=="auto")$("composition").value=it.composition;if(it.backend){const sel=$("backend");if(Array.from(sel.options).some(o=>o.value===it.backend))sel.value=it.backend;renderSizeChips();}if(it.refs&&it.refs.length){restoreRefs(it.refs)}else{refs=[];renderRefList();}}
+function fillForm(it){$("prompt").value=it.prompt||"";if(it.seed!=null&&it.seed!=="")$("seed").value=it.seed;if(it.size)$("size").value=it.size;if(it.composition&&it.composition!=="auto")$("composition").value=it.composition;if(it.backend){const sel=$("backend");if(Array.from(sel.options).some(o=>o.value===it.backend))sel.value=it.backend;renderModelSelect();}if(it.model&&Array.from($("model").options).some(o=>o.value===it.model)){$("model").value=it.model;renderSizeChips();}if(it.refs&&it.refs.length){restoreRefs(it.refs)}else{refs=[];renderRefList();}}
 loadConfig().catch(e=>showErr("加载配置失败："+e.message));
 </script>
 </body>
