@@ -5,11 +5,14 @@ from __future__ import annotations
 from .config import ConfigService
 from .diagnostics import DiagnosticService
 from .generation import GenerationService
+from .history import HistoryRecord, HistoryService
 from .models import ModelService
 
 __all__ = [
     "ConfigService",
     "DiagnosticService",
     "GenerationService",
+    "HistoryRecord",
+    "HistoryService",
     "ModelService",
 ]
