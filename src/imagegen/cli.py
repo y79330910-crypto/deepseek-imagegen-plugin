@@ -92,6 +92,25 @@ def cmd_list_models(args: argparse.Namespace) -> dict[str, Any]:
     return result
 
 
+def cmd_serve(args: argparse.Namespace) -> int:
+    from .api import create_server, validate_bind_address
+
+    host = validate_bind_address(args.host, args.allow_remote)
+    try:
+        server = create_server(host, args.port, config_path=args.config or None)
+    except OSError as exc:
+        print(f"错误：无法监听 {host}:{args.port}：{exc}", file=sys.stderr)
+        return 1
+    print(f"ImageGen HTTP API v1 已启动：http://{host}:{args.port}")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+    return 0
+
+
 def cmd_doctor(args: argparse.Namespace) -> dict[str, Any]:
     return DiagnosticService().doctor(
         size_probe=getattr(args, "size_probe", False),
@@ -280,6 +299,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     models_parser = sub.add_parser("list-models", help="查看本地代理可用模型")
     models_parser.add_argument("--json", action="store_true", help="输出 JSON（机器可读）")
+
+    serve = sub.add_parser("serve", help="启动本地 HTTP API v1")
+    serve.add_argument("--host", default="127.0.0.1", help="监听地址（默认 127.0.0.1）")
+    serve.add_argument("--port", type=int, default=8765, help="端口（默认 8765）")
+    serve.add_argument(
+        "--config",
+        default="",
+        help="配置文件路径（默认 ~/.deepseek-imagegen/config.json）",
+    )
+    serve.add_argument(
+        "--allow-remote",
+        action="store_true",
+        help="--allow-remote exposes the ImageGen API to the network.",
+    )
     return parser
 
 
@@ -288,6 +321,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
+        if args.command == "serve":
+            return cmd_serve(args)
         if args.command == "generate":
             result = cmd_generate(args)
         elif args.command == "translate":
