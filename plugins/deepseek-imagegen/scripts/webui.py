@@ -93,33 +93,30 @@ def syspath() -> None:
 
 def load_config() -> dict:
     syspath()
-    from imagegen.config import load_config as lc
-    return lc()
+    from imagegen import ConfigService
+
+    return ConfigService().load()
 
 
 def raw_config() -> dict:
-    cfg_path = APP_DIR / "config.json"
-    if cfg_path.is_file():
-        try:
-            data = json.loads(cfg_path.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except Exception:
-            pass
-    return {}
+    syspath()
+    from imagegen import ConfigService
+
+    return ConfigService().load_raw()
 
 
 def masked_config() -> dict:
     syspath()
-    from imagegen.config import mask_config as mc
-    return mc(load_config())
+    from imagegen import ConfigService
+
+    return ConfigService().masked()
 
 
 def save_raw(cfg: dict) -> None:
-    APP_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = APP_DIR / "config.json.tmp"
-    tmp.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(str(tmp), str(APP_DIR / "config.json"))
+    syspath()
+    from imagegen import ConfigService
+
+    ConfigService().save(cfg)
 
 
 def deep_merge(base: dict, override: dict) -> dict:
@@ -244,10 +241,10 @@ def api_models() -> dict:
     cfg = load_config()
     result: dict = {"ok": True, "vertex": [], "extras": {}, "error": ""}
     try:
-        from imagegen.backends.vertex import discover_vertex
+        from imagegen import ModelService
 
-        info = discover_vertex(cfg)
-        result["vertex"] = list(info.get("image_models") or [])
+        info = ModelService().get_backend_info("vertex")
+        result["vertex"] = list(info.get("models") or [])
     except Exception as exc:  # noqa: BLE001
         result["error"] = str(exc)[:200]
     for name, eb in (cfg.get("extra_backends") or {}).items():

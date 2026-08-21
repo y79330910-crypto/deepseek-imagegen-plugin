@@ -9,13 +9,14 @@ import os
 import sys
 from typing import Any, Optional
 
-from . import engine
-from .backends.vertex import discover_vertex
-from .config import CONFIG_FILE, load_config, mask_config
-from .doctor import cmd_doctor
 from .errors import GenError
-from .image_utils import parse_size
 from .models import GenerateRequest
+from .services import (
+    ConfigService,
+    DiagnosticService,
+    GenerationService,
+    ModelService,
+)
 from .translator import translate_prompt
 
 
@@ -37,13 +38,9 @@ def configure_console_utf8() -> None:
 
 def cmd_generate(args: argparse.Namespace) -> dict[str, Any]:
     images = list(args.image or [])
-    width = height = None
-    if args.size.strip():
-        width, height = parse_size(args.size)
     request = GenerateRequest(
         prompt=args.prompt,
-        width=width,
-        height=height,
+        size=args.size,
         model=args.model,
         backend=getattr(args, "backend", ""),
         seed=args.seed,
@@ -58,7 +55,7 @@ def cmd_generate(args: argparse.Namespace) -> dict[str, Any]:
         out=args.out,
         denoise=args.denoise,
     )
-    return engine.generate(request).to_dict()
+    return GenerationService().generate(request).to_dict()
 
 
 def cmd_translate(args: argparse.Namespace) -> dict[str, Any]:
@@ -72,27 +69,34 @@ def cmd_translate(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def cmd_config(args: argparse.Namespace) -> dict[str, Any]:
-    cfg = load_config()
+    svc = ConfigService()
     return {
-        "config_file": str(CONFIG_FILE),
-        "config_exists": CONFIG_FILE.exists(),
-        "config": mask_config(cfg),
+        "config_file": str(svc.path()),
+        "config_exists": svc.exists(),
+        "config": svc.masked(),
     }
 
 
 def cmd_list_models(args: argparse.Namespace) -> dict[str, Any]:
-    cfg = load_config()
+    svc = ModelService()
     result: dict[str, Any] = {"ok": True, "models": {}}
     try:
-        info = discover_vertex(cfg)
+        info = svc.get_backend_info("vertex")
         result["models"]["vertex"] = {
             "base_url": info["base_url"],
-            "best_model": info["model"],
-            "image_models": info["image_models"],
+            "best_model": info["best_model"],
+            "image_models": info["models"],
         }
     except GenError as exc:
         result["models"]["vertex"] = f"不可用：{exc}"
     return result
+
+
+def cmd_doctor(args: argparse.Namespace) -> dict[str, Any]:
+    return DiagnosticService().doctor(
+        size_probe=getattr(args, "size_probe", False),
+        size=getattr(args, "size", ""),
+    )
 
 
 def _print_result(result: dict[str, Any], use_json: bool) -> int:
@@ -169,7 +173,7 @@ def _print_result(result: dict[str, Any], use_json: bool) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="image_gen.py",
+        prog="imagegen",
         description="DeepSeek ImageGen 桥接脚本：本地 Vertex Proxy 生成图片并保存。",
     )
     parser.add_argument("--json", action="store_true", help="输出 JSON（机器可读）")
