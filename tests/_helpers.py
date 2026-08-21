@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import io
 
+from imagegen.backends.base import BackendCapabilities
+
 
 def make_png_bytes(width: int = 64, height: int = 64) -> bytes:
     from PIL import Image
@@ -17,6 +19,13 @@ class FakeVertexBackend:
     """Vertex 后端替身：返回指定尺寸 PNG，不做任何网络请求。"""
 
     id = "vertex"
+
+    def capabilities(self):
+        return BackendCapabilities(
+            text_to_image=True,
+            image_to_image=True,
+            multi_reference=True,
+        )
 
     def resolve_model(self, cfg, requested=""):
         return (requested or "").strip() or "gemini-3-pro-image"
@@ -38,6 +47,14 @@ class FakeOpenAIBackend:
 
     def __init__(self, name: str = "dragtokens"):
         self.name = name
+
+    def capabilities(self):
+        return BackendCapabilities(
+            text_to_image=True,
+            image_to_image=True,
+            multi_reference=True,
+            quality=True,
+        )
 
     def resolve_model(self, cfg, requested=""):
         requested = (requested or "").strip()

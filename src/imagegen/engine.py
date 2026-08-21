@@ -28,7 +28,7 @@ from .image_utils import (
     probe_image_size_ext,
     sizes_match,
 )
-from .models import GenerateRequest, GenerateResult
+from .models import GenerateRequest, GenerateResult, validate_backend_request
 from .translator import translate_prompt
 
 
@@ -65,13 +65,10 @@ def _run_generation(
     request: GenerateRequest, explicit_config: Optional[dict[str, Any]]
 ) -> GenerateResult:
     """出图主流程实现（Engine 编排 + Backend API v1）。"""
+    request.validate()
     prompt = (request.prompt or "").strip()
-    if not prompt:
-        raise ValidationError("提示词不能为空。")
     warnings: list[str] = []
     if request.denoise is not None:
-        if not (0 < request.denoise <= 1):
-            raise ValidationError("--denoise 必须是 0~1 之间的小数（默认 0.6）。")
         warnings.append("denoise 参数已弃用：当前后端不使用去噪强度，该参数已被忽略。")
     cfg = explicit_config if explicit_config is not None else load_config()
 
@@ -92,6 +89,19 @@ def _run_generation(
     empty_retries = 2
     retry_delay_base = 6.0
 
+    # ---- 出图后端：默认 vertex（本地代理）；其他名称走 OpenAI 兼容备用后端
+    # 尽早选择并校验能力，避免不支持的请求走到参考图/翻译官阶段
+    backend_name = (request.backend or "").strip().lower()
+    if backend_name in ("", "vertex"):
+        backend_name = "vertex"
+    backend = get_backend(backend_name, cfg)
+    if backend.id == "openai-compatible" and not getattr(backend, "name", ""):
+        raise GenError(
+            "openai-compatible 是通用后端名，请指定 extra_backends 中配置的具体后端名"
+            "（如 dragtokens）。"
+        )
+    validate_backend_request(request, backend.capabilities())
+
     # ---- 参考图（支持多图）：提取禁止项、逐张识别用途并生成分工简报
     avoid_items = ref_mod.detect_avoid_items(prompt)
     ref_brief = ""
@@ -106,10 +116,6 @@ def _run_generation(
     }
     user_refs = [str(p or "").strip().strip('"') for p in (request.images or [])]
     user_refs = [p for p in user_refs if p]
-    if len(user_refs) > ref_mod.MAX_REF_IMAGES:
-        raise ValidationError(
-            f"参考图最多支持 {ref_mod.MAX_REF_IMAGES} 张，当前收到 {len(user_refs)} 张。"
-        )
     if user_refs:
         roles_in = [str(r or "").strip().lower() for r in (request.reference_roles or [])]
         ref_items: list[dict[str, Any]] = []
@@ -232,8 +238,9 @@ def _run_generation(
             init_images_data.append(load_init_image(_p))
 
     # ---- 尺寸确定：--size 字符串 > 显式宽高 > 构图预设画幅 > 参考图原尺寸 > 配置默认
-    if request.size.strip():
-        width, height = parse_size(request.size)
+    size_value = request.size.strip()
+    if size_value and size_value.lower() != "auto":
+        width, height = parse_size(size_value)
     elif request.width is not None and request.height is not None:
         width, height = int(request.width), int(request.height)
     else:
@@ -252,19 +259,6 @@ def _run_generation(
     seed = request.seed if request.seed is not None else random.randint(0, 2**31 - 1)
     used_canvas_first = False
     size_actions: list[str] = []
-
-    # ---- 出图后端：默认 vertex（本地代理）；其他名称走 OpenAI 兼容备用后端
-    backend_name = (request.backend or "").strip().lower()
-    if backend_name in ("", "vertex"):
-        backend_name = "vertex"
-    backend = get_backend(backend_name, cfg)
-    if backend.id == "openai-compatible" and not getattr(backend, "name", ""):
-        raise GenError(
-            "openai-compatible 是通用后端名，请指定 extra_backends 中配置的具体后端名"
-            "（如 dragtokens）。"
-        )
-    if request.quality and backend_name == "vertex":
-        warnings.append("quality 参数仅备用后端生效，本地 Vertex 出图已忽略。")
 
     eff_model = (request.model or "").strip()
     size_str = ""

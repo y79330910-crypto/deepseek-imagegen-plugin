@@ -6,7 +6,10 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
+from .backends.base import BackendCapabilities
 from .errors import ValidationError
+from .image_utils import parse_size
+from .reference import MAX_REF_IMAGES
 
 
 @dataclass
@@ -117,6 +120,50 @@ class GenerateRequest:
             "out": self.out,
             "denoise": self.denoise,
         }
+
+    def validate(self) -> None:
+        """请求基础合法性校验（不依赖具体 Backend）。"""
+        if not str(self.prompt or "").strip():
+            raise ValidationError("提示词不能为空。")
+        size = str(self.size or "").strip().lower()
+        if size and size != "auto":
+            parse_size(size)
+        if (self.width is None) != (self.height is None):
+            raise ValidationError("width 与 height 必须同时提供。")
+        if self.width is not None and self.height is not None:
+            parse_size(f"{int(self.width)}x{int(self.height)}")
+        if self.seed is not None:
+            if isinstance(self.seed, bool) or not isinstance(self.seed, int):
+                raise ValidationError("seed 必须是整数。")
+        if self.denoise is not None:
+            if isinstance(self.denoise, bool) or not isinstance(self.denoise, (int, float)):
+                raise ValidationError("denoise 必须是 0~1 之间的小数。")
+            if not (0 < float(self.denoise) <= 1):
+                raise ValidationError("denoise 必须是 0~1 之间的小数。")
+        if len(self.images) > MAX_REF_IMAGES:
+            raise ValidationError(
+                f"参考图最多支持 {MAX_REF_IMAGES} 张，当前收到 {len(self.images)} 张。"
+            )
+        if len(self.reference_roles) > len(self.images):
+            raise ValidationError("reference_roles 数量不能超过 images 数量。")
+
+
+def validate_backend_request(
+    request: "GenerateRequest", capabilities: "BackendCapabilities"
+) -> None:
+    """校验请求与选定 Backend 的能力是否匹配。
+
+    规则：请求显式要求的能力后端不支持时抛 ValidationError；
+    用户未指定（空值）时忽略。size 由 Engine 的 size_policy 处理，不在此处强制。
+    """
+    if request.images and not capabilities.image_to_image:
+        raise ValidationError("当前后端不支持图生图（请求包含 images）。")
+    if len(request.images) > 1 and not capabilities.multi_reference:
+        raise ValidationError(
+            f"当前后端不支持多参考图（请求包含 {len(request.images)} 张）。"
+        )
+    if str(request.quality or "").strip() and not capabilities.quality:
+        raise ValidationError("当前后端不支持 quality 参数（请求已显式指定 quality）。")
 
 
 @dataclass
