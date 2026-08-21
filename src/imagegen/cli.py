@@ -7,6 +7,7 @@ import ctypes
 import json
 import os
 import sys
+import webbrowser
 from typing import Any, Optional
 
 from .errors import GenError
@@ -101,7 +102,11 @@ def cmd_serve(args: argparse.Namespace) -> int:
     except OSError as exc:
         print(f"错误：无法监听 {host}:{args.port}：{exc}", file=sys.stderr)
         return 1
-    print(f"ImageGen HTTP API v1 已启动：http://{host}:{args.port}")
+    display_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host
+    url = f"http://{display_host}:{args.port}/"
+    print(f"ImageGen WebUI + HTTP API v1 已启动：{url}")
+    if getattr(args, "open", False):
+        webbrowser.open(url)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -312,6 +317,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--allow-remote",
         action="store_true",
         help="--allow-remote exposes the ImageGen API to the network.",
+    )
+    serve.add_argument(
+        "--open",
+        action="store_true",
+        help="Server 启动成功后自动打开浏览器（http://127.0.0.1:<port>/）",
     )
     return parser
 
