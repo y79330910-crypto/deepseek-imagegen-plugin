@@ -19,6 +19,7 @@ class TestWebContract(unittest.TestCase):
             "/api/v1/config",
             "/api/v1/backends",
             "/api/v1/doctor",
+            "/api/v1/history",
         ):
             self.assertIn(endpoint, text, endpoint)
 
@@ -41,6 +42,14 @@ class TestWebContract(unittest.TestCase):
         text = INDEX_HTML.read_text(encoding="utf-8")
         self.assertIn('/assets/style.css', text)
         self.assertIn('/assets/app.js', text)
+
+    def test_persistent_gallery(self):
+        js = APP_JS.read_text(encoding="utf-8")
+        html = INDEX_HTML.read_text(encoding="utf-8")
+        self.assertIn("listHistory", js)
+        self.assertIn("deleteHistory", js)
+        self.assertNotIn("sessionResults", js)
+        self.assertIn("历史画廊", html)
 
     def test_no_denoise_control_in_ui(self):
         html = INDEX_HTML.read_text(encoding="utf-8")

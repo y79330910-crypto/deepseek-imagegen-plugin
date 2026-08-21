@@ -41,6 +41,15 @@ const api = {
   listModels: (id) =>
     apiRequest("GET", "/api/v1/backends/" + encodeURIComponent(id) + "/models"),
   doctor: () => apiRequest("POST", "/api/v1/doctor"),
+  listHistory: (q, limit, offset) => {
+    const params = new URLSearchParams();
+    if (q) params.set("q", q);
+    if (limit) params.set("limit", String(limit));
+    if (offset) params.set("offset", String(offset));
+    return apiRequest("GET", "/api/v1/history?" + params.toString());
+  },
+  deleteHistory: (id) =>
+    apiRequest("DELETE", "/api/v1/history/" + encodeURIComponent(id)),
 };
 
 /* ============ State ============ */
@@ -50,7 +59,7 @@ const state = {
   backend: "vertex",
   models: [],
   config: {},
-  sessionResults: [],
+  history: [],
 };
 
 const SIZE_PRESETS = {
@@ -332,17 +341,6 @@ async function handleGenerate() {
       if (i > 1) req.seed = null;
       try {
         const res = await api.generate(req);
-        state.sessionResults.unshift({
-          id: res.generation_id,
-          prompt: prompt,
-          prompt_used: (res.translator || {}).rewritten || res.prompt_used || "",
-          backend: res.backend || state.backend,
-          seed: res.seed,
-          size: res.size,
-          actual_size: res.actual_size,
-          output_url: res.output_url,
-          model: res.image_model_used || "",
-        });
         if (i === 1) {
           firstRes = res;
           renderResult(res);
@@ -363,7 +361,7 @@ async function handleGenerate() {
       setStatus(errs.length ? "" : "✅ 生成完成");
       if (errs.length) showError(errs.join("\n"));
     }
-    renderGallery();
+    await loadHistory();
   } catch (err) {
     showError(err.message);
     setStatus("");
@@ -414,20 +412,23 @@ async function handleDoctor() {
   }
 }
 
-/* ============ Gallery (session only) ============ */
+/* ============ Gallery (persistent) ============ */
+
+async function loadHistory(q) {
+  try {
+    const data = await api.listHistory(q, 50, 0);
+    state.history = data.items || [];
+  } catch (err) {
+    state.history = [];
+    showError("历史加载失败：" + err.message);
+  }
+  renderGallery();
+}
 
 function renderGallery() {
-  const kw = $("galSearch").value.trim().toLowerCase();
   const fb = $("galFilter").value;
-  let items = state.sessionResults;
+  let items = state.history;
   if (fb) items = items.filter((it) => (it.backend || "vertex") === fb);
-  if (kw) {
-    items = items.filter(
-      (it) =>
-        String(it.prompt || "").toLowerCase().includes(kw) ||
-        String(it.prompt_used || "").toLowerCase().includes(kw)
-    );
-  }
   const gal = $("gal");
   gal.innerHTML = "";
   if (!items.length) {
@@ -439,21 +440,34 @@ function renderGallery() {
     const card = document.createElement("div");
     card.className = "gcard";
     card.innerHTML =
-      '<img src="' + esc(it.output_url) + '" alt="缩略图">' +
+      '<img src="' + esc(it.output_url) + '" alt="缩略图" ' +
+      'onerror="this.onerror=null;this.src=\'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7\';this.alt=\'文件已不存在\'">' +
       '<div class="gbody"><div class="gp">' + esc(it.prompt || "") + "</div>" +
       '<div class="gm">' + esc(it.backend || "vertex") + " · 种子 " + esc(it.seed ?? "-") +
-      " · " + esc(it.size || "") + " · " + esc(it.actual_size || "") + "</div>" +
+      " · " + esc(it.requested_size || "") + " → " + esc(it.actual_size || "") + "</div>" +
       (it.prompt_used
         ? '<details class="gm"><summary style="cursor:pointer">生效提示词（点击展开）</summary>' +
           '<div class="detail-prompt">' + esc(it.prompt_used) +
           '</div><button class="btn ghost small" data-act="copy" type="button">复制提示词</button></details>'
         : "") +
       '<div class="gbtn"><button class="btn ghost small" data-act="fill" type="button">回填提示词</button>' +
+      '<button class="btn ghost small" data-act="del" type="button">删除记录</button>' +
       '<a class="btn ghost small" href="' + esc(it.output_url) + '" download="result.png">下载</a></div></div>';
     card.querySelector("img").onclick = () => window.open(it.output_url);
     card.querySelector('[data-act="fill"]').onclick = () => {
       $("prompt").value = it.prompt || "";
       switchTab("generate");
+    };
+    const delBtn = card.querySelector('[data-act="del"]');
+    delBtn.onclick = async () => {
+      if (!confirm("删除这条生成记录？图片文件不会受影响。")) return;
+      try {
+        await api.deleteHistory(it.generation_id);
+        state.history = state.history.filter((x) => x.generation_id !== it.generation_id);
+        renderGallery();
+      } catch (err) {
+        showError("删除失败：" + err.message);
+      }
     };
     const cp = card.querySelector('[data-act="copy"]');
     if (cp) {
@@ -505,6 +519,7 @@ async function init() {
   renderBackendSelect();
   await loadModels();
   renderSettings();
+  await loadHistory();
 }
 
 document.querySelectorAll(".tab").forEach((t) => {
@@ -530,11 +545,8 @@ $("saveBtn").onclick = async () => {
   }
 };
 $("doctorBtn").onclick = handleDoctor;
-$("galSearch").oninput = renderGallery;
+$("galSearch").oninput = () => loadHistory($("galSearch").value.trim());
 $("galFilter").onchange = renderGallery;
-$("galClear").onclick = () => {
-  state.sessionResults = [];
-  renderGallery();
-};
+$("galClear").onclick = () => loadHistory($("galSearch").value.trim());
 
 init().catch((err) => showError("初始化失败：" + err.message));

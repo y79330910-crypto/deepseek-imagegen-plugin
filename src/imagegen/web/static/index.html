@@ -18,7 +18,7 @@
       <button class="tab on" data-tab="generate">生成</button>
       <button class="tab" data-tab="settings">设置</button>
       <button class="tab" data-tab="diagnose">诊断</button>
-      <button class="tab" data-tab="gallery">会话画廊</button>
+      <button class="tab" data-tab="gallery">历史画廊</button>
     </div>
   </div>
 
@@ -180,15 +180,15 @@
 
   <section class="glass card" id="page-gallery" style="display:none">
     <div class="row" style="justify-content:space-between">
-      <h3 style="margin:0">🖼 会话画廊（仅当前页面会话，不持久化）</h3>
-      <button class="btn ghost small" id="galClear">清空会话</button>
+      <h3 style="margin:0">🖼 历史画廊（持久化，最近 50 条）</h3>
+      <button class="btn ghost small" id="galClear">刷新记录</button>
     </div>
     <div class="row" style="margin-top:10px">
       <div class="field" style="flex:1;margin:0"><input id="galSearch" placeholder="搜索提示词…"></div>
       <div class="field" style="margin:0"><select id="galFilter"><option value="">全部后端</option></select></div>
     </div>
     <div class="gal" id="gal" style="margin-top:12px"></div>
-    <div class="hint" id="galEmpty" style="display:none">本会话还没有生成记录，先去生成一张吧。</div>
+    <div class="hint" id="galEmpty" style="display:none">还没有生成记录，先去生成一张吧。</div>
   </section>
 </div>
 <script src="/assets/app.js"></script>
