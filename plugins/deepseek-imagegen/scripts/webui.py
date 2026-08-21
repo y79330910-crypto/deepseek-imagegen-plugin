@@ -244,7 +244,8 @@ def api_models() -> dict:
     cfg = load_config()
     result: dict = {"ok": True, "vertex": [], "extras": {}, "error": ""}
     try:
-        from imagegen.vertex import discover_vertex
+        from imagegen.backends.vertex import discover_vertex
+
         info = discover_vertex(cfg)
         result["vertex"] = list(info.get("image_models") or [])
     except Exception as exc:  # noqa: BLE001

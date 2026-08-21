@@ -7,11 +7,11 @@ import json
 import time
 from typing import Any, Optional
 
+from .backends.vertex import discover_vertex, gen_vertex, gen_vertex_canvas_first
 from .config import CONFIG_FILE, load_config, save_config
 from .errors import GenError
 from .http import BROWSER_UA, HEALTH_TIMEOUT, http
 from .image_utils import parse_size, probe_image_size_ext, sizes_match
-from .vertex import discover_vertex, gen_vertex, gen_vertex_canvas_first
 
 
 def _health_check(label: str, check: Any, cfg: dict[str, Any]) -> dict[str, Any]:

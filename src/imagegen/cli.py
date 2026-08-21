@@ -9,12 +9,14 @@ import os
 import sys
 from typing import Any, Optional
 
-from . import generate as gen_mod
+from . import engine
+from .backends.vertex import discover_vertex
 from .config import CONFIG_FILE, load_config, mask_config
 from .doctor import cmd_doctor
 from .errors import GenError
+from .image_utils import parse_size
+from .models import GenerateRequest
 from .translator import translate_prompt
-from .vertex import discover_vertex
 
 
 def configure_console_utf8() -> None:
@@ -35,23 +37,28 @@ def configure_console_utf8() -> None:
 
 def cmd_generate(args: argparse.Namespace) -> dict[str, Any]:
     images = list(args.image or [])
-    return gen_mod.generate(
-        args.prompt,
-        out=args.out,
-        size=args.size,
-        seed=args.seed,
+    width = height = None
+    if args.size.strip():
+        width, height = parse_size(args.size)
+    request = GenerateRequest(
+        prompt=args.prompt,
+        width=width,
+        height=height,
         model=args.model,
-        init_images=images if images else None,
-        ref_roles=list(args.ref_role or []),
-        denoise=args.denoise,
-        translator=args.translator,
-        composition=args.composition,
-        size_policy=args.size_policy,
         backend=getattr(args, "backend", ""),
+        seed=args.seed,
         quality=getattr(args, "quality", ""),
-        library_enabled=getattr(args, "library", None),
+        composition=args.composition,
+        translator=args.translator,
+        size_policy=args.size_policy,
+        images=images,
+        reference_roles=list(args.ref_role or []),
         ref_type=getattr(args, "ref_type", "auto"),
+        library_enabled=getattr(args, "library", None),
+        out=args.out,
+        denoise=args.denoise,
     )
+    return engine.generate(request).to_dict()
 
 
 def cmd_translate(args: argparse.Namespace) -> dict[str, Any]:
@@ -103,6 +110,8 @@ def _print_result(result: dict[str, Any], use_json: bool) -> int:
         else:
             print(f"尺寸：请求 {result['size']}（无法读取实际尺寸）")
         print(f"种子：{result['seed']}")
+        if result.get("image_model_used"):
+            print(f"图像模型：{result['image_model_used']}")
         if result.get("composition_preset") and result["composition_preset"] != "auto":
             print(f"构图预设：{result['composition_preset']}")
         refinfo = result.get("reference") or {}

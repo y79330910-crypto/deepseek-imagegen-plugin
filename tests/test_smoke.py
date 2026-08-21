@@ -22,9 +22,23 @@ SRC_DIR = Path(__file__).resolve().parents[1] / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from imagegen import generate, reference  # noqa: E402
+from imagegen import reference  # noqa: E402
+from imagegen import engine as engine_mod  # noqa: E402
+from imagegen.backends.openai_images import (  # noqa: E402
+    OPENAI_IMAGE_SIZES,
+    extra_backend_sizes,
+    extra_size_whitelist,
+    normalize_extra_size,
+    pick_extra_model_for_size,
+)
+from imagegen.backends.vertex import (  # noqa: E402
+    parse_models_list,
+    pick_best_image_model,
+    pick_best_text_model,
+)
 from imagegen.composition import resolve_composition  # noqa: E402
 from imagegen.config import load_config, mask_config  # noqa: E402
+from imagegen.engine import generate  # noqa: E402
 from imagegen.errors import GenError  # noqa: E402
 from imagegen.image_utils import (  # noqa: E402
     aspect_ratio_key,
@@ -37,17 +51,8 @@ from imagegen.image_utils import (  # noqa: E402
     sizes_match,
     slugify,
 )
+from imagegen.models import GenerateRequest  # noqa: E402
 from imagegen.translator import translate_prompt  # noqa: E402
-from imagegen.vertex import (  # noqa: E402
-    OPENAI_IMAGE_SIZES,
-    extra_backend_sizes,
-    extra_size_whitelist,
-    normalize_extra_size,
-    parse_models_list,
-    pick_extra_model_for_size,
-    pick_best_image_model,
-    pick_best_text_model,
-)
 
 
 def make_png_bytes(width: int = 64, height: int = 64) -> bytes:
@@ -56,6 +61,24 @@ def make_png_bytes(width: int = 64, height: int = 64) -> bytes:
     buf = io.BytesIO()
     Image.new("RGB", (width, height), (120, 180, 240)).save(buf, format="PNG")
     return buf.getvalue()
+
+
+class FakeVertexBackend:
+    """测试用 Vertex 后端替身：返回指定尺寸的 PNG，不做任何网络请求。"""
+
+    id = "vertex"
+
+    def resolve_model(self, cfg, requested=""):
+        return (requested or "").strip() or "gemini-3-pro-image"
+
+    def generate(self, cfg, prompt, width, height, model="", **kwargs):
+        return make_png_bytes(width, height)
+
+    def generate_fallback_size(self, cfg, prompt, width, height, model="", **kwargs):
+        return make_png_bytes(width, height)
+
+    def edit(self, cfg, prompt, width, height, model, images, **kwargs):
+        return make_png_bytes(width, height)
 
 
 class TestConfig(unittest.TestCase):
@@ -232,12 +255,6 @@ class TestReferencePrompts(unittest.TestCase):
 
 
 class TestGenerateFlow(unittest.TestCase):
-    def _fake_gen(self, cfg, prompt, width, height, model, **kwargs):
-        return make_png_bytes(width, height)
-
-    def _fake_img2img(self, cfg, prompt, width, height, model, images, **kwargs):
-        return make_png_bytes(width, height)
-
     def test_generate_and_save(self):
         with tempfile.TemporaryDirectory() as tmp:
             save_dir = Path(tmp) / "out"
@@ -246,18 +263,22 @@ class TestGenerateFlow(unittest.TestCase):
             cfg["save_dir"] = str(save_dir)
             cfg["mirror_dir"] = str(mirror_dir)
             with (
-                mock.patch.object(generate, "load_config", return_value=cfg),
-                mock.patch.object(generate, "gen_vertex_canvas_first", side_effect=self._fake_gen),
-                mock.patch.object(generate, "gen_vertex", side_effect=self._fake_gen),
-                mock.patch.object(generate, "gen_vertex_img2img", side_effect=self._fake_img2img),
+                mock.patch.object(engine_mod, "load_config", return_value=cfg),
+                mock.patch.object(
+                    engine_mod, "get_backend",
+                    return_value=FakeVertexBackend(),
+                ),
             ):
-                result = generate.generate(
-                    "画一张湖边公园春日场景",
-                    size="768x1408",
-                    seed=123,
-                    translator="off",
-                    composition="full-body",
-                )
+                result = generate(
+                    GenerateRequest(
+                        prompt="画一张湖边公园春日场景",
+                        width=768,
+                        height=1408,
+                        seed=123,
+                        translator="off",
+                        composition="full-body",
+                    )
+                ).to_dict()
             self.assertTrue(result["ok"])
             self.assertTrue(Path(result["path"]).is_file())
             self.assertEqual(result["seed"], 123)
@@ -275,17 +296,23 @@ class TestGenerateFlow(unittest.TestCase):
             cfg["save_dir"] = str(save_dir)
             cfg["reference"] = {"auto_classify": False, "vision_script": "", "classify_timeout": 90}
             with (
-                mock.patch.object(generate, "load_config", return_value=cfg),
-                mock.patch.object(generate, "gen_vertex_img2img", side_effect=self._fake_img2img),
+                mock.patch.object(engine_mod, "load_config", return_value=cfg),
+                mock.patch.object(
+                    engine_mod, "get_backend",
+                    return_value=FakeVertexBackend(),
+                ),
             ):
-                result = generate.generate(
-                    "保持参考图中的角色不变；不要耳机；场景改为春日樱花公园",
-                    size="1024x1024",
-                    seed=9,
-                    translator="off",
-                    init_images=[str(ref)],
-                    ref_roles=["character"],
-                )
+                result = generate(
+                    GenerateRequest(
+                        prompt="保持参考图中的角色不变；不要耳机；场景改为春日樱花公园",
+                        width=1024,
+                        height=1024,
+                        seed=9,
+                        translator="off",
+                        images=[str(ref)],
+                        reference_roles=["character"],
+                    )
+                ).to_dict()
             self.assertTrue(result["ok"])
             self.assertEqual(result["reference"]["type"], "character")
             self.assertEqual(result["reference"]["method"], "manual")
@@ -366,22 +393,27 @@ class TestMultiReference(unittest.TestCase):
             cfg["reference"] = {"auto_classify": False, "vision_script": "", "classify_timeout": 90}
             captured: dict = {}
 
-            def fake_img2img(cfg, prompt, width, height, model, images, **kwargs):
+            def fake_edit(cfg, prompt, width, height, model, images, **kwargs):
                 captured["images"] = images
                 return make_png_bytes(width, height)
 
+            fake_backend = FakeVertexBackend()
+            fake_backend.edit = fake_edit
             with (
-                mock.patch.object(generate, "load_config", return_value=cfg),
-                mock.patch.object(generate, "gen_vertex_img2img", side_effect=fake_img2img),
+                mock.patch.object(engine_mod, "load_config", return_value=cfg),
+                mock.patch.object(engine_mod, "get_backend", return_value=fake_backend),
             ):
-                result = generate.generate(
-                    "保持角色不变，穿上第二张图的服装，场景全新",
-                    size="1024x1024",
-                    seed=7,
-                    translator="off",
-                    init_images=[str(ref1), str(ref2)],
-                    ref_roles=["character", "outfit"],
-                )
+                result = generate(
+                    GenerateRequest(
+                        prompt="保持角色不变，穿上第二张图的服装，场景全新",
+                        width=1024,
+                        height=1024,
+                        seed=7,
+                        translator="off",
+                        images=[str(ref1), str(ref2)],
+                        reference_roles=["character", "outfit"],
+                    )
+                ).to_dict()
             self.assertTrue(result["ok"])
             self.assertEqual(result["reference"]["method"], "multi")
             self.assertEqual(len(result["reference"]["items"]), 2)
@@ -396,11 +428,14 @@ class TestMultiReference(unittest.TestCase):
 
     def test_max_refs_rejected(self):
         cfg = load_config()
-        with mock.patch.object(generate, "load_config", return_value=cfg):
+        with mock.patch.object(engine_mod, "load_config", return_value=cfg):
             with self.assertRaises(GenError):
-                generate.generate(
-                    "测试", translator="off",
-                    init_images=["a.png", "b.png", "c.png", "d.png", "e.png"],
+                generate(
+                    GenerateRequest(
+                        prompt="测试",
+                        translator="off",
+                        images=["a.png", "b.png", "c.png", "d.png", "e.png"],
+                    )
                 )
 
 

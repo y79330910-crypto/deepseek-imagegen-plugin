@@ -6,10 +6,10 @@ import json
 import os
 from typing import Any, Optional
 
+from .backends.vertex import discover_vertex, pick_best_text_model
 from .config import APP_NAME, load_config
 from .errors import GenError
 from .http import http
-from .vertex import discover_vertex, pick_best_text_model
 
 
 def _read_deepseek_credential_from_env() -> tuple[str, str]:
