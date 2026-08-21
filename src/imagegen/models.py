@@ -11,6 +11,7 @@ class GenerateRequest:
     """一次生图的完整输入。"""
 
     prompt: str
+    size: str = ""
     width: int | None = None
     height: int | None = None
     model: str = ""

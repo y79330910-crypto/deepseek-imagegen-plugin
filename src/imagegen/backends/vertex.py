@@ -9,7 +9,7 @@ import time
 from typing import Any, Optional
 
 from ..config import APP_NAME, VERTEX_DEFAULT_DIR
-from ..errors import EmptyImageError, GenError
+from ..errors import ConfigurationError, EmptyImageError, GenError
 from ..http import http
 from ..image_utils import (
     aspect_ratio_key,
@@ -128,10 +128,10 @@ def discover_vertex(cfg: dict[str, Any]) -> dict[str, Any]:
         .strip('"')
     )
     if not vdir:
-        raise GenError("未配置 vertex.dir（Vertex Proxy 目录）。")
+        raise ConfigurationError("未配置 vertex.dir（Vertex Proxy 目录）。")
     proxy_cfg_file = os.path.join(vdir, "config", "config.json")
     if not os.path.isfile(proxy_cfg_file):
-        raise GenError(f"未找到 Vertex Proxy 配置：{proxy_cfg_file}，请检查 vertex.dir。")
+        raise ConfigurationError(f"未找到 Vertex Proxy 配置：{proxy_cfg_file}，请检查 vertex.dir。")
     with open(proxy_cfg_file, "r", encoding="utf-8") as handle:
         proxy_cfg = json.load(handle)
     port = int(proxy_cfg.get("port_api", 2156))
@@ -158,9 +158,9 @@ def discover_vertex(cfg: dict[str, Any]) -> dict[str, Any]:
     if not model and models:
         model = pick_best_image_model(models)
     if not model:
-        raise GenError("Vertex Proxy 模型列表中未找到图像模型，请检查 config/models.json。")
+        raise ConfigurationError("Vertex Proxy 模型列表中未找到图像模型，请检查 config/models.json。")
     if not api_key:
-        raise GenError("Vertex Proxy 未找到 API Key，请检查 config/api_keys.txt 或配置 vertex.api_key。")
+        raise ConfigurationError("Vertex Proxy 未找到 API Key，请检查 config/api_keys.txt 或配置 vertex.api_key。")
 
     return {
         "dir": vdir,

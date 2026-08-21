@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 from typing import Any, Optional
 
-from .errors import GenError
+from .errors import GenError, ValidationError
 
 
 REF_TYPE_CHOICES = [
@@ -93,7 +93,7 @@ def validate_ref_type(name: str) -> str:
     """校验参考图类型参数；未知类型直接报错。"""
     key = (name or "auto").strip().lower()
     if key not in REF_TYPE_CHOICES:
-        raise GenError(
+        raise ValidationError(
             f"未知参考图类型：{name!r}。可选：{', '.join(REF_TYPE_CHOICES)}"
         )
     return key

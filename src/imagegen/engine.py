@@ -17,7 +17,7 @@ from .backends.openai_images import (
 from .backends.registry import get_backend
 from .composition import composition_prompt_suffix, resolve_composition
 from .config import load_config
-from .errors import GenError
+from .errors import ConfigurationError, GenError, ValidationError
 from .image_utils import (
     aspect_ratio_key,
     canvas_size_for,
@@ -61,17 +61,19 @@ def _library_search(
         return [], [], f"词库检索异常：{exc}"
 
 
-def generate(request: GenerateRequest) -> GenerateResult:
-    """v1.1 出图主流程（Engine 编排 + Backend API v1）。"""
+def _run_generation(
+    request: GenerateRequest, explicit_config: Optional[dict[str, Any]]
+) -> GenerateResult:
+    """出图主流程实现（Engine 编排 + Backend API v1）。"""
     prompt = (request.prompt or "").strip()
     if not prompt:
-        raise GenError("提示词不能为空。")
+        raise ValidationError("提示词不能为空。")
     warnings: list[str] = []
     if request.denoise is not None:
         if not (0 < request.denoise <= 1):
-            raise GenError("--denoise 必须是 0~1 之间的小数（默认 0.6）。")
+            raise ValidationError("--denoise 必须是 0~1 之间的小数（默认 0.6）。")
         warnings.append("denoise 参数已弃用：当前后端不使用去噪强度，该参数已被忽略。")
-    cfg = load_config()
+    cfg = explicit_config if explicit_config is not None else load_config()
 
     # ---- 构图预设：未指定尺寸时采用预设画幅
     comp_preset = resolve_composition(request.composition, cfg)
@@ -105,7 +107,7 @@ def generate(request: GenerateRequest) -> GenerateResult:
     user_refs = [str(p or "").strip().strip('"') for p in (request.images or [])]
     user_refs = [p for p in user_refs if p]
     if len(user_refs) > ref_mod.MAX_REF_IMAGES:
-        raise GenError(
+        raise ValidationError(
             f"参考图最多支持 {ref_mod.MAX_REF_IMAGES} 张，当前收到 {len(user_refs)} 张。"
         )
     if user_refs:
@@ -229,8 +231,12 @@ def generate(request: GenerateRequest) -> GenerateResult:
         for _p in user_refs:
             init_images_data.append(load_init_image(_p))
 
-    # ---- 尺寸确定：显式宽高 > 构图预设画幅 > 参考图原尺寸 > 配置默认
-    if request.width is None or request.height is None:
+    # ---- 尺寸确定：--size 字符串 > 显式宽高 > 构图预设画幅 > 参考图原尺寸 > 配置默认
+    if request.size.strip():
+        width, height = parse_size(request.size)
+    elif request.width is not None and request.height is not None:
+        width, height = int(request.width), int(request.height)
+    else:
         preset_size = ""
         if comp_preset != "auto":
             preset_cfg = (cfg.get("composition") or {}).get("presets") or {}
@@ -242,8 +248,6 @@ def generate(request: GenerateRequest) -> GenerateResult:
             width, height = probed or parse_size("1024x1024")
         else:
             width, height = parse_size(str(cfg.get("default_size") or "1024x1024"))
-    else:
-        width, height = int(request.width), int(request.height)
 
     seed = request.seed if request.seed is not None else random.randint(0, 2**31 - 1)
     used_canvas_first = False
@@ -357,7 +361,7 @@ def generate(request: GenerateRequest) -> GenerateResult:
     else:
         reason = match.get("reason") or "尺寸不符"
         if policy == "strict":
-            raise GenError(
+            raise ValidationError(
                 f"尺寸策略为 strict：{reason}"
                 + (f"，已尝试：{'；'.join(size_actions)}" if size_actions else "")
                 + "。可改用 --size-policy auto 自动兜底。"
@@ -375,7 +379,7 @@ def generate(request: GenerateRequest) -> GenerateResult:
     try:
         out_path.parent.mkdir(parents=True, exist_ok=True)
     except FileExistsError as exc:
-        raise GenError(
+        raise ConfigurationError(
             f"输出路径不可用：{out_path.parent} 位置存在同名文件，请更换 --out 路径。"
         ) from exc
     out_path.write_bytes(data)
@@ -414,3 +418,20 @@ def generate(request: GenerateRequest) -> GenerateResult:
     if mirror:
         result.mirror_path = mirror
     return result
+
+
+class ImageGenEngine:
+    """生图业务编排引擎：只负责业务流程，不包含 CLI / HTTP / UI 逻辑。"""
+
+    def __init__(self, config: Optional[dict[str, Any]] = None):
+        """可选显式配置；缺省走 load_config()（环境变量 > 用户配置 > 默认值）。"""
+        self._config = config
+
+    def generate(self, request: GenerateRequest) -> GenerateResult:
+        """执行一次生图请求，返回 GenerateResult。"""
+        return _run_generation(request, self._config)
+
+
+def generate(request: GenerateRequest) -> GenerateResult:
+    """兼容旧入口：等价于 ImageGenEngine().generate(request)。"""
+    return ImageGenEngine().generate(request)

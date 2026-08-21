@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .config import APP_NAME
-from .errors import GenError
+from .errors import GenError, ValidationError
 from .http import BROWSER_UA, HEALTH_TIMEOUT, http
 
 
@@ -34,10 +34,10 @@ def parse_size(size: str) -> tuple[int, int]:
     """解析 WxH 尺寸，支持 x/X/×。"""
     match = re.fullmatch(r"\s*(\d{2,5})\s*[xX×]\s*(\d{2,5})\s*", size or "")
     if not match:
-        raise GenError(f"无效的尺寸格式：{size!r}，应为 WxH，例如 1024x1024")
+        raise ValidationError(f"无效的尺寸格式：{size!r}，应为 WxH，例如 1024x1024")
     width, height = int(match.group(1)), int(match.group(2))
     if width < 16 or height < 16 or width > 4096 or height > 4096:
-        raise GenError(f"尺寸超出支持范围（16~4096）：{width}x{height}")
+        raise ValidationError(f"尺寸超出支持范围（16~4096）：{width}x{height}")
     return width, height
 
 

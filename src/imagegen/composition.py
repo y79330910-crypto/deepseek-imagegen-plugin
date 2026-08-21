@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .errors import GenError
+from .errors import ValidationError
 
 
 COMPOSITION_ALIASES = {
@@ -38,7 +38,7 @@ def resolve_composition(name: str, cfg: dict[str, Any]) -> str:
     resolved = COMPOSITION_ALIASES.get(key, key)
     presets = (cfg.get("composition") or {}).get("presets") or {}
     if resolved != "auto" and resolved not in presets:
-        raise GenError(
+        raise ValidationError(
             f"未知构图预设：{name!r}。可选：full-body / half-body / portrait / landscape / auto"
         )
     return resolved

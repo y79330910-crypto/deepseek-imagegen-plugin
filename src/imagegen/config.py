@@ -145,9 +145,9 @@ def load_config() -> dict[str, Any]:
             if isinstance(user_cfg, dict):
                 cfg = deep_merge(cfg, user_cfg)
         except (OSError, json.JSONDecodeError) as exc:
-            from .errors import GenError
+            from .errors import ConfigurationError
 
-            raise GenError(f"配置文件解析失败（{CONFIG_FILE}）：{exc}") from exc
+            raise ConfigurationError(f"配置文件解析失败（{CONFIG_FILE}）：{exc}") from exc
     if not str(cfg.get("mirror_dir") or "").strip():
         env_mirror = os.environ.get(MIRROR_DIR_ENV, "").strip()
         if env_mirror:

@@ -1,3 +1,35 @@
-"""DeepSeek ImageGen Core：独立于 Codex 插件结构的生图核心。"""
+"""DeepSeek ImageGen Core：稳定公共 API。
+
+外围客户端（CLI / WebUI / Codex Adapter / 未来 HTTP API）应优先通过本模块与
+imagegen.services 消费 Core，而不是直接依赖内部模块布局。
+"""
+
+from __future__ import annotations
+
+from .backends.base import BackendCapabilities
+from .engine import ImageGenEngine
+from .errors import (
+    BackendError,
+    ConfigurationError,
+    GenError,
+    ImageGenError,
+    ValidationError,
+)
+from .models import GenerateRequest, GenerateResult
+
+CORE_API_VERSION = 1
 
 __version__ = "1.0.0"
+
+__all__ = [
+    "CORE_API_VERSION",
+    "ImageGenEngine",
+    "GenerateRequest",
+    "GenerateResult",
+    "BackendCapabilities",
+    "ImageGenError",
+    "ConfigurationError",
+    "BackendError",
+    "ValidationError",
+    "GenError",
+]
