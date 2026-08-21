@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import mimetypes
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import unquote
 
@@ -103,6 +105,27 @@ def handle_patch_config(context: Any, body: bytes) -> Response:
 
 def handle_doctor(context: Any, body: bytes = b"") -> Response:
     return json_response(200, context.diagnostic_service.doctor())
+
+
+def handle_output(context: Any, generation_id: str) -> Response:
+    """只允许读取当前 Server 注册过的生成结果，不提供任意文件读取。"""
+    path = context.output_registry.get(generation_id)
+    if path is None:
+        return error_response(404, "not_found", "unknown generation_id")
+    file_path = Path(path)
+    if not file_path.is_file():
+        return error_response(404, "not_found", "output file not found")
+    try:
+        data = file_path.read_bytes()
+    except OSError:
+        return error_response(404, "not_found", "output file not found")
+    content_type = mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
+    return Response(
+        200,
+        data,
+        content_type=content_type,
+        headers={"Cache-Control": "private"},
+    )
 
 
 _STATIC_ROUTES: dict[tuple[str, str], Callable[..., Response]] = {
