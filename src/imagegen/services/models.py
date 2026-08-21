@@ -14,10 +14,17 @@ from ..errors import ImageGenError
 class ModelService:
     """对外围程序提供结构化的后端 / 模型查询。"""
 
-    def __init__(self, config: Optional[dict[str, Any]] = None):
+    def __init__(
+        self,
+        config: Optional[dict[str, Any]] = None,
+        config_service: Optional[Any] = None,
+    ):
         self._config = config
+        self._config_service = config_service
 
     def _cfg(self) -> dict[str, Any]:
+        if self._config_service is not None:
+            return self._config_service.load()
         return self._config if self._config is not None else load_config()
 
     def list_backends(self) -> list[dict[str, Any]]:
@@ -62,3 +69,12 @@ class ModelService:
             except ImageGenError:
                 info["base_url"] = ""
         return info
+
+    def backend_exists(self, backend_id: str) -> bool:
+        """后端是否可用：注册 id 或 extra_backends 里配置的名称。"""
+        backend_id = (backend_id or "").strip().lower()
+        if backend_id in list_backends():
+            return True
+        cfg = self._cfg()
+        extras = cfg.get("extra_backends") or {}
+        return isinstance(extras, dict) and backend_id in extras

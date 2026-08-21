@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from pathlib import Path
 from typing import Any, Optional
 
 from ..backends.vertex import discover_vertex, gen_vertex, gen_vertex_canvas_first
@@ -26,9 +27,13 @@ def _health_check(label: str, check: Any, cfg: dict[str, Any]) -> dict[str, Any]
     return entry
 
 
-def save_probe_cache(backend: str, probes: list[dict[str, Any]]) -> str:
+def save_probe_cache(
+    backend: str,
+    probes: list[dict[str, Any]],
+    config_path: Optional[Path] = None,
+) -> str:
     """把尺寸探针结果缓存进用户配置。"""
-    cfg_path = default_config_path()
+    cfg_path = config_path or default_config_path()
     cfg = {}
     if cfg_path.exists():
         try:
@@ -53,7 +58,11 @@ def save_probe_cache(backend: str, probes: list[dict[str, Any]]) -> str:
     return save_config(cfg)
 
 
-def run_size_probe(cfg: dict[str, Any], size: str = "") -> dict[str, Any]:
+def run_size_probe(
+    cfg: dict[str, Any],
+    size: str = "",
+    config_path: Optional[Path] = None,
+) -> dict[str, Any]:
     """尺寸探针：实测代理是否遵守尺寸参数（doctor --size-probe）。"""
     backend = "vertex"
     targets: list[tuple[int, int]] = []
@@ -95,7 +104,7 @@ def run_size_probe(cfg: dict[str, Any], size: str = "") -> dict[str, Any]:
         probes.append(item)
     cached = ""
     try:
-        cached = save_probe_cache(backend, probes)
+        cached = save_probe_cache(backend, probes, config_path=config_path)
     except OSError as exc:
         cached = ""
     return {
@@ -115,17 +124,26 @@ def run_size_probe(cfg: dict[str, Any], size: str = "") -> dict[str, Any]:
 class DiagnosticService:
     """统一诊断入口：doctor 与尺寸探针。"""
 
-    def __init__(self, config: Optional[dict[str, Any]] = None):
+    def __init__(
+        self,
+        config: Optional[dict[str, Any]] = None,
+        config_path: Optional[Path] = None,
+    ):
         self._config = config
+        self._config_path = Path(config_path).expanduser() if config_path else None
 
     def _cfg(self) -> dict[str, Any]:
-        return self._config if self._config is not None else load_config()
+        if self._config is not None:
+            return self._config
+        if self._config_path is not None:
+            return load_config(self._config_path)
+        return load_config()
 
     def doctor(self, size_probe: bool = False, size: str = "") -> dict[str, Any]:
         """运行诊断：默认检查后端连通性；size_probe=True 时执行尺寸探针。"""
         cfg = self._cfg()
         if size_probe:
-            return run_size_probe(cfg, size=size)
+            return run_size_probe(cfg, size=size, config_path=self._config_path)
         checks: list[dict[str, Any]] = []
         holder: dict[str, Any] = {}
 
@@ -151,7 +169,7 @@ class DiagnosticService:
             vertex_check["best_model"] = holder["info"]["model"]
             vertex_check["model_count"] = holder["count"]
         checks.append(vertex_check)
-        cfg_path = default_config_path()
+        cfg_path = self._config_path or default_config_path()
         return {
             "ok": any(check["ok"] for check in checks),
             "config_file": str(cfg_path),

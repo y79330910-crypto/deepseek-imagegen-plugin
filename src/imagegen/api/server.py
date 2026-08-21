@@ -129,11 +129,11 @@ def create_server(
     """构建 HTTP API v1 server；services 缺省时基于同一 config_path 创建。"""
     cfg_service = config_service or ConfigService(config_path)
     if generation_service is None:
-        generation_service = GenerationService(config=cfg_service.load())
+        generation_service = GenerationService(config_service=cfg_service)
     if model_service is None:
-        model_service = ModelService(config=cfg_service.load())
+        model_service = ModelService(config_service=cfg_service)
     if diagnostic_service is None:
-        diagnostic_service = DiagnosticService(config=cfg_service.load())
+        diagnostic_service = DiagnosticService(config_path=cfg_service.path())
     registry = output_registry or OutputRegistry()
     context = ApiContext(
         config_service=cfg_service,

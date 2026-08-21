@@ -9,6 +9,7 @@ from urllib.parse import unquote
 
 from ..backends.base import BACKEND_API_VERSION
 from ..errors import BackendError, ConfigurationError, ImageGenError, ValidationError
+from ..models import GenerateRequest
 from .responses import ApiError, parse_json_payload
 
 HTTP_API_VERSION = 1
@@ -45,7 +46,7 @@ def map_exception(exc: BaseException) -> Response:
     return error_response(500, "internal_error", "internal server error")
 
 
-def handle_health(context: Any) -> Response:
+def handle_health(context: Any, body: bytes = b"") -> Response:
     """轻量健康检查：只表示 Server 与 Core 已启动，不访问任何后端。"""
     from .. import CORE_API_VERSION
 
@@ -60,8 +61,57 @@ def handle_health(context: Any) -> Response:
     )
 
 
+def handle_backends(context: Any, body: bytes = b"") -> Response:
+    return json_response(200, {"backends": context.model_service.list_backends()})
+
+
+def handle_backend_info(context: Any, backend_id: str) -> Response:
+    if not context.model_service.backend_exists(backend_id):
+        return error_response(404, "not_found", f"unknown backend: {backend_id}")
+    return json_response(200, context.model_service.get_backend_info(backend_id))
+
+
+def handle_backend_models(context: Any, backend_id: str) -> Response:
+    if not context.model_service.backend_exists(backend_id):
+        return error_response(404, "not_found", f"unknown backend: {backend_id}")
+    return json_response(
+        200,
+        {"backend": backend_id, "models": context.model_service.list_models(backend_id)},
+    )
+
+
+def handle_generate(context: Any, body: bytes) -> Response:
+    payload = parse_json_payload(body)
+    request = GenerateRequest.from_dict(payload)
+    with context.generation_lock:
+        result = context.generation_service.generate(request)
+    context.output_registry.register(result.generation_id, result.path)
+    response = result.to_dict()
+    response["output_url"] = f"/api/v1/outputs/{result.generation_id}"
+    return json_response(200, response)
+
+
+def handle_get_config(context: Any, body: bytes = b"") -> Response:
+    return json_response(200, {"config": context.config_service.masked()})
+
+
+def handle_patch_config(context: Any, body: bytes) -> Response:
+    payload = parse_json_payload(body)
+    result = context.config_service.update(payload)
+    return json_response(200, {"config": result})
+
+
+def handle_doctor(context: Any, body: bytes = b"") -> Response:
+    return json_response(200, context.diagnostic_service.doctor())
+
+
 _STATIC_ROUTES: dict[tuple[str, str], Callable[..., Response]] = {
     ("GET", "/api/v1/health"): handle_health,
+    ("GET", "/api/v1/backends"): handle_backends,
+    ("POST", "/api/v1/generate"): handle_generate,
+    ("GET", "/api/v1/config"): handle_get_config,
+    ("PATCH", "/api/v1/config"): handle_patch_config,
+    ("POST", "/api/v1/doctor"): handle_doctor,
 }
 
 
@@ -83,7 +133,7 @@ def _method_not_allowed(allowed: list[str]) -> Response:
 def dispatch(context: Any, method: str, path: str, body: bytes) -> Response:
     handler = _STATIC_ROUTES.get((method, path))
     if handler is not None:
-        return _safe_call(handler, context)
+        return _safe_call(handler, context, body)
     allowed = [m for (m, p) in _STATIC_ROUTES if p == path]
     if allowed:
         return _method_not_allowed(allowed)

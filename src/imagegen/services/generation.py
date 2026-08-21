@@ -15,12 +15,21 @@ class GenerationService:
         self,
         engine: Optional[ImageGenEngine] = None,
         config: Optional[dict[str, Any]] = None,
+        config_service: Optional[Any] = None,
     ):
-        """engine 与 config 二选一：显式 config 会注入默认 Engine（不重复解析配置）。"""
+        """engine / config / config_service 三选一：
+
+        - engine：直接注入；
+        - config：注入默认 Engine 的显式配置（不重复解析）；
+        - config_service：每次生成前从 ConfigService 刷新配置（保持同一上下文）。
+        """
         self._engine = engine or ImageGenEngine(config=config)
+        self._config_service = config_service
 
     def generate(self, request: GenerateRequest) -> GenerateResult:
         """文生图 / 图生图：request.images 非空时自动走编辑流程。"""
+        if self._config_service is not None:
+            self._engine = ImageGenEngine(config=self._config_service.load())
         return self._engine.generate(request)
 
     def edit(self, request: GenerateRequest) -> GenerateResult:
