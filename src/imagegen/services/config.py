@@ -4,9 +4,114 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from ..config import CONFIG_FILE, load_config, mask_config, save_config
+
+
+SECRET_KEYS = {"api_key", "password", "token", "key"}
+
+
+def _to_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ("true", "on", "1")
+
+
+def _to_int(value: Any) -> int:
+    return int(str(value).strip())
+
+
+def _to_float(value: Any) -> float:
+    return float(str(value).strip())
+
+
+def _to_list(value: Any) -> list[str]:
+    return [s.strip() for s in str(value).split(",") if s.strip()]
+
+
+def _normalize_patch(patch: Mapping[str, Any]) -> dict[str, Any]:
+    """按已知配置字段做类型规范化（Web 表单字符串 → 配置类型）。
+
+    只转换明确已知的字段，不做全局“智能猜类型”，避免把 API Key 等误转成数字。
+    未知字段透传（保持既有行为）。
+    """
+    result: dict[str, Any] = json.loads(json.dumps(dict(patch)))
+    pl = result.get("prompt_library")
+    if isinstance(pl, dict):
+        if isinstance(pl.get("categories"), str):
+            pl["categories"] = _to_list(pl["categories"])
+        for key in ("top_k", "final_k", "priority_count"):
+            if key in pl and pl[key] not in ("", None):
+                pl[key] = _to_int(pl[key])
+        for key in ("enabled", "use_in_translator"):
+            if key in pl and isinstance(pl[key], str):
+                pl[key] = _to_bool(pl[key])
+        rr = pl.get("rerank")
+        if isinstance(rr, dict) and isinstance(rr.get("enabled"), str):
+            rr["enabled"] = _to_bool(rr["enabled"])
+        mysql = pl.get("mysql")
+        if isinstance(mysql, dict) and mysql.get("port") not in ("", None):
+            mysql["port"] = _to_int(mysql["port"])
+    sp = result.get("size_policy")
+    if isinstance(sp, dict):
+        if sp.get("retries") not in ("", None):
+            sp["retries"] = _to_int(sp["retries"])
+        if sp.get("tolerance") not in ("", None):
+            sp["tolerance"] = _to_float(sp["tolerance"])
+    ref = result.get("reference")
+    if isinstance(ref, dict) and isinstance(ref.get("auto_classify"), str):
+        ref["auto_classify"] = _to_bool(ref["auto_classify"])
+    eb = result.get("extra_backends")
+    if isinstance(eb, dict):
+        for info in eb.values():
+            if not isinstance(info, dict):
+                continue
+            if isinstance(info.get("sizes"), str):
+                info["sizes"] = _to_list(info["sizes"])
+            if isinstance(info.get("models"), str):
+                info["models"] = _to_list(info["models"])
+            if info.get("quality") in ("", None):
+                info.pop("quality", None)
+    return result
+
+
+def _deep_merge(base: dict[str, Any], override: Mapping[str, Any]) -> dict[str, Any]:
+    """递归合并 patch；None 值跳过（表示不修改）。"""
+    result = dict(base)
+    for key, value in override.items():
+        if value is None:
+            continue
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
+def _protect_masked_secrets(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
+    """patch 值等于当前 masked 表示时保留原 secret，防止 WebUI 回传打码值覆盖真实值。"""
+    masked = mask_config(base)
+
+    def walk(patch_node: Any, base_node: Any, masked_node: Any) -> Any:
+        if not isinstance(patch_node, dict):
+            return patch_node
+        result = dict(patch_node)
+        for key, value in list(result.items()):
+            if isinstance(value, dict):
+                result[key] = walk(
+                    value,
+                    base_node.get(key, {}) if isinstance(base_node, dict) else {},
+                    masked_node.get(key, {}) if isinstance(masked_node, dict) else {},
+                )
+            elif key in SECRET_KEYS and isinstance(value, str):
+                masked_value = masked_node.get(key) if isinstance(masked_node, dict) else None
+                if value == masked_value:
+                    base_value = base_node.get(key) if isinstance(base_node, dict) else None
+                    result[key] = base_value if base_value is not None else ""
+        return result
+
+    return walk(patch, base, masked)
 
 
 class ConfigService:
@@ -39,3 +144,17 @@ class ConfigService:
 
     def exists(self) -> bool:
         return CONFIG_FILE.exists()
+
+    def update(self, patch: Mapping[str, Any]) -> dict[str, Any]:
+        """统一配置更新语义：规范化 → 深度合并 → 保护 masked secret → 保存 → 返回打码配置。
+
+        WebUI / CLI / 未来 HTTP 都通过此方法修改配置，不再各自实现合并逻辑。
+        """
+        base = self.load_raw()
+        if not isinstance(base, dict):
+            base = {}
+        normalized = _normalize_patch(patch)
+        protected = _protect_masked_secrets(base, normalized)
+        merged = _deep_merge(base, protected)
+        self.save(merged)
+        return self.masked()

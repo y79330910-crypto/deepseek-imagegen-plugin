@@ -121,6 +121,100 @@ class TestConfigService(unittest.TestCase):
         self.assertIsInstance(svc.exists(), bool)
 
 
+class TestConfigServiceUpdate(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.config_dir = Path(self.tmp.name)
+        self.config_file = self.config_dir / "config.json"
+        self.patches = [
+            mock.patch("imagegen.config.CONFIG_DIR", self.config_dir),
+            mock.patch("imagegen.config.CONFIG_FILE", self.config_file),
+            mock.patch("imagegen.services.config.CONFIG_FILE", self.config_file),
+        ]
+        for patcher in self.patches:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        initial = {
+            "save_dir": "/tmp/out",
+            "translator": {
+                "engine": "deepseek",
+                "deepseek": {"api_key": "sk-real-secret-123", "model": "deepseek-v4-flash"},
+            },
+            "size_policy": {"mode": "auto", "retries": 2, "tolerance": 0.06},
+            "prompt_library": {"enabled": True},
+            "extra_backends": {
+                "dragtokens": {"model": "gpt-image-2", "api_key": "sk-extra-456"}
+            },
+        }
+        self.config_file.write_text(json.dumps(initial), encoding="utf-8")
+
+    def test_update_plain_field_and_load(self):
+        ConfigService().update({"save_dir": "/new/out"})
+        self.assertEqual(ConfigService().load()["save_dir"], "/new/out")
+
+    def test_update_nested_deep_merge(self):
+        ConfigService().update({"translator": {"engine": "gemini"}})
+        cfg = ConfigService().load()
+        self.assertEqual(cfg["translator"]["engine"], "gemini")
+        self.assertEqual(
+            cfg["translator"]["deepseek"]["api_key"], "sk-real-secret-123"
+        )  # 未 patch 的嵌套字段保留
+
+    def test_bool_int_float_conversion(self):
+        ConfigService().update(
+            {
+                "prompt_library": {"enabled": "false", "top_k": "30"},
+                "size_policy": {"retries": "3", "tolerance": "0.1"},
+            }
+        )
+        cfg = ConfigService().load()
+        self.assertIs(cfg["prompt_library"]["enabled"], False)
+        self.assertEqual(cfg["prompt_library"]["top_k"], 30)
+        self.assertEqual(cfg["size_policy"]["retries"], 3)
+        self.assertAlmostEqual(cfg["size_policy"]["tolerance"], 0.1)
+
+    def test_masked_secret_not_overwritten(self):
+        masked = ConfigService().masked()
+        patch_secret = masked["translator"]["deepseek"]["api_key"]
+        self.assertIn("*", patch_secret)
+        ConfigService().update({"translator": {"deepseek": {"api_key": patch_secret}}})
+        cfg = ConfigService().load()
+        self.assertEqual(cfg["translator"]["deepseek"]["api_key"], "sk-real-secret-123")
+
+    def test_new_real_secret_updates(self):
+        ConfigService().update(
+            {"translator": {"deepseek": {"api_key": "sk-brand-new-789"}}}
+        )
+        cfg = ConfigService().load()
+        self.assertEqual(cfg["translator"]["deepseek"]["api_key"], "sk-brand-new-789")
+
+    def test_unknown_field_kept(self):
+        ConfigService().update({"custom_field": {"nested": 1}})
+        cfg = ConfigService().load()
+        self.assertEqual(cfg["custom_field"], {"nested": 1})
+
+    def test_extra_backend_lists_and_secret_preserved(self):
+        ConfigService().update(
+            {
+                "extra_backends": {
+                    "dragtokens": {"sizes": "1024x1024, 2048x2048", "models": "a, b"}
+                }
+            }
+        )
+        cfg = ConfigService().load()
+        eb = cfg["extra_backends"]["dragtokens"]
+        self.assertEqual(eb["sizes"], ["1024x1024", "2048x2048"])
+        self.assertEqual(eb["models"], ["a", "b"])
+        self.assertEqual(eb["api_key"], "sk-extra-456")
+
+    def test_update_returns_masked_config(self):
+        result = ConfigService().update(
+            {"translator": {"deepseek": {"api_key": "sk-x1234567890"}}}
+        )
+        self.assertNotIn("sk-x1234567890", json.dumps(result))
+
+
 class TestDiagnosticService(unittest.TestCase):
     def test_doctor_health_check_mocked(self):
         fake_http = mock.Mock(

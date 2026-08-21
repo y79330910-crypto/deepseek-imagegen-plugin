@@ -98,92 +98,11 @@ def load_config() -> dict:
     return ConfigService().load()
 
 
-def raw_config() -> dict:
-    syspath()
-    from imagegen import ConfigService
-
-    return ConfigService().load_raw()
-
-
 def masked_config() -> dict:
     syspath()
     from imagegen import ConfigService
 
     return ConfigService().masked()
-
-
-def save_raw(cfg: dict) -> None:
-    syspath()
-    from imagegen import ConfigService
-
-    ConfigService().save(cfg)
-
-
-def deep_merge(base: dict, override: dict) -> dict:
-    """递归合并用户设置；打码占位符（含 * 或 “(未设置)”）保持不变。"""
-    for key, val in override.items():
-        if val is None:
-            continue
-        if isinstance(val, dict) and isinstance(base.get(key), dict):
-            deep_merge(base[key], val)
-            continue
-        if isinstance(val, str) and ("*" in val or val == "(未设置)"):
-            continue
-        base[key] = val
-    return base
-
-
-def normalize_edits(edits: dict) -> dict:
-    """把前端传来的字符串型设置转成配置需要的类型。"""
-    pl = edits.get("prompt_library")
-    if isinstance(pl, dict):
-        if isinstance(pl.get("categories"), str):
-            pl["categories"] = [c.strip() for c in pl["categories"].split(",") if c.strip()]
-        for key in ("top_k", "final_k", "priority_count"):
-            if key in pl and pl[key] not in ("", None):
-                try:
-                    pl[key] = int(pl[key])
-                except (TypeError, ValueError):
-                    pass
-        for key in ("enabled", "use_in_translator"):
-            if key in pl and isinstance(pl[key], str):
-                pl[key] = pl[key] in ("true", "on", "1")
-        rr = pl.get("rerank")
-        if isinstance(rr, dict) and isinstance(rr.get("enabled"), str):
-            rr["enabled"] = rr["enabled"] in ("true", "on", "1")
-        mysql = pl.get("mysql")
-        if isinstance(mysql, dict) and mysql.get("port") not in ("", None):
-            try:
-                mysql["port"] = int(mysql["port"])
-            except (TypeError, ValueError):
-                pass
-    sp = edits.get("size_policy")
-    if isinstance(sp, dict):
-        if sp.get("retries") not in ("", None):
-            try:
-                sp["retries"] = int(sp["retries"])
-            except (TypeError, ValueError):
-                pass
-        if sp.get("tolerance") not in ("", None):
-            try:
-                sp["tolerance"] = float(sp["tolerance"])
-            except (TypeError, ValueError):
-                pass
-    ref = edits.get("reference")
-    if isinstance(ref, dict) and isinstance(ref.get("auto_classify"), str):
-        ref["auto_classify"] = ref["auto_classify"] in ("true", "on", "1")
-    eb = edits.get("extra_backends")
-    if isinstance(eb, dict):
-        for name, info in eb.items():
-            if not isinstance(info, dict):
-                continue
-            if isinstance(info.get("sizes"), str):
-                info["sizes"] = [s.strip() for s in info["sizes"].split(",") if s.strip()]
-            if isinstance(info.get("models"), str):
-                info["models"] = [s.strip() for s in info["models"].split(",") if s.strip()]
-            if info.get("quality") in ("", None):
-                info.pop("quality", None)
-    return edits
 
 
 # ---------- 壁纸 / 历史 ----------
@@ -510,10 +429,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             if path == "/api/config":
-                raw = raw_config()
-                merged = deep_merge(raw, normalize_edits(payload))
-                save_raw(merged)
-                self._json({"ok": True, "config": masked_config()})
+                from imagegen import ConfigService
+
+                final = ConfigService().update(payload)
+                self._json({"ok": True, "config": final})
             elif path == "/api/generate":
                 self._json(run_generate(payload))
             elif path == "/api/wallpaper":
