@@ -34,6 +34,7 @@ from .vertex import (
     gen_vertex_canvas_first,
     gen_vertex_img2img,
     normalize_extra_size,
+    pick_extra_model_for_size,
 )
 
 
@@ -295,6 +296,11 @@ def generate(
                 used_canvas_first = True
     else:
         binfo = discover_extra_backend(cfg, backend_name)
+        if not model:
+            auto_model = pick_extra_model_for_size(cfg, backend_name, width, height)
+            if auto_model:
+                model = auto_model
+                warnings.append(f"已按尺寸自动选择备用后端模型：{model}")
         size_str = normalize_extra_size(width, height, extra_backend_sizes(cfg, backend_name, model))
         aspect = extra_size_aspect(size_str)
         if size_str != f"{width}x{height}".lower():
@@ -333,7 +339,13 @@ def generate(
 
     # ---- 真实尺寸校验 + 画布优先兜底（文生图且尺寸不符时重试）
     actual_size = probe_image_size_ext(data, "")
-    requested = (width, height)
+    if backend_name == "vertex":
+        requested = (width, height)
+    else:
+        try:
+            requested = parse_size(size_str)
+        except Exception:  # noqa: BLE001
+            requested = (width, height)
     match = sizes_match(requested, actual_size, tolerance)
     if (
         not match["ok"]
@@ -396,6 +408,7 @@ def generate(
     result: dict[str, Any] = {
         "ok": True,
         "backend": backend_name,
+        "model": model,
         "quality": quality,
         "size_hint": size_hint if backend_name != "vertex" else "",
         "path": str(out_path),
@@ -405,6 +418,7 @@ def generate(
         "size_match": bool(actual_size and match["ok"]),
         "size_check": {
             "requested": f"{width}x{height}",
+            "effective": size_str if backend_name != "vertex" else "",
             "actual": f"{actual_size[0]}x{actual_size[1]}" if actual_size else None,
             "match": bool(actual_size and match["ok"]),
             "reason": match.get("reason") or "",

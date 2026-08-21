@@ -466,6 +466,42 @@ def extra_backend_sizes(cfg: dict[str, Any], name: str, model_override: str = ""
     return extra_size_whitelist({"model": eff_model, "sizes": info.get("sizes")})
 
 
+def pick_extra_model_for_size(cfg: dict[str, Any], name: str, width: int, height: int) -> str:
+    """备用后端模型为空（自动）时，按目标尺寸挑选最合适的模型。
+
+    优先选白名单里能精确命中目标尺寸的模型；都不行则选画幅/比例最接近的。
+    返回空字符串表示没有可用模型，沿用默认。
+    """
+    backends = cfg.get("extra_backends") or {}
+    info = backends.get(name) if isinstance(backends, dict) else None
+    if not isinstance(info, dict):
+        return ""
+    models = [str(x).strip() for x in (info.get("models") or []) if str(x).strip()]
+    default = str(info.get("model") or "").strip()
+    if default and default not in models:
+        models.insert(0, default)
+    if not models:
+        return ""
+    wanted = f"{width}x{height}".lower()
+    target_kind = "portrait" if height > width else ("landscape" if width > height else "square")
+    target_ratio = width / height if height else 1.0
+    best, best_key = "", None
+    for m in models:
+        wl = extra_size_whitelist({"model": m, "sizes": info.get("sizes")})
+        if not wl:
+            continue
+        if wanted in wl:
+            return m
+        slot = normalize_extra_size(width, height, wl)
+        key = (
+            1 if _size_kind(slot) != target_kind else 0,
+            abs(_size_ratio(slot) - target_ratio),
+        )
+        if best_key is None or key < best_key:
+            best, best_key = m, key
+    return best or default
+
+
 def discover_extra_backend(cfg: dict[str, Any], name: str) -> dict[str, Any]:
     """读取备用后端 extra_backends.<name>，返回连接信息。"""
     backends = cfg.get("extra_backends") or {}

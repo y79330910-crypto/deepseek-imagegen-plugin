@@ -49,6 +49,7 @@ from imagegen.vertex import (  # noqa: E402
     extra_size_whitelist,
     normalize_extra_size,
     parse_models_list,
+    pick_extra_model_for_size,
     pick_best_image_model,
     pick_best_text_model,
 )
@@ -439,6 +440,23 @@ class TestExtraBackend(unittest.TestCase):
         }
         self.assertEqual(extra_backend_sizes(cfg, "dragtokens", "gpt-image-2-原生4k"), ["2048x2048", "3840x2160", "2160x3840"])
         self.assertEqual(extra_backend_sizes(cfg, "dragtokens", ""), OPENAI_IMAGE_SIZES)
+
+    def test_pick_model_for_size(self):
+        cfg = {
+            "extra_backends": {
+                "dragtokens": {
+                    "base_url": "https://x",
+                    "api_key": "sk-test",
+                    "model": "gpt-image-2",
+                    "sizes": "",
+                    "models": ["gpt-image-2", "gpt-image-2-4k超分", "gpt-image-2-原生4k"],
+                }
+            }
+        }
+        self.assertEqual(pick_extra_model_for_size(cfg, "dragtokens", 2560, 1440), "gpt-image-2-4k超分")
+        self.assertEqual(pick_extra_model_for_size(cfg, "dragtokens", 1536, 1024), "gpt-image-2")
+        self.assertEqual(pick_extra_model_for_size(cfg, "dragtokens", 3840, 2160), "gpt-image-2-4k超分")
+        self.assertEqual(pick_extra_model_for_size(cfg, "dragtokens", 1024, 1536), "gpt-image-2")
 
 
 if __name__ == "__main__":
