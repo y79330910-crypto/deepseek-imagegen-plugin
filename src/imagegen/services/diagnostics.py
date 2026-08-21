@@ -7,7 +7,7 @@ import time
 from typing import Any, Optional
 
 from ..backends.vertex import discover_vertex, gen_vertex, gen_vertex_canvas_first
-from ..config import CONFIG_FILE, load_config, save_config
+from ..config import default_config_path, load_config, save_config
 from ..errors import ImageGenError
 from ..http import BROWSER_UA, HEALTH_TIMEOUT, http
 from ..image_utils import parse_size, probe_image_size_ext, sizes_match
@@ -28,10 +28,11 @@ def _health_check(label: str, check: Any, cfg: dict[str, Any]) -> dict[str, Any]
 
 def save_probe_cache(backend: str, probes: list[dict[str, Any]]) -> str:
     """把尺寸探针结果缓存进用户配置。"""
+    cfg_path = default_config_path()
     cfg = {}
-    if CONFIG_FILE.exists():
+    if cfg_path.exists():
         try:
-            with CONFIG_FILE.open("r", encoding="utf-8") as handle:
+            with cfg_path.open("r", encoding="utf-8") as handle:
                 cfg = json.load(handle)
         except (OSError, json.JSONDecodeError):
             cfg = {}
@@ -150,10 +151,11 @@ class DiagnosticService:
             vertex_check["best_model"] = holder["info"]["model"]
             vertex_check["model_count"] = holder["count"]
         checks.append(vertex_check)
+        cfg_path = default_config_path()
         return {
             "ok": any(check["ok"] for check in checks),
-            "config_file": str(CONFIG_FILE),
-            "config_exists": CONFIG_FILE.exists(),
+            "config_file": str(cfg_path),
+            "config_exists": cfg_path.exists(),
             "backend": "vertex",
             "checks": checks,
         }

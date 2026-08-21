@@ -9,14 +9,22 @@ from typing import Any
 
 
 APP_NAME = "deepseek-imagegen"
-CONFIG_DIR = Path.home() / ".deepseek-imagegen"
-CONFIG_FILE = CONFIG_DIR / "config.json"
 # 独立程序不内置任何宿主专属路径：
 # - vertex.dir 缺省时可使用环境变量 VERTEX_PROXY_DIR 指定
 # - mirror_dir 缺省时可使用环境变量 IMAGEGEN_MIRROR_DIR 指定
 VERTEX_DEFAULT_DIR = ""
 MIRROR_DIR_ENV = "IMAGEGEN_MIRROR_DIR"
 DEFAULT_MIRROR_DIR = ""
+
+
+def default_config_path() -> Path:
+    """ImageGen 默认用户配置路径（单一来源，跨模块复用）。"""
+    return Path.home() / ".deepseek-imagegen" / "config.json"
+
+
+# 兼容常量（新代码优先使用 default_config_path()）
+CONFIG_DIR = Path.home() / ".deepseek-imagegen"
+CONFIG_FILE = default_config_path()
 
 
 DEFAULT_CONFIG: dict[str, Any] = {
@@ -135,19 +143,24 @@ def _migrate_translator(cfg: dict[str, Any]) -> dict[str, Any]:
     return cfg
 
 
-def load_config() -> dict[str, Any]:
-    """读取用户配置并合并默认值。"""
+def load_config(config_path: str | Path | None = None) -> dict[str, Any]:
+    """读取用户配置并合并默认值；config_path 缺省时使用默认路径。"""
     cfg = json.loads(json.dumps(DEFAULT_CONFIG))
-    if CONFIG_FILE.exists():
+    cfg_path = (
+        Path(config_path).expanduser()
+        if config_path is not None
+        else default_config_path()
+    )
+    if cfg_path.exists():
         try:
-            with CONFIG_FILE.open("r", encoding="utf-8") as handle:
+            with cfg_path.open("r", encoding="utf-8") as handle:
                 user_cfg = json.load(handle)
             if isinstance(user_cfg, dict):
                 cfg = deep_merge(cfg, user_cfg)
         except (OSError, json.JSONDecodeError) as exc:
             from .errors import ConfigurationError
 
-            raise ConfigurationError(f"配置文件解析失败（{CONFIG_FILE}）：{exc}") from exc
+            raise ConfigurationError(f"配置文件解析失败（{cfg_path}）：{exc}") from exc
     if not str(cfg.get("mirror_dir") or "").strip():
         env_mirror = os.environ.get(MIRROR_DIR_ENV, "").strip()
         if env_mirror:
@@ -155,14 +168,19 @@ def load_config() -> dict[str, Any]:
     return _migrate_translator(cfg)
 
 
-def save_config(cfg: dict[str, Any]) -> str:
-    """原子写入配置（doctor 尺寸探针缓存用）。"""
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = str(CONFIG_FILE) + ".tmp"
+def save_config(cfg: dict[str, Any], config_path: str | Path | None = None) -> str:
+    """原子写入配置；config_path 缺省时使用默认路径。"""
+    cfg_path = (
+        Path(config_path).expanduser()
+        if config_path is not None
+        else default_config_path()
+    )
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = str(cfg_path) + ".tmp"
     with open(tmp, "w", encoding="utf-8") as handle:
         json.dump(cfg, handle, ensure_ascii=False, indent=2)
-    os.replace(tmp, CONFIG_FILE)
-    return str(CONFIG_FILE)
+    os.replace(tmp, cfg_path)
+    return str(cfg_path)
 
 
 def mask_key(key: str) -> str:

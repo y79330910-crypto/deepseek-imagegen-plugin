@@ -54,6 +54,11 @@ class TestGenerationService(unittest.TestCase):
     def test_default_engine_is_imagegen_engine(self):
         self.assertIsInstance(GenerationService()._engine, ImageGenEngine)
 
+    def test_config_injection_reaches_engine(self):
+        cfg = {"save_dir": "/custom", "default_size": "1024x1024"}
+        svc = GenerationService(config=cfg)
+        self.assertIs(svc._engine._config, cfg)
+
 
 class TestModelService(unittest.TestCase):
     def test_list_backends_structured(self):
@@ -90,35 +95,36 @@ class TestModelService(unittest.TestCase):
 
 class TestConfigService(unittest.TestCase):
     def test_load_and_masked_delegate(self):
-        with (
-            mock.patch("imagegen.services.config.load_config", return_value={"a": 1}),
-            mock.patch("imagegen.services.config.mask_config", return_value={"a": 1}),
-        ):
-            svc = ConfigService()
-            self.assertEqual(svc.load(), {"a": 1})
-            self.assertEqual(svc.masked(), {"a": 1})
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = Path(tmp) / "config.json"
+            cfg_path.write_text(json.dumps({"a": 1}), encoding="utf-8")
+            svc = ConfigService(cfg_path)
+            self.assertEqual(svc.load()["a"], 1)
+            self.assertEqual(svc.masked()["a"], 1)
 
     def test_load_raw_reads_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             cfg_path = Path(tmp) / "config.json"
             cfg_path.write_text(json.dumps({"k": "v"}), encoding="utf-8")
-            with mock.patch("imagegen.services.config.CONFIG_FILE", cfg_path):
-                self.assertEqual(ConfigService().load_raw(), {"k": "v"})
-            with mock.patch("imagegen.services.config.CONFIG_FILE", Path(tmp) / "missing.json"):
-                self.assertEqual(ConfigService().load_raw(), {})
+            self.assertEqual(ConfigService(cfg_path).load_raw(), {"k": "v"})
+            self.assertEqual(ConfigService(Path(tmp) / "missing.json").load_raw(), {})
 
     def test_save_delegates(self):
-        with mock.patch(
-            "imagegen.services.config.save_config", return_value="/tmp/config.json"
-        ) as save:
-            result = ConfigService().save({"a": 1})
-        save.assert_called_once_with({"a": 1})
-        self.assertEqual(result, "/tmp/config.json")
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = Path(tmp) / "config.json"
+            result = ConfigService(cfg_path).save({"a": 1})
+            self.assertEqual(result, str(cfg_path))
+            self.assertTrue(cfg_path.exists())
+            self.assertEqual(json.loads(cfg_path.read_text(encoding="utf-8")), {"a": 1})
 
     def test_path_and_exists(self):
-        svc = ConfigService()
-        self.assertTrue(str(svc.path()).endswith("config.json"))
-        self.assertIsInstance(svc.exists(), bool)
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = Path(tmp) / "config.json"
+            svc = ConfigService(cfg_path)
+            self.assertEqual(svc.path(), cfg_path)
+            self.assertFalse(svc.exists())
+            svc.save({"a": 1})
+            self.assertTrue(svc.exists())
 
 
 class TestConfigServiceUpdate(unittest.TestCase):
@@ -127,14 +133,6 @@ class TestConfigServiceUpdate(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.config_dir = Path(self.tmp.name)
         self.config_file = self.config_dir / "config.json"
-        self.patches = [
-            mock.patch("imagegen.config.CONFIG_DIR", self.config_dir),
-            mock.patch("imagegen.config.CONFIG_FILE", self.config_file),
-            mock.patch("imagegen.services.config.CONFIG_FILE", self.config_file),
-        ]
-        for patcher in self.patches:
-            patcher.start()
-            self.addCleanup(patcher.stop)
         initial = {
             "save_dir": "/tmp/out",
             "translator": {
@@ -149,70 +147,103 @@ class TestConfigServiceUpdate(unittest.TestCase):
         }
         self.config_file.write_text(json.dumps(initial), encoding="utf-8")
 
+    def _svc(self) -> ConfigService:
+        return ConfigService(self.config_file)
+
     def test_update_plain_field_and_load(self):
-        ConfigService().update({"save_dir": "/new/out"})
-        self.assertEqual(ConfigService().load()["save_dir"], "/new/out")
+        self._svc().update({"save_dir": "/new/out"})
+        self.assertEqual(self._svc().load()["save_dir"], "/new/out")
 
     def test_update_nested_deep_merge(self):
-        ConfigService().update({"translator": {"engine": "gemini"}})
-        cfg = ConfigService().load()
+        self._svc().update({"translator": {"engine": "gemini"}})
+        cfg = self._svc().load()
         self.assertEqual(cfg["translator"]["engine"], "gemini")
         self.assertEqual(
             cfg["translator"]["deepseek"]["api_key"], "sk-real-secret-123"
         )  # 未 patch 的嵌套字段保留
 
     def test_bool_int_float_conversion(self):
-        ConfigService().update(
+        self._svc().update(
             {
                 "prompt_library": {"enabled": "false", "top_k": "30"},
                 "size_policy": {"retries": "3", "tolerance": "0.1"},
             }
         )
-        cfg = ConfigService().load()
+        cfg = self._svc().load()
         self.assertIs(cfg["prompt_library"]["enabled"], False)
         self.assertEqual(cfg["prompt_library"]["top_k"], 30)
         self.assertEqual(cfg["size_policy"]["retries"], 3)
         self.assertAlmostEqual(cfg["size_policy"]["tolerance"], 0.1)
 
     def test_masked_secret_not_overwritten(self):
-        masked = ConfigService().masked()
+        masked = self._svc().masked()
         patch_secret = masked["translator"]["deepseek"]["api_key"]
         self.assertIn("*", patch_secret)
-        ConfigService().update({"translator": {"deepseek": {"api_key": patch_secret}}})
-        cfg = ConfigService().load()
+        self._svc().update({"translator": {"deepseek": {"api_key": patch_secret}}})
+        cfg = self._svc().load()
         self.assertEqual(cfg["translator"]["deepseek"]["api_key"], "sk-real-secret-123")
 
     def test_new_real_secret_updates(self):
-        ConfigService().update(
+        self._svc().update(
             {"translator": {"deepseek": {"api_key": "sk-brand-new-789"}}}
         )
-        cfg = ConfigService().load()
+        cfg = self._svc().load()
         self.assertEqual(cfg["translator"]["deepseek"]["api_key"], "sk-brand-new-789")
 
     def test_unknown_field_kept(self):
-        ConfigService().update({"custom_field": {"nested": 1}})
-        cfg = ConfigService().load()
+        self._svc().update({"custom_field": {"nested": 1}})
+        cfg = self._svc().load()
         self.assertEqual(cfg["custom_field"], {"nested": 1})
 
     def test_extra_backend_lists_and_secret_preserved(self):
-        ConfigService().update(
+        self._svc().update(
             {
                 "extra_backends": {
                     "dragtokens": {"sizes": "1024x1024, 2048x2048", "models": "a, b"}
                 }
             }
         )
-        cfg = ConfigService().load()
+        cfg = self._svc().load()
         eb = cfg["extra_backends"]["dragtokens"]
         self.assertEqual(eb["sizes"], ["1024x1024", "2048x2048"])
         self.assertEqual(eb["models"], ["a", "b"])
         self.assertEqual(eb["api_key"], "sk-extra-456")
 
     def test_update_returns_masked_config(self):
-        result = ConfigService().update(
+        result = self._svc().update(
             {"translator": {"deepseek": {"api_key": "sk-x1234567890"}}}
         )
         self.assertNotIn("sk-x1234567890", json.dumps(result))
+
+
+class TestConfigPathInjection(unittest.TestCase):
+    def test_default_path_uses_single_rule(self):
+        from imagegen.config import default_config_path
+
+        self.assertEqual(ConfigService().path(), default_config_path())
+        self.assertEqual(str(ConfigService().path()).endswith("config.json"), True)
+
+    def test_str_and_path_injection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path_obj = Path(tmp) / "config.json"
+            svc_a = ConfigService(str(path_obj))
+            svc_b = ConfigService(path_obj)
+            self.assertEqual(svc_a.path(), path_obj)
+            self.assertEqual(svc_b.path(), path_obj)
+
+    def test_paths_are_isolated(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path_a = Path(tmp) / "config_a.json"
+            path_b = Path(tmp) / "config_b.json"
+            svc_a = ConfigService(path_a)
+            svc_b = ConfigService(path_b)
+            svc_a.update({"save_dir": "/a/out", "translator": {"engine": "gemini"}})
+            svc_b.update({"save_dir": "/b/out", "translator": {"engine": "off"}})
+            self.assertEqual(svc_a.load()["save_dir"], "/a/out")
+            self.assertEqual(svc_a.load()["translator"]["engine"], "gemini")
+            self.assertEqual(svc_b.load()["save_dir"], "/b/out")
+            self.assertEqual(svc_b.load()["translator"]["engine"], "off")
+            self.assertFalse(path_a == path_b)
 
 
 class TestDiagnosticService(unittest.TestCase):

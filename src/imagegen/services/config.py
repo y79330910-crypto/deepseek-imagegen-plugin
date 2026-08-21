@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
-from ..config import CONFIG_FILE, load_config, mask_config, save_config
+from ..config import default_config_path, load_config, mask_config, save_config
 
 
 SECRET_KEYS = {"api_key", "password", "token", "key"}
@@ -115,35 +115,44 @@ def _protect_masked_secrets(base: dict[str, Any], patch: dict[str, Any]) -> dict
 
 
 class ConfigService:
-    """外围客户端唯一配置入口（WebUI 不再直接读写配置文件）。"""
+    """外围客户端唯一配置入口（WebUI 不再直接读写配置文件）。
+
+    path 支持 str / Path / None；None 时使用 default_config_path()。
+    所有方法都基于实例路径 self.config_path，不会回落模块级常量。
+    """
+
+    def __init__(self, path: str | Path | None = None):
+        self.config_path = (
+            Path(path).expanduser() if path is not None else default_config_path()
+        )
 
     def load(self) -> dict[str, Any]:
         """合并默认值后的生效配置（含旧配置迁移与环境变量）。"""
-        return load_config()
+        return load_config(self.config_path)
 
     def load_raw(self) -> dict[str, Any]:
         """读取用户配置文件原文（不合并默认值）；不存在或损坏时返回空 dict。"""
-        if not CONFIG_FILE.exists():
+        if not self.config_path.exists():
             return {}
         try:
-            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+            data = json.loads(self.config_path.read_text(encoding="utf-8"))
             return data if isinstance(data, dict) else {}
         except (OSError, json.JSONDecodeError):
             return {}
 
     def save(self, cfg: dict[str, Any]) -> str:
         """原子写入用户配置文件，返回路径。"""
-        return save_config(cfg)
+        return save_config(cfg, self.config_path)
 
     def masked(self) -> dict[str, Any]:
         """返回密钥已打码的生效配置。"""
         return mask_config(self.load())
 
     def path(self) -> Path:
-        return CONFIG_FILE
+        return self.config_path
 
     def exists(self) -> bool:
-        return CONFIG_FILE.exists()
+        return self.config_path.exists()
 
     def update(self, patch: Mapping[str, Any]) -> dict[str, Any]:
         """统一配置更新语义：规范化 → 深度合并 → 保护 masked secret → 保存 → 返回打码配置。

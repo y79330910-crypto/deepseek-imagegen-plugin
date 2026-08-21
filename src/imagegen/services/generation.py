@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 from ..engine import ImageGenEngine
 from ..models import GenerateRequest, GenerateResult
@@ -11,8 +11,13 @@ from ..models import GenerateRequest, GenerateResult
 class GenerationService:
     """包装 ImageGenEngine，对外围客户端提供稳定的生图接口。"""
 
-    def __init__(self, engine: Optional[ImageGenEngine] = None):
-        self._engine = engine or ImageGenEngine()
+    def __init__(
+        self,
+        engine: Optional[ImageGenEngine] = None,
+        config: Optional[dict[str, Any]] = None,
+    ):
+        """engine 与 config 二选一：显式 config 会注入默认 Engine（不重复解析配置）。"""
+        self._engine = engine or ImageGenEngine(config=config)
 
     def generate(self, request: GenerateRequest) -> GenerateResult:
         """文生图 / 图生图：request.images 非空时自动走编辑流程。"""

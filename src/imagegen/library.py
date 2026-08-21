@@ -15,7 +15,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Optional
 
-from .config import CONFIG_DIR, CONFIG_FILE, load_config as load_user_config
+from .config import default_config_path, load_config as load_user_config
 
 
 class LibError(Exception):
@@ -443,7 +443,7 @@ def backup(pl: dict[str, Any], out_path: str = "") -> dict[str, Any]:
         conn.close()
     if not out_path:
         stamp = time.strftime("%Y%m%d-%H%M%S")
-        out_path = str(CONFIG_DIR / "backup" / f"prompts-{stamp}.jsonl")
+        out_path = str(default_config_path().parent / "backup" / f"prompts-{stamp}.jsonl")
     out = Path(out_path).expanduser()
     out.parent.mkdir(parents=True, exist_ok=True)
     with open(out, "w", encoding="utf-8") as handle:
