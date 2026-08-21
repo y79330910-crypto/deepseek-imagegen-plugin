@@ -204,7 +204,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="参考图用途（可重复，按 --image 顺序对应，最多 4 张）：character/outfit/style/pose/"
              "scene/composition/object；未指定时第 1 张=角色，其余按 服装→姿势→风格→场景→物品",
     )
-    gen.add_argument("--denoise", type=float, default=None, help="去噪强度 0~1（图生图，默认 0.6）")
+    gen.add_argument(
+        "--denoise",
+        type=float,
+        default=None,
+        help="已弃用：当前后端不使用去噪强度，参数将被忽略（保留以兼容旧调用）",
+    )
     gen.add_argument(
         "--translator",
         default="auto",

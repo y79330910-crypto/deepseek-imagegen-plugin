@@ -24,7 +24,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "mirror_dir": DEFAULT_MIRROR_DIR,
     "default_size": "1024x1024",
     "translator": {
-        "enabled": True,
         "engine": "deepseek",
         "output_lang": "zh",
         "deepseek": {
@@ -120,6 +119,22 @@ def deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
+def _migrate_translator(cfg: dict[str, Any]) -> dict[str, Any]:
+    """统一 translator 开关：Core 内部只保留 engine 一种最终状态。
+
+    旧配置同时有 enabled + engine 时：enabled=false → engine=off；
+    否则保留 engine（缺省 deepseek）。迁移后不再维护 enabled。
+    """
+    tr = cfg.get("translator")
+    if isinstance(tr, dict) and "enabled" in tr:
+        if not bool(tr.get("enabled", True)):
+            tr["engine"] = "off"
+        elif not str(tr.get("engine") or "").strip():
+            tr["engine"] = "deepseek"
+        tr.pop("enabled", None)
+    return cfg
+
+
 def load_config() -> dict[str, Any]:
     """读取用户配置并合并默认值。"""
     cfg = json.loads(json.dumps(DEFAULT_CONFIG))
@@ -137,7 +152,7 @@ def load_config() -> dict[str, Any]:
         env_mirror = os.environ.get(MIRROR_DIR_ENV, "").strip()
         if env_mirror:
             cfg["mirror_dir"] = env_mirror
-    return cfg
+    return _migrate_translator(cfg)
 
 
 def save_config(cfg: dict[str, Any]) -> str:

@@ -3,7 +3,6 @@
   "mirror_dir": "C:\\Users\\yjq\\Pictures\\codex",
   "default_size": "1024x1024",
   "translator": {
-    "enabled": true,
     "engine": "deepseek",
     "output_lang": "zh",
     "deepseek": {

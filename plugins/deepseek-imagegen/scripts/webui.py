@@ -376,7 +376,7 @@ def run_generate(payload: dict) -> dict:
         "actual_size": str(res.get("actual_size") or ""),
         "composition": str(res.get("composition_preset") or comp or ""),
         "ref_type": str((res.get("reference") or {}).get("label") or rtype or ""),
-        "model": str((res.get("translator") or {}).get("model") or ""),
+        "model": str(res.get("image_model_used") or res.get("model") or ""),
         "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
     })
     return {"ok": True, "result": res}
