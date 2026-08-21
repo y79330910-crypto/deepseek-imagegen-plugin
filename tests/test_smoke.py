@@ -1,20 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""DeepSeek ImageGen v1.0.0 冒烟测试（单文件）。
+"""DeepSeek ImageGen Core 冒烟测试（迁移自插件内单文件测试）。
 
 覆盖：配置合并与密钥打码、尺寸工具、模型挑选、构图预设、翻译官 off、
 参考图适配与降级、出图编排（模拟后端）、输出路径与镜像副本、
 CLI JSON 输出、词库统计（演练库，无网络）。
-
-运行：python scripts/tests/run_smoke_test.py
 """
 
 from __future__ import annotations
 
 import io
 import json
-import os
-import shutil
 import sys
 import tempfile
 import unittest
@@ -22,15 +18,14 @@ from pathlib import Path
 from unittest import mock
 
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-SCRIPTS_DIR = SCRIPT_DIR.parent
-if str(SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS_DIR))
+SRC_DIR = Path(__file__).resolve().parents[1] / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 
 from imagegen import generate, reference  # noqa: E402
 from imagegen.composition import resolve_composition  # noqa: E402
 from imagegen.config import load_config, mask_config  # noqa: E402
-from imagegen.http import GenError  # noqa: E402
+from imagegen.errors import GenError  # noqa: E402
 from imagegen.image_utils import (  # noqa: E402
     aspect_ratio_key,
     canvas_size_for,
@@ -91,8 +86,8 @@ class TestImageUtils(unittest.TestCase):
 
     def test_sizes_match(self):
         self.assertTrue(sizes_match((768, 1408), (768, 1408))["ok"])
-        self.assertTrue(sizes_match((768, 1408), (1152, 2112))["ok"])  # 画幅一致（9:16）
-        self.assertFalse(sizes_match((768, 1408), (1408, 768))["ok"])  # 方向不符
+        self.assertTrue(sizes_match((768, 1408), (1152, 2112))["ok"])
+        self.assertFalse(sizes_match((768, 1408), (1408, 768))["ok"])
         self.assertFalse(sizes_match((1024, 1024), (1408, 768))["ok"])
 
     def test_probe_and_fit(self):
@@ -300,6 +295,7 @@ class TestGenerateFlow(unittest.TestCase):
             self.assertIn("第1段·保持", result["prompt_used"])
             self.assertIn("不保留（场景锚点", result["prompt_used"])
 
+
 class TestOutputPaths(unittest.TestCase):
     def test_save_dir_and_mirror(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -369,9 +365,11 @@ class TestMultiReference(unittest.TestCase):
             cfg["save_dir"] = str(save_dir)
             cfg["reference"] = {"auto_classify": False, "vision_script": "", "classify_timeout": 90}
             captured: dict = {}
+
             def fake_img2img(cfg, prompt, width, height, model, images, **kwargs):
                 captured["images"] = images
                 return make_png_bytes(width, height)
+
             with (
                 mock.patch.object(generate, "load_config", return_value=cfg),
                 mock.patch.object(generate, "gen_vertex_img2img", side_effect=fake_img2img),
@@ -438,7 +436,10 @@ class TestExtraBackend(unittest.TestCase):
                 }
             }
         }
-        self.assertEqual(extra_backend_sizes(cfg, "dragtokens", "gpt-image-2-原生4k"), ["2048x2048", "3840x2160", "2160x3840"])
+        self.assertEqual(
+            extra_backend_sizes(cfg, "dragtokens", "gpt-image-2-原生4k"),
+            ["2048x2048", "3840x2160", "2160x3840"],
+        )
         self.assertEqual(extra_backend_sizes(cfg, "dragtokens", ""), OPENAI_IMAGE_SIZES)
 
     def test_pick_model_for_size(self):

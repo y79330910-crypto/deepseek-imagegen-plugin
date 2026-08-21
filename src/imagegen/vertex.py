@@ -10,7 +10,8 @@ import time
 from typing import Any, Optional
 
 from .config import APP_NAME, VERTEX_DEFAULT_DIR
-from .http import EmptyImageError, GenError, http
+from .errors import EmptyImageError, GenError
+from .http import http
 from .image_utils import (
     aspect_ratio_key,
     build_canvas_png,

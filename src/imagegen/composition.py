@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .http import GenError
+from .errors import GenError
 
 
 COMPOSITION_ALIASES = {

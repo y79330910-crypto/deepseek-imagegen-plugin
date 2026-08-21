@@ -1,4 +1,4 @@
-"""配置读取/保存/密钥掩码。"""
+"""配置读取/保存/密钥掩码（独立于任何宿主环境）。"""
 
 from __future__ import annotations
 
@@ -11,8 +11,12 @@ from typing import Any
 APP_NAME = "deepseek-imagegen"
 CONFIG_DIR = Path.home() / ".deepseek-imagegen"
 CONFIG_FILE = CONFIG_DIR / "config.json"
-VERTEX_DEFAULT_DIR = r"C:\Users\yjq\Documents\Codex\2026-07-31\new-chat\outputs\vertex-proxy\dist"
-DEFAULT_MIRROR_DIR = r"C:\Users\yjq\Pictures\codex"
+# 独立程序不内置任何宿主专属路径：
+# - vertex.dir 缺省时可使用环境变量 VERTEX_PROXY_DIR 指定
+# - mirror_dir 缺省时可使用环境变量 IMAGEGEN_MIRROR_DIR 指定
+VERTEX_DEFAULT_DIR = ""
+MIRROR_DIR_ENV = "IMAGEGEN_MIRROR_DIR"
+DEFAULT_MIRROR_DIR = ""
 
 
 DEFAULT_CONFIG: dict[str, Any] = {
@@ -126,9 +130,13 @@ def load_config() -> dict[str, Any]:
             if isinstance(user_cfg, dict):
                 cfg = deep_merge(cfg, user_cfg)
         except (OSError, json.JSONDecodeError) as exc:
-            from .http import GenError
+            from .errors import GenError
 
             raise GenError(f"配置文件解析失败（{CONFIG_FILE}）：{exc}") from exc
+    if not str(cfg.get("mirror_dir") or "").strip():
+        env_mirror = os.environ.get(MIRROR_DIR_ENV, "").strip()
+        if env_mirror:
+            cfg["mirror_dir"] = env_mirror
     return cfg
 
 

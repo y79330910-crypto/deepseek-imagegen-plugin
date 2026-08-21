@@ -14,7 +14,8 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .config import APP_NAME
-from .http import BROWSER_UA, HEALTH_TIMEOUT, GenError, http
+from .errors import GenError
+from .http import BROWSER_UA, HEALTH_TIMEOUT, http
 
 
 MAX_INIT_BYTES = 20 * 1024 * 1024
@@ -336,7 +337,7 @@ def multipart(
     fields: dict[str, Any], files: list[tuple[str, str, bytes, str]]
 ) -> tuple[bytes, str]:
     """构造 multipart/form-data 请求体，返回 (body, Content-Type)。"""
-    boundary = "----codex" + "".join(random.choices("abcdef0123456789", k=16))
+    boundary = "----imagegen" + "".join(random.choices("abcdef0123456789", k=16))
     parts: list[bytes] = []
     for field_name, value in fields.items():
         parts.append(

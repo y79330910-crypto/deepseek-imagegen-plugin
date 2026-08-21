@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -11,7 +12,7 @@ import sys
 from pathlib import Path
 from typing import Any, Optional
 
-from .http import GenError
+from .errors import GenError
 
 
 REF_TYPE_CHOICES = [
@@ -330,13 +331,11 @@ def build_multi_reference_suffix(
     return "\n".join(lines)
 
 
-DEFAULT_VISION_ROOTS = [
-    Path.home() / ".codex" / "plugins" / "cache" / "deepseek-vision",
-]
+VISION_SCRIPT_ENV = "IMAGEGEN_VISION_SCRIPT"
 
 
 def find_vision_bridge(cfg: Optional[dict[str, Any]] = None) -> str:
-    """定位 deepseek-vision 的 vision_bridge.py；配置了路径就用配置，否则自动发现。"""
+    """定位 vision_bridge.py：配置 > 环境变量 > PATH（Core 不扫描任何宿主目录）。"""
     if cfg:
         ref_cfg = cfg.get("reference") or {}
         if isinstance(ref_cfg, dict):
@@ -345,11 +344,11 @@ def find_vision_bridge(cfg: Optional[dict[str, Any]] = None) -> str:
                 p = Path(configured).expanduser()
                 if p.is_file():
                     return str(p)
-    for root in DEFAULT_VISION_ROOTS:
-        if root.is_dir():
-            hits = sorted(root.rglob("vision_bridge.py"))
-            if hits:
-                return str(hits[0])
+    env_script = os.environ.get(VISION_SCRIPT_ENV, "").strip()
+    if env_script:
+        p = Path(env_script).expanduser()
+        if p.is_file():
+            return str(p)
     found = shutil.which("vision_bridge.py")
     return found or ""
 

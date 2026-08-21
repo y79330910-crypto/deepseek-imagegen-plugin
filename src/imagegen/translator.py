@@ -4,37 +4,20 @@ from __future__ import annotations
 
 import json
 import os
-import re
-from pathlib import Path
 from typing import Any, Optional
 
 from .config import APP_NAME, load_config
-from .http import GenError, http
+from .errors import GenError
+from .http import http
 from .vertex import discover_vertex, pick_best_text_model
 
 
-def _read_deepseek_credential_from_codex() -> tuple[str, str]:
-    """从环境变量或 ~/.codex/config.toml 读取 DeepSeek 地址与密钥（不回显密钥）。"""
-    base_url = os.environ.get("DEEPSEEK_BASE_URL", "").strip()
-    api_key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
-    codex_cfg = Path.home() / ".codex" / "config.toml"
-    if codex_cfg.is_file():
-        try:
-            text = codex_cfg.read_text(encoding="utf-8")
-        except OSError:
-            return base_url, api_key
-        match = re.search(
-            r'\[model_providers\.deepseek\][^\[]*?base_url\s*=\s*"([^"]+)"[^\[]*?'
-            r'experimental_bearer_token\s*=\s*"([^"]+)"',
-            text,
-            re.S,
-        )
-        if match:
-            if not base_url:
-                base_url = match.group(1).strip().rstrip("/")
-            if not api_key:
-                api_key = match.group(2).strip()
-    return base_url, api_key
+def _read_deepseek_credential_from_env() -> tuple[str, str]:
+    """从环境变量读取 DeepSeek 地址与密钥（宿主适配层负责注入）。"""
+    return (
+        os.environ.get("DEEPSEEK_BASE_URL", "").strip(),
+        os.environ.get("DEEPSEEK_API_KEY", "").strip(),
+    )
 
 
 def _chat_text(
@@ -284,9 +267,9 @@ def translate_prompt(
         api_key = str(ds.get("api_key") or "").strip()
         model = str(ds.get("model") or "deepseek-v4-flash").strip() or "deepseek-v4-flash"
         if not base_url or not api_key:
-            codex_base, codex_key = _read_deepseek_credential_from_codex()
-            base_url = base_url or codex_base
-            api_key = api_key or codex_key
+            env_base, env_key = _read_deepseek_credential_from_env()
+            base_url = base_url or env_base
+            api_key = api_key or env_key
         if not base_url or not api_key:
             raise GenError(
                 "翻译官(deepseek)未配置地址/密钥：请在 config.json 填写，或改用 gemini 引擎。"

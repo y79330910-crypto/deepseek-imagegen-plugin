@@ -13,7 +13,7 @@ from .composition import (
     resolve_composition,
 )
 from .config import load_config
-from .http import DEFAULT_TIMEOUT, GenError
+from .errors import GenError
 from .image_utils import (
     aspect_ratio_key,
     default_output_path,

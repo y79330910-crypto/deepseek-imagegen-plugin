@@ -80,6 +80,15 @@ def ensure_utf8() -> None:
 def syspath() -> None:
     if str(SCRIPT_DIR) not in sys.path:
         sys.path.insert(0, str(SCRIPT_DIR))
+    src_dir = SCRIPT_DIR.parents[2] / "src"
+    if str(src_dir) not in sys.path:
+        sys.path.insert(0, str(src_dir))
+    try:
+        import codex_adapter
+
+        codex_adapter.prepare_environment()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def load_config() -> dict:

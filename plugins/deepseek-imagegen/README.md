@@ -23,26 +23,19 @@ DeepSeek 本身无法直接生成图片；本插件提供图像生成桥接：�
 plugins/deepseek-imagegen/
 ├── .codex-plugin/plugin.json     # 插件清单（v1.0.0 基线）
 ├── skills/deepseek-imagegen/     # 技能说明（触发图像生成桥接）
+├── assets/icon.png               # 插件图标
 ├── scripts/
-│   ├── image_gen.py              # 薄入口（命令从这里进）
+│   ├── image_gen.py              # 薄入口：加载 src/imagegen 并调用 CLI
 │   ├── prompt_lib.py             # 词库薄入口（兼容旧命令）
+│   ├── codex_adapter.py          # Codex 环境默认值注入（Core 不依赖 Codex）
 │   ├── webui.py                  # 网页界面（洛天依主题，默认 8766 端口）
 │   ├── config.example.json       # 配置示例（真实 Key 放本地）
-│   ├── imagegen/                 # 模块化包
-│   │   ├── cli.py                # 命令行
-│   │   ├── config.py             # 配置读取/保存/密钥掩码
-│   │   ├── http.py               # HTTP（超时 240s、429 退避、空数据重试）
-│   │   ├── image_utils.py        # 尺寸解析/探测、画布兜底、参考图、输出路径
-│   │   ├── vertex.py             # 代理发现与最佳模型挑选、文生图/图生图
-│   │   ├── translator.py         # 提示词翻译官
-│   │   ├── composition.py        # 构图预设
-│   │   ├── reference.py          # 参考图三段式与多参考图处理
-│   │   ├── library.py            # 词库（MySQL + 向量检索）
-│   │   ├── generate.py           # 出图编排
-│   │   └── doctor.py             # 诊断与尺寸探针
-│   └── tests/run_smoke_test.py   # 单文件冒烟测试
-└── assets/icon.png               # 插件图标
+└── （生图核心已迁移到仓库根 src/imagegen/，插件不再包含实现）
 ```
+
+> 本插件目录只保留 Adapter（`.codex-plugin/`、`skills/`、`assets/`、薄入口与 WebUI）。
+> 真正的生图核心位于仓库根 `src/imagegen/`，即使删除 `.codex-plugin/` 与 `skills/`，
+> `python scripts/image_gen.py ...` 仍可正常出图。
 
 ## 安装
 
@@ -75,7 +68,7 @@ codex plugin marketplace add "D:\deepseek-imagegen-plugin"
 ## 测试
 
 ```bash
-python scripts/tests/run_smoke_test.py
+python ../../tests/run_smoke_test.py
 ```
 
 覆盖：配置合并与密钥打码、尺寸工具、模型挑选、构图预设、翻译官 off、参考图三段式（类型/避免项/简报）、出图编排（模拟后端）、输出路径与镜像副本、CLI JSON 输出、词库统计。

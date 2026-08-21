@@ -12,7 +12,7 @@ from typing import Any, Optional
 from . import generate as gen_mod
 from .config import CONFIG_FILE, load_config, mask_config
 from .doctor import cmd_doctor
-from .http import GenError
+from .errors import GenError
 from .translator import translate_prompt
 from .vertex import discover_vertex
 

@@ -21,20 +21,28 @@ DeepSeek 本身无法直接生成图片；本插件提供图像生成桥接：�
 ```
 .
 ├── .agents/plugins/marketplace.json      # Codex marketplace 清单
-└── plugins/deepseek-imagegen/            # 插件本体
-    ├── .codex-plugin/plugin.json         # 插件清单
-    ├── skills/deepseek-imagegen/         # 技能（触发图像生成桥接）
-    ├── scripts/
-    │   ├── image_gen.py                  # 薄入口（命令从这里进）
-    │   ├── prompt_lib.py                 # 词库薄入口
-    │   ├── webui.py                      # 网页界面（洛天依主题）
-    │   ├── config.example.json           # 配置示例（真实 Key 放本地）
-    │   ├── imagegen/                     # 模块化包
-    │   │   ├── cli.py / config.py / http.py / image_utils.py
-    │   │   ├── vertex.py / translator.py / composition.py
-    │   │   ├── reference.py / library.py / generate.py / doctor.py
-    │   └── tests/run_smoke_test.py       # 单文件冒烟测试
-    └── assets/icon.png                   # 插件图标
+├── src/imagegen/                         # ImageGen Core（独立于 Codex）
+│   ├── engine.py / models.py / errors.py # 编排、统一数据模型、通用错误
+│   ├── config.py / http.py / image_utils.py
+│   ├── composition.py / reference.py / translator.py
+│   ├── library.py / doctor.py / cli.py
+│   └── backends/                         # Backend API v1 + 注册表
+│       ├── base.py / registry.py
+│       ├── vertex.py                     # 本地 Vertex Proxy
+│       └── openai_images.py              # OpenAI 兼容 / extra_backends
+├── plugins/deepseek-imagegen/            # Codex 插件（仅 Adapter）
+│   ├── .codex-plugin/plugin.json         # 插件清单
+│   ├── skills/deepseek-imagegen/         # 技能（触发图像生成桥接）
+│   ├── assets/icon.png                   # 插件图标
+│   └── scripts/
+│       ├── image_gen.py                  # 薄入口：加载 Core 并调用 CLI
+│       ├── prompt_lib.py                 # 词库薄入口
+│       ├── codex_adapter.py              # Codex 环境默认值注入（Core 不依赖）
+│       ├── webui.py                      # 网页界面（洛天依主题）
+│       └── config.example.json           # 配置示例（真实 Key 放本地）
+└── tests/                                # 统一测试（python -m unittest）
+    ├── run_smoke_test.py                 # 统一测试入口
+    └── test_*.py                         # Core / Backend / 回归测试
 ```
 
 ## 安装
@@ -59,7 +67,8 @@ codex plugin marketplace add "D:\deepseek-imagegen-plugin"
 ## 测试
 
 ```bash
-python scripts/tests/run_smoke_test.py
+python tests/run_smoke_test.py
+# 等价：python -m unittest
 ```
 
 覆盖：配置合并与密钥打码、尺寸工具、模型挑选、构图预设、翻译官 off、参考图三段式（类型 / 避免项 / 简报）、出图编排（模拟后端）、输出路径与镜像副本、CLI JSON 输出、词库统计。

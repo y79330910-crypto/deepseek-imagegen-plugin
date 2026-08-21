@@ -1,4 +1,4 @@
-"""HTTP 工具：超时、429 退避、空结果错误（代码默认值）。"""
+"""通用 HTTP 工具：超时、429 退避、空结果重试（代码默认值）。"""
 
 from __future__ import annotations
 
@@ -8,6 +8,8 @@ import urllib.error
 import urllib.request
 from typing import Any, Optional
 
+from .errors import GenError
+
 
 # 高清图（如 2K/4K）生成耗时较长，默认超时放宽到 600 秒
 DEFAULT_TIMEOUT = 600
@@ -16,14 +18,6 @@ BROWSER_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 )
-
-
-class GenError(Exception):
-    """可向用户展示的中文错误。"""
-
-
-class EmptyImageError(GenError):
-    """图像接口返回了空结果（常见于上游限流但代理返回 HTTP 200 + 空 data）。"""
 
 
 def http(
