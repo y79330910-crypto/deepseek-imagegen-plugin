@@ -54,32 +54,7 @@ from imagegen.image_utils import (  # noqa: E402
 from imagegen.models import GenerateRequest  # noqa: E402
 from imagegen.translator import translate_prompt  # noqa: E402
 
-
-def make_png_bytes(width: int = 64, height: int = 64) -> bytes:
-    from PIL import Image
-
-    buf = io.BytesIO()
-    Image.new("RGB", (width, height), (120, 180, 240)).save(buf, format="PNG")
-    return buf.getvalue()
-
-
-class FakeVertexBackend:
-    """测试用 Vertex 后端替身：返回指定尺寸的 PNG，不做任何网络请求。"""
-
-    id = "vertex"
-
-    def resolve_model(self, cfg, requested=""):
-        return (requested or "").strip() or "gemini-3-pro-image"
-
-    def generate(self, cfg, prompt, width, height, model="", **kwargs):
-        return make_png_bytes(width, height)
-
-    def generate_fallback_size(self, cfg, prompt, width, height, model="", **kwargs):
-        return make_png_bytes(width, height)
-
-    def edit(self, cfg, prompt, width, height, model, images, **kwargs):
-        return make_png_bytes(width, height)
-
+from ._helpers import FakeVertexBackend, make_png_bytes  # noqa: E402
 
 class TestConfig(unittest.TestCase):
     def test_merge_and_mask(self):
