@@ -41,3 +41,28 @@ jobs:
           mv plugins/deepseek-imagegen/skills /tmp/codex-skills-disabled
           python -c "import imagegen; assert imagegen.CORE_API_VERSION == 1"
           python -m imagegen --help
+
+  wheel-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build wheel
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip wheel . -w dist
+      - name: Install wheel in fresh venv and smoke test
+        run: |
+          python -m venv /tmp/imagegen-wheel-venv
+          /tmp/imagegen-wheel-venv/bin/pip install --no-deps dist/*.whl
+          cd /tmp
+          /tmp/imagegen-wheel-venv/bin/imagegen --help > /dev/null
+          /tmp/imagegen-wheel-venv/bin/python -c \
+            "from importlib.resources import files; import imagegen; \
+             assert imagegen.CORE_API_VERSION == 1; \
+             r = files('imagegen.web').joinpath('static'); \
+             assert r.joinpath('index.html').is_file(); \
+             assert r.joinpath('app.js').is_file(); \
+             assert r.joinpath('style.css').is_file()"

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "imagegen-core"
 version = "1.0.0"
-description = "DeepSeek ImageGen Core：独立于 Codex 插件结构的图像生成核心（Public API + Services）"
+description = "ImageGen standalone local image generation application with CLI, HTTP API, WebUI and Codex integration"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = []

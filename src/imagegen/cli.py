@@ -198,7 +198,7 @@ def _print_result(result: dict[str, Any], use_json: bool) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="imagegen",
-        description="DeepSeek ImageGen 桥接脚本：本地 Vertex Proxy 生成图片并保存。",
+        description="ImageGen standalone local image generation application（CLI / HTTP API / WebUI）。",
     )
     parser.add_argument("--json", action="store_true", help="输出 JSON（机器可读）")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -213,7 +213,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--image",
         action="append",
         default=None,
-        help="参考图片（图生图）：本地路径或 http(s) 链接；当前仅支持 1 张",
+        help="参考图片（图生图）：本地路径或 http(s) 链接；可重复指定，最多 4 张",
     )
     gen.add_argument(
         "--ref-type",

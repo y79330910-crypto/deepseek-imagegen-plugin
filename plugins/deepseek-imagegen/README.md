@@ -1,6 +1,6 @@
 # DeepSeek ImageGen
 
-为 Codex 中的 DeepSeek 等纯文本模型提供**图像生成**能力的插件（私有仓库）。
+为 Codex 中的 DeepSeek 等纯文本模型提供**图像生成**能力的插件（standalone ImageGen 的 Adapter）。
 
 DeepSeek 本身无法直接生成图片；本插件提供图像生成桥接：由 DeepSeek 理解需求、撰写提示词，桥接脚本把提示词发给**图像模型后端**（默认本地 Vertex Proxy，自动读取端口/密钥/模型列表并选用最佳图像模型如 `gemini-3-pro-image`；可附加备用后端如 DragToken），拿到图片后保存并交付。
 
@@ -52,7 +52,7 @@ codex plugin marketplace add "D:\deepseek-imagegen-plugin"
 
 配置位置：`~/.deepseek-imagegen/config.json`，模板见 `scripts/config.example.json`。
 
-- `vertex.dir`：本地 Vertex Proxy 目录（默认 `C:\Users\yjq\Documents\Codex\2026-07-31\new-chat\outputs\vertex-proxy\dist`），自动读取 `config\config.json`（端口）、`config\api_keys.txt`（密钥）、`config\models.json`（模型列表）
+- `vertex.dir`：本地 Vertex Proxy 目录（默认不内置个人路径；可通过配置或 `VERTEX_PROXY_DIR` 环境变量设置），自动读取 `config\config.json`（端口）、`config\api_keys.txt`（密钥）、`config\models.json`（模型列表）
 - `extra_backends`：备用后端（如 DragToken `gpt-image-2`），含 `sizes` 尺寸白名单、`quality` 与可选模型列表
 - `translator`：deepseek 的地址/密钥/模型 + gemini 模型（留空自动选最佳文本模型）
 - `prompt_library`：MySQL 连接、Embedding / Rerank（SiliconFlow）、分类置顶
