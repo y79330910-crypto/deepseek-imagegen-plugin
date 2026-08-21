@@ -96,6 +96,7 @@ python ../../tests/run_smoke_test.py
   预览与下载使用 `output_url`。
 - **设置页**：可视化编辑配置（翻译官、默认出图参数、尺寸策略 auto/aspect/exact、词库、
   MySQL、Vertex、备用后端、参考图识别），密钥打码显示，保存走 `PATCH /api/v1/config`。
-- **会话画廊**：仅当前页面会话内的生成结果（不持久化，Phase 5 提供 History API）。
+- **历史画廊**：持久化的生成历史（最近 50 条），可搜索、删除记录；图片经 `output_url`
+  展示，历史写入失败不影响生成结果。
 - **提示**：当前 WebUI 为 v1 本地版：参考图使用本机路径（same-machine），历史为当前页面会话；
   浏览器文件上传与持久化历史将在后续版本提供。

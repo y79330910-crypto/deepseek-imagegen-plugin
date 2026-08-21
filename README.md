@@ -18,7 +18,7 @@ Codex 集成是可选的 Adapter：DeepSeek 等纯文本模型通过薄 CLI 调�
 - **提示词词库**：MySQL + SiliconFlow Embedding / Rerank 向量检索（`prompt_library` 库），生成时喂示例给翻译官
 - **Standalone WebUI（洛天依主题）**：`imagegen serve --open` 启动（默认 http://127.0.0.1:8765），
   与 HTTP API 同源运行；生成页（提示词 / 参考图路径 / 尺寸 / 构图 / 模型 / 批量出图）、
-  设置页（可视化编辑配置，密钥打码）、诊断页、会话画廊；前端只通过 `/api/v1/*` 与 Core 通信
+设置页（可视化编辑配置，密钥打码）、诊断页、持久化历史画廊（最近 50 条）；前端只通过 `/api/v1/*` 与 Core 通信
 - **自动副本**：生成成功后自动在 `mirror_dir` 保留副本
 - **诊断**：`doctor`（连通性 + 尺寸探针）、`config`（密钥打码）、`list-models`
 
@@ -123,6 +123,9 @@ GET   /api/v1/config
 PATCH /api/v1/config
 POST  /api/v1/doctor
 GET   /api/v1/outputs/{generation_id}
+GET   /api/v1/history
+GET   /api/v1/history/{generation_id}
+DELETE /api/v1/history/{generation_id}
 ```
 
 示例：
@@ -148,6 +151,19 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8765/api/v1/generate `
 `GenerateResult.to_dict()` 并附加 `output_url`；生成结果通过 `generation_id`
 经 `/api/v1/outputs/{generation_id}` 读取（进程内注册表，不提供任意文件读取）。
 `GET /api/v1/config` 只返回打码后的配置，`PATCH` 复用 `ConfigService.update`。
+
+### Persistent History
+
+每次成功生成（`GenerateResult` 构造完成）都会 best-effort 写入本地历史数据库：
+
+```text
+默认 ~/.deepseek-imagegen/imagegen.db（可自定义 Path 注入）
+```
+
+HTTP 层通过 `/api/v1/history` 读取/删除；历史记录不暴露 `output_path`，而是返回
+`output_url`。`/api/v1/outputs/{generation_id}` 优先读取进程内注册表，未命中时回退到
+历史记录里的输出文件，因此 Server 重启后旧图片仍可访问。历史写入失败只追加 warning，
+不影响生成成功；持久化历史自 Phase 5A 后开始记录（不导入旧 history.json）。
 
 ### 安全说明
 
