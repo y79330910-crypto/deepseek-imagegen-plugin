@@ -96,6 +96,8 @@ class ApiHandler(BaseHTTPRequestHandler):
             self.send_header(key, value)
         if isinstance(response.body, bytes):
             payload = response.body
+        elif isinstance(response.body, str):
+            payload = response.body.encode("utf-8")
         else:
             payload = json.dumps(response.body, ensure_ascii=False).encode("utf-8")
         self.send_header("Content-Length", str(len(payload)))
