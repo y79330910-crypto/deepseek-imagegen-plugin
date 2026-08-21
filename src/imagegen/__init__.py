@@ -16,6 +16,12 @@ from .errors import (
     ValidationError,
 )
 from .models import GenerateRequest, GenerateResult
+from .services import (
+    ConfigService,
+    DiagnosticService,
+    GenerationService,
+    ModelService,
+)
 
 CORE_API_VERSION = 1
 
@@ -32,4 +38,8 @@ __all__ = [
     "BackendError",
     "ValidationError",
     "GenError",
+    "GenerationService",
+    "ModelService",
+    "ConfigService",
+    "DiagnosticService",
 ]
