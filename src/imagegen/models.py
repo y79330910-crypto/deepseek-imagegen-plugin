@@ -1,9 +1,12 @@
-"""ImageGen 统一数据模型。"""
+"""ImageGen 统一数据模型（稳定的序列化契约）。"""
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Mapping
+
+from .errors import ValidationError
 
 
 @dataclass
@@ -29,6 +32,92 @@ class GenerateRequest:
     out: str = ""
     denoise: float | None = None  # deprecated：当前后端不使用去噪强度，仅记录并忽略
 
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "GenerateRequest":
+        """从 JSON-safe dict 构造请求（不依赖 CLI / HTTP / Codex）。
+
+        未知字段抛 ValidationError；缺失字段使用数据模型默认值。
+        """
+        if not isinstance(data, Mapping):
+            raise ValidationError("GenerateRequest 需要 dict/Mapping 输入。")
+        known = set(cls.__dataclass_fields__)
+        unknown = [str(k) for k in data if k not in known]
+        if unknown:
+            raise ValidationError(f"未知字段：{', '.join(sorted(unknown))}")
+
+        def as_str(value: Any, name: str) -> str:
+            if not isinstance(value, str):
+                raise ValidationError(f"{name} 必须是字符串。")
+            return value
+
+        def as_optional_int(value: Any, name: str) -> int | None:
+            if value is None:
+                return None
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValidationError(f"{name} 必须是整数或 null。")
+            return value
+
+        def as_str_list(value: Any, name: str) -> list[str]:
+            if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+                raise ValidationError(f"{name} 必须是字符串数组。")
+            return list(value)
+
+        def as_optional_bool(value: Any, name: str) -> bool | None:
+            if value is None:
+                return None
+            if not isinstance(value, bool):
+                raise ValidationError(f"{name} 必须是布尔值或 null。")
+            return value
+
+        def as_optional_float(value: Any, name: str) -> float | None:
+            if value is None:
+                return None
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValidationError(f"{name} 必须是数字或 null。")
+            return float(value)
+
+        return cls(
+            prompt=as_str(data.get("prompt", ""), "prompt"),
+            size=as_str(data.get("size", ""), "size"),
+            width=as_optional_int(data.get("width"), "width"),
+            height=as_optional_int(data.get("height"), "height"),
+            model=as_str(data.get("model", ""), "model"),
+            backend=as_str(data.get("backend", ""), "backend"),
+            seed=as_optional_int(data.get("seed"), "seed"),
+            quality=as_str(data.get("quality", ""), "quality"),
+            composition=as_str(data.get("composition", "auto"), "composition"),
+            translator=as_str(data.get("translator", "auto"), "translator"),
+            size_policy=as_str(data.get("size_policy", ""), "size_policy"),
+            images=as_str_list(data.get("images", []), "images"),
+            reference_roles=as_str_list(data.get("reference_roles", []), "reference_roles"),
+            ref_type=as_str(data.get("ref_type", "auto"), "ref_type"),
+            library_enabled=as_optional_bool(data.get("library_enabled"), "library_enabled"),
+            out=as_str(data.get("out", ""), "out"),
+            denoise=as_optional_float(data.get("denoise"), "denoise"),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """稳定、JSON-safe 的输出（不包含 Path / bytes / callable 等对象）。"""
+        return {
+            "prompt": self.prompt,
+            "size": self.size,
+            "width": self.width,
+            "height": self.height,
+            "model": self.model,
+            "backend": self.backend,
+            "seed": self.seed,
+            "quality": self.quality,
+            "composition": self.composition,
+            "translator": self.translator,
+            "size_policy": self.size_policy,
+            "images": list(self.images),
+            "reference_roles": list(self.reference_roles),
+            "ref_type": self.ref_type,
+            "library_enabled": self.library_enabled,
+            "out": self.out,
+            "denoise": self.denoise,
+        }
+
 
 @dataclass
 class GenerateResult:
@@ -41,6 +130,7 @@ class GenerateResult:
     requested_size: str
     actual_size: str
     prompt_used: str
+    generation_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     warnings: list[str] = field(default_factory=list)
     # 附加字段（CLI / WebUI 兼容）
     ok: bool = True
@@ -65,6 +155,7 @@ class GenerateResult:
             "backend": self.backend,
             "model": self.image_model_used,
             "image_model_used": self.image_model_used,
+            "generation_id": self.generation_id,
             "quality": self.quality,
             "size_hint": self.size_hint,
             "path": self.path,
@@ -80,11 +171,10 @@ class GenerateResult:
             "prompt_used": self.prompt_used,
             "reference": self.reference,
             "prompt_library": self.prompt_library,
+            "warnings": list(self.warnings),
         }
         if self.init_images:
             data["init_images"] = list(self.init_images)
-        if self.warnings:
-            data["warnings"] = list(self.warnings)
         if self.mirror_path:
             data["mirror_path"] = self.mirror_path
         return data
