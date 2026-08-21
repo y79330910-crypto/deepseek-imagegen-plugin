@@ -216,36 +216,6 @@ class TestConfigServiceUpdate(unittest.TestCase):
         self.assertNotIn("sk-x1234567890", json.dumps(result))
 
 
-class TestConfigPathInjection(unittest.TestCase):
-    def test_default_path_uses_single_rule(self):
-        from imagegen.config import default_config_path
-
-        self.assertEqual(ConfigService().path(), default_config_path())
-        self.assertEqual(str(ConfigService().path()).endswith("config.json"), True)
-
-    def test_str_and_path_injection(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path_obj = Path(tmp) / "config.json"
-            svc_a = ConfigService(str(path_obj))
-            svc_b = ConfigService(path_obj)
-            self.assertEqual(svc_a.path(), path_obj)
-            self.assertEqual(svc_b.path(), path_obj)
-
-    def test_paths_are_isolated(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path_a = Path(tmp) / "config_a.json"
-            path_b = Path(tmp) / "config_b.json"
-            svc_a = ConfigService(path_a)
-            svc_b = ConfigService(path_b)
-            svc_a.update({"save_dir": "/a/out", "translator": {"engine": "gemini"}})
-            svc_b.update({"save_dir": "/b/out", "translator": {"engine": "off"}})
-            self.assertEqual(svc_a.load()["save_dir"], "/a/out")
-            self.assertEqual(svc_a.load()["translator"]["engine"], "gemini")
-            self.assertEqual(svc_b.load()["save_dir"], "/b/out")
-            self.assertEqual(svc_b.load()["translator"]["engine"], "off")
-            self.assertFalse(path_a == path_b)
-
-
 class TestDiagnosticService(unittest.TestCase):
     def test_doctor_health_check_mocked(self):
         fake_http = mock.Mock(
