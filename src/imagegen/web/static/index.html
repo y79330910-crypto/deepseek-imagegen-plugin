@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ImageGen · 生图工坊</title>
+<link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+<div id="veil"></div>
+<div class="shell">
+  <div class="top">
+    <div>
+      <div class="logo">洛天依 · 生图工坊</div>
+      <div class="sub">ImageGen Standalone WebUI · 本地出图</div>
+    </div>
+    <div class="tabs">
+      <button class="tab on" data-tab="generate">生成</button>
+      <button class="tab" data-tab="settings">设置</button>
+      <button class="tab" data-tab="diagnose">诊断</button>
+      <button class="tab" data-tab="gallery">会话画廊</button>
+    </div>
+  </div>
+
+  <section class="glass card" id="page-generate">
+    <h3>✍ 描述你想画的画面</h3>
+    <div class="field">
+      <textarea id="prompt" placeholder="例如：洛天依在樱花树下弹着古筝，全身构图，日系插画风格，金色夕阳……"></textarea>
+    </div>
+    <div class="field">
+      <label>参考图路径（本机路径，每行一张，最多 4 张；单张时参考图类型生效）</label>
+      <textarea id="refPaths" placeholder="例如：D:\Images\ref.png"></textarea>
+    </div>
+    <div class="grid">
+      <div class="field"><label>出图后端</label><select id="backend"></select></div>
+      <div class="field"><label>尺寸（宽x高，留空=默认）</label><input id="size" placeholder="1024x1024"></div>
+      <div class="field"><label>质量（仅支持的备用后端）</label>
+        <select id="quality"><option value="">默认</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select>
+      </div>
+      <div class="field"><label>批量张数（1~10）</label><input id="count" type="number" min="1" max="10" value="1"></div>
+      <div class="field"><label>构图预设</label>
+        <select id="composition">
+          <option value="auto">自动</option><option value="full-body">全身（竖版）</option><option value="half-body">半身</option><option value="portrait">特写</option><option value="landscape">横版广角</option>
+        </select>
+      </div>
+      <div class="field"><label>参考图类型（单图）</label>
+        <select id="ref_type">
+          <option value="auto">自动识别</option><option value="character">角色人物</option><option value="outfit">服装造型</option><option value="style">艺术风格</option><option value="scene">场景背景</option><option value="composition">构图布局</option><option value="pose">姿势动作</option><option value="object">物品产品</option>
+        </select>
+      </div>
+      <div class="field"><label>种子（留空=随机）</label><input id="seed" placeholder="随机"></div>
+      <div class="field"><label>模型（默认自动选最佳）</label><select id="model"><option value="">自动（推荐）</option></select></div>
+      <div class="field"><label>翻译官引擎</label>
+        <select id="translator">
+          <option value="auto">跟随配置</option><option value="deepseek">DeepSeek</option><option value="gemini">Gemini</option><option value="off">直传（不改写）</option>
+        </select>
+      </div>
+      <div class="field"><label>提示词词库</label>
+        <select id="library">
+          <option value="auto">跟随配置</option><option value="on">开启</option><option value="off">关闭</option>
+        </select>
+      </div>
+    </div>
+    <div class="row" style="margin-top:4px"><span class="hint">快捷尺寸：</span><span id="sizeChips"></span></div>
+    <div class="row">
+      <button class="btn main" id="genBtn">开始生成</button>
+      <span class="hint" id="qualityHint"></span>
+      <span class="hint">生成可能要 1~3 分钟，请耐心等待</span>
+    </div>
+    <div id="status"></div>
+    <div id="error"></div>
+    <div id="result">
+      <div class="gal" id="resultStrip" style="margin-bottom:12px"></div>
+      <img id="resultImg" alt="生成结果">
+      <div class="row" style="justify-content:center;margin-bottom:10px">
+        <a class="btn main small" id="dlLink" download>下载图片</a>
+        <span class="hint" id="mirrorNote"></span>
+      </div>
+      <div class="info" id="resultInfo"></div>
+    </div>
+  </section>
+
+  <section class="glass card" id="page-settings" style="display:none">
+    <div class="row" style="justify-content:space-between">
+      <h3>⚙ 设置（保存后立即生效，密钥打码显示）</h3>
+      <span id="saveChip">✓ 已保存</span>
+    </div>
+    <div class="set-group"><h4>出图默认</h4>
+      <div class="grid">
+        <div class="field"><label>默认尺寸</label><input data-path="default_size" placeholder="1024x1024"></div>
+        <div class="field"><label>默认保存目录（留空=工作目录）</label><input data-path="save_dir" placeholder="例如 D:\images"></div>
+        <div class="field"><label>自动副本目录</label><input data-path="mirror_dir" placeholder="留空=不复制"></div>
+      </div>
+    </div>
+    <div class="set-group"><h4>翻译官</h4>
+      <div class="grid">
+        <div class="field"><label>引擎</label>
+          <select data-path="translator.engine"><option value="deepseek">DeepSeek</option><option value="gemini">Gemini</option><option value="off">直传</option></select>
+        </div>
+        <div class="field"><label>输出语言</label><select data-path="translator.output_lang"><option value="zh">中文</option><option value="en">English</option></select></div>
+        <div class="field"><label>DeepSeek 地址</label><input data-path="translator.deepseek.base_url" placeholder="https://api.deepseek.com"></div>
+        <div class="field"><label>DeepSeek 密钥（打码显示，不改动则保留）</label><input data-path="translator.deepseek.api_key" type="password" placeholder="sk-..."></div>
+        <div class="field"><label>DeepSeek 模型</label><input data-path="translator.deepseek.model" placeholder="deepseek-v4-flash"></div>
+        <div class="field"><label>Gemini 翻译模型（留空=自动最佳）</label><input data-path="translator.gemini.model" placeholder="自动"></div>
+      </div>
+    </div>
+    <div class="set-group"><h4>构图与尺寸策略</h4>
+      <div class="grid">
+        <div class="field"><label>默认构图</label>
+          <select data-path="composition.preset"><option value="auto">自动</option><option value="full-body">全身</option><option value="half-body">半身</option><option value="portrait">特写</option><option value="landscape">横版</option></select>
+        </div>
+        <div class="field"><label>尺寸策略</label>
+          <select data-path="size_policy.mode"><option value="auto">auto（自动兜底）</option><option value="aspect">aspect（保持画幅）</option><option value="exact">exact（严格像素）</option></select>
+        </div>
+        <div class="field"><label>尺寸兜底重试次数</label><input data-path="size_policy.retries" type="number" min="0" max="5"></div>
+        <div class="field"><label>尺寸容差（如 0.06）</label><input data-path="size_policy.tolerance" type="number" step="0.01" min="0" max="0.3"></div>
+      </div>
+    </div>
+    <div class="set-group"><h4>提示词词库（MySQL + 向量检索）</h4>
+      <div class="grid">
+        <div class="field"><label>启用词库</label><select data-path="prompt_library.enabled"><option value="true">开启</option><option value="false">关闭</option></select></div>
+        <div class="field"><label>喂给翻译官</label><select data-path="prompt_library.use_in_translator"><option value="true">开启</option><option value="false">关闭</option></select></div>
+        <div class="field"><label>初选数量</label><input data-path="prompt_library.top_k" type="number" min="1" max="200"></div>
+        <div class="field"><label>最终参考条数</label><input data-path="prompt_library.final_k" type="number" min="1" max="20"></div>
+        <div class="field"><label>分类过滤（逗号分隔，留空=全部）</label><input data-path="prompt_library.categories" placeholder="插画艺术,表情包贴纸"></div>
+        <div class="field"><label>优先分类（置顶）</label><input data-path="prompt_library.priority_category" placeholder="留空=无"></div>
+        <div class="field"><label>优先条数</label><input data-path="prompt_library.priority_count" type="number" min="0" max="10"></div>
+        <div class="field"><label>Embedding 地址</label><input data-path="prompt_library.embedding.base_url" placeholder="https://api.siliconflow.com/v1/embeddings"></div>
+        <div class="field"><label>Embedding 密钥</label><input data-path="prompt_library.embedding.api_key" type="password" placeholder="sk-..."></div>
+        <div class="field"><label>Rerank 开启</label><select data-path="prompt_library.rerank.enabled"><option value="true">开启</option><option value="false">关闭</option></select></div>
+        <div class="field"><label>Rerank 地址</label><input data-path="prompt_library.rerank.base_url" placeholder="https://api.siliconflow.com/v1/rerank"></div>
+        <div class="field"><label>Rerank 密钥</label><input data-path="prompt_library.rerank.api_key" type="password" placeholder="sk-..."></div>
+        <div class="field"><label>MySQL 主机</label><input data-path="prompt_library.mysql.host" placeholder="127.0.0.1"></div>
+        <div class="field"><label>MySQL 端口</label><input data-path="prompt_library.mysql.port" type="number" placeholder="3306"></div>
+        <div class="field"><label>MySQL 账号</label><input data-path="prompt_library.mysql.user" placeholder="root"></div>
+        <div class="field"><label>MySQL 密码</label><input data-path="prompt_library.mysql.password" type="password"></div>
+        <div class="field"><label>数据库名</label><input data-path="prompt_library.mysql.db" placeholder="prompt_library"></div>
+      </div>
+    </div>
+    <div class="set-group"><h4>Vertex 代理（本地后端）</h4>
+      <div class="grid">
+        <div class="field"><label>代理目录（自动读端口/密钥/模型）</label><input data-path="vertex.dir" placeholder="vertex-proxy 的 dist 目录"></div>
+        <div class="field"><label>代理地址（留空=自动）</label><input data-path="vertex.base_url" placeholder="http://127.0.0.1:2156/v1"></div>
+        <div class="field"><label>代理密钥（留空=自动读 api_keys.txt）</label><input data-path="vertex.api_key" type="password" placeholder="sk-..."></div>
+        <div class="field"><label>图像模型（留空=自动最佳）</label><input data-path="vertex.model" placeholder="自动"></div>
+      </div>
+    </div>
+    <div class="set-group"><h4>备用后端（extra_backends）</h4>
+      <div class="grid">
+        <div class="field"><label>地址</label><input data-path="extra_backends.dragtokens.base_url" placeholder="https://draw.dragtokens.com/v1"></div>
+        <div class="field"><label>密钥</label><input data-path="extra_backends.dragtokens.api_key" type="password" placeholder="sk-..."></div>
+        <div class="field"><label>模型</label><input data-path="extra_backends.dragtokens.model" placeholder="gpt-image-2 / gpt-image-2-4k超分 / gpt-image-2-原生4k"></div>
+        <div class="field"><label>可选模型（逗号分隔）</label><input data-path="extra_backends.dragtokens.models" placeholder="gpt-image-2,gpt-image-2-4k超分,gpt-image-2-原生4k"></div>
+        <div class="field"><label>尺寸白名单（逗号分隔）</label><input data-path="extra_backends.dragtokens.sizes" placeholder="1254x1254,1536x1024,1024x1536"></div>
+        <div class="field"><label>默认质量</label>
+          <select data-path="extra_backends.dragtokens.quality"><option value="auto">auto</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select>
+        </div>
+      </div>
+    </div>
+    <div class="set-group"><h4>参考图识别</h4>
+      <div class="grid">
+        <div class="field"><label>参考图自动分类</label><select data-path="reference.auto_classify"><option value="true">开启</option><option value="false">关闭</option></select></div>
+        <div class="field"><label>视觉识别脚本路径（留空=自动查找）</label><input data-path="reference.vision_script" placeholder="vision_bridge.py 完整路径"></div>
+      </div>
+    </div>
+    <div class="row" style="margin-top:14px">
+      <button class="btn main" id="saveBtn">保存设置</button>
+      <span class="hint">保存后网页立即生效，下次生成自动使用新设置</span>
+    </div>
+  </section>
+
+  <section class="glass card" id="page-diagnose" style="display:none">
+    <h3>🩺 诊断（后端连通性与配置检查）</h3>
+    <div class="row">
+      <button class="btn main" id="doctorBtn">运行诊断</button>
+      <span class="hint" id="doctorStatus"></span>
+    </div>
+    <div id="doctorResult" class="checks" style="margin-top:12px"></div>
+  </section>
+
+  <section class="glass card" id="page-gallery" style="display:none">
+    <div class="row" style="justify-content:space-between">
+      <h3 style="margin:0">🖼 会话画廊（仅当前页面会话，不持久化）</h3>
+      <button class="btn ghost small" id="galClear">清空会话</button>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <div class="field" style="flex:1;margin:0"><input id="galSearch" placeholder="搜索提示词…"></div>
+      <div class="field" style="margin:0"><select id="galFilter"><option value="">全部后端</option></select></div>
+    </div>
+    <div class="gal" id="gal" style="margin-top:12px"></div>
+    <div class="hint" id="galEmpty" style="display:none">本会话还没有生成记录，先去生成一张吧。</div>
+  </section>
+</div>
+<script src="/assets/app.js"></script>
+</body>
+</html>

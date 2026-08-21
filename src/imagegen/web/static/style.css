@@ -1,0 +1,51 @@
+:root{--cyan:#00e5ff;--ink:#dce9f5;--mut:#8fa8c0;--glass:rgba(14,22,36,.58);--line:rgba(0,229,255,.24)}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif;color:var(--ink);background:radial-gradient(1200px 800px at 20% -10%,#123049 0%,#08101c 55%,#050a12 100%);overflow-x:hidden}
+#veil{position:fixed;inset:0;background:linear-gradient(180deg,rgba(6,11,20,.30),rgba(6,11,20,.72) 72%);z-index:-1}
+.shell{max-width:1180px;margin:0 auto;padding:16px 18px 46px}
+.top{display:flex;align-items:center;gap:14px;margin:6px 2px 16px;flex-wrap:wrap}
+.logo{font-size:22px;font-weight:700;letter-spacing:2px;background:linear-gradient(90deg,#7df6ff,#00e5ff,#ff5fa2);-webkit-background-clip:text;background-clip:text;color:transparent}
+.sub{color:var(--mut);font-size:12px;margin-top:2px}
+.tabs{display:flex;gap:8px;margin-left:auto;flex-wrap:wrap}
+.tab{padding:8px 18px;border-radius:999px;border:1px solid var(--line);background:rgba(10,18,30,.55);color:var(--ink);cursor:pointer;font-size:14px}
+.tab.on{background:linear-gradient(135deg,#0096b8,#00e5ff);color:#03222e;font-weight:700;border-color:transparent}
+.glass{background:var(--glass);border:1px solid var(--line);border-radius:18px;box-shadow:0 8px 30px rgba(0,0,0,.35)}
+.card{padding:18px 20px;margin-bottom:16px}
+h3{margin:0 0 12px;font-size:15px;color:#9ff2ff;font-weight:600}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.field{display:flex;flex-direction:column;gap:5px;margin-bottom:11px}
+.field label{font-size:12px;color:var(--mut)}
+input,select,textarea{background:rgba(8,16,28,.72);border:1px solid rgba(0,229,255,.28);border-radius:9px;color:var(--ink);padding:8px 10px;font-size:13px;outline:none;width:100%}
+input:focus,select:focus,textarea:focus{border-color:var(--cyan);box-shadow:0 0 0 2px rgba(0,229,255,.16)}
+textarea{min-height:96px;resize:vertical}
+.btn{border:none;border-radius:10px;padding:10px 22px;font-size:14px;cursor:pointer;font-weight:700}
+.btn.main{background:linear-gradient(135deg,#0096b8,#00e5ff);color:#03222e}
+.btn.main:disabled{opacity:.55;cursor:wait}
+.btn.ghost{background:rgba(10,18,30,.6);border:1px solid var(--line);color:var(--ink)}
+.btn.small{padding:6px 12px;font-size:12px;border-radius:8px}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+#status{font-size:13px;color:#9ff2ff;min-height:20px;margin:10px 0}
+#error{display:none;background:rgba(255,70,110,.14);border:1px solid rgba(255,95,150,.5);color:#ffb9cd;border-radius:10px;padding:10px 12px;font-size:13px;margin-bottom:12px;white-space:pre-wrap}
+#result{display:none}
+#resultImg{max-width:100%;max-height:520px;border-radius:12px;border:1px solid var(--line);display:block;margin:0 auto 12px}
+.info{font-size:12px;color:var(--mut);line-height:1.8;word-break:break-all}
+.info b{color:#bff4ff;font-weight:600}
+.warn{color:#ffd27a}
+#saveChip{display:none;color:#7dffb0;font-size:13px}
+.gal{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}
+.gcard{background:rgba(12,20,34,.66);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.gcard img{width:100%;height:160px;object-fit:cover;cursor:pointer;display:block}
+.gbody{padding:9px 11px}
+.gp{font-size:11px;color:var(--mut);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:30px}
+.detail-prompt{font-size:11px;color:var(--mut);white-space:pre-wrap;word-break:break-all;max-height:320px;overflow:auto;margin:6px 0}
+.gm{font-size:11px;color:#6f8aa5;margin:5px 0}
+.gbtn{display:flex;gap:6px;flex-wrap:wrap}
+.hint{font-size:12px;color:var(--mut);margin-top:6px}
+.set-group h4{color:#c9f7ff;font-size:13px;margin:16px 0 10px;padding-left:8px;border-left:3px solid var(--cyan)}
+.checks{display:flex;flex-direction:column;gap:8px}
+.check{display:flex;gap:8px;align-items:baseline;background:rgba(8,16,28,.5);border:1px solid var(--line);border-radius:10px;padding:9px 12px;font-size:13px}
+.check .ok{color:#7dffb0;font-weight:700}
+.check .fail{color:#ff7b9c;font-weight:700}
+.mono{font-family:Consolas,Menlo,monospace;font-size:12px;word-break:break-all}
+@media (max-width:720px){.tabs{margin-left:0}.grid{grid-template-columns:1fr}}

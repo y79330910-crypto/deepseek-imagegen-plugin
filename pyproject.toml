@@ -20,3 +20,10 @@ imagegen = "imagegen.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["imagegen*"]
+
+[tool.setuptools.package-data]
+imagegen = [
+  "web/static/*.html",
+  "web/static/*.js",
+  "web/static/*.css",
+]
