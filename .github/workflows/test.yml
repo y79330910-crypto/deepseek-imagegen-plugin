@@ -31,6 +31,10 @@ jobs:
           python -m imagegen config --json
           python -m imagegen serve --help
 
+      - name: WebUI package resources
+        run: |
+          python -c "from importlib.resources import files; r=files('imagegen.web').joinpath('static'); assert r.joinpath('index.html').is_file(); assert r.joinpath('app.js').is_file(); assert r.joinpath('style.css').is_file()"
+
       - name: Core import without Codex plugin dirs
         run: |
           mv plugins/deepseek-imagegen/.codex-plugin /tmp/codex-plugin-disabled

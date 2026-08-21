@@ -1,8 +1,12 @@
-# deepseek-imagegen-plugin
+# ImageGen
 
-为 Codex 中的 DeepSeek 等纯文本模型提供**图像生成**能力的插件（私有仓库）。
+**Standalone local image generation application with CLI, WebUI and Codex integration.**
 
-DeepSeek 本身无法直接生成图片；本插件提供图像生成桥接：由 DeepSeek 理解需求、撰写提示词，桥接脚本把提示词发给图像模型后端，拿到图片后保存并交付。
+ImageGen 是一个本地图像生成应用：提供 Python Core / Services、命令行（`imagegen`）、
+Local HTTP API v1 与完整 WebUI。默认连接本地 Vertex Proxy（隐私可控、零云端依赖），
+也可附加 OpenAI 兼容备用后端（如 DragToken）。
+
+Codex 集成是可选的 Adapter：DeepSeek 等纯文本模型通过薄 CLI 调用 ImageGen Core 出图。
 
 ## 功能
 
@@ -12,7 +16,9 @@ DeepSeek 本身无法直接生成图片；本插件提供图像生成桥接：�
 - **构图预设 + 真实尺寸校验**：`--composition full-body / half-body / portrait / landscape`，锁定画幅 + 取景规则；生成后实测尺寸，代理不守尺寸时自动画布优先兜底
 - **参考图**：三段式提示词自动生成（类型识别 + 身份锚点清单 + 场景锚点丢弃）；支持最多 4 张多参考图，每张带用途标签，生成角色隔离简报；角色外观一致性以用户提供的参考图为准（角色卡功能已移除）
 - **提示词词库**：MySQL + SiliconFlow Embedding / Rerank 向量检索（`prompt_library` 库），生成时喂示例给翻译官
-- **网页界面（洛天依主题）**：`python scripts/webui.py` 启动（默认 http://127.0.0.1:8766，`--port` / `--no-browser` 可调）——生成页（提示词 / 参考图上传 / 尺寸 / 构图 / 模型 / 批量出图）、设置页（可视化编辑配置，密钥打码）、历史画廊（最近 50 张，可回填参数重新生成、复制生效提示词全文）
+- **Standalone WebUI（洛天依主题）**：`imagegen serve --open` 启动（默认 http://127.0.0.1:8765），
+  与 HTTP API 同源运行；生成页（提示词 / 参考图路径 / 尺寸 / 构图 / 模型 / 批量出图）、
+  设置页（可视化编辑配置，密钥打码）、诊断页、会话画廊；前端只通过 `/api/v1/*` 与 Core 通信
 - **自动副本**：生成成功后自动在 `mirror_dir` 保留副本
 - **诊断**：`doctor`（连通性 + 尺寸探针）、`config`（密钥打码）、`list-models`
 
@@ -28,6 +34,10 @@ DeepSeek 本身无法直接生成图片；本插件提供图像生成桥接：�
 │   ├── config.py / http.py / image_utils.py
 │   ├── composition.py / reference.py / translator.py
 │   ├── library.py / doctor.py / cli.py / __main__.py
+│   ├── api/                               # Local HTTP API v1（纯协议适配器）
+│   │   ├── server.py / routes.py / responses.py / outputs.py
+│   ├── web/                               # Standalone WebUI 静态资源
+│   │   └── static/index.html / app.js / style.css
 │   ├── services/                         # Application Service 层
 │   │   ├── generation.py                 # GenerationService
 │   │   ├── models.py                     # ModelService
@@ -45,7 +55,7 @@ DeepSeek 本身无法直接生成图片；本插件提供图像生成桥接：�
 │       ├── image_gen.py                  # 薄入口：加载 Core 并调用 CLI
 │       ├── prompt_lib.py                 # 词库薄入口
 │       ├── codex_adapter.py              # Codex 环境默认值注入（Core 不依赖）
-│       ├── webui.py                      # 网页界面（洛天依主题）
+│       ├── webui.py                      # 兼容 launcher：启动 standalone WebUI
 │       └── config.example.json           # 配置示例（真实 Key 放本地）
 └── tests/                                # 统一测试（python -m unittest）
     ├── run_smoke_test.py                 # 统一测试入口
@@ -56,12 +66,35 @@ DeepSeek 本身无法直接生成图片；本插件提供图像生成桥接：�
 
 ```bash
 pip install -e .
+```
+
+启动 Standalone WebUI（同时提供 HTTP API）：
+
+```bash
+imagegen serve --open
+# 浏览器打开 http://127.0.0.1:8765/
+```
+
+命令行方式：
+
+```bash
 imagegen generate "..." --composition full-body
 imagegen config
 imagegen doctor
 imagegen list-models
 # 或
 python -m imagegen ...
+```
+
+## Codex Integration
+
+Codex 插件目录 `plugins/deepseek-imagegen/` 只是 Adapter：薄 CLI 入口加载独立 Core，
+`webui.py` 是兼容 launcher（启动 standalone ImageGen WebUI），不再包含第二套 WebUI 实现。
+
+```bash
+codex plugin marketplace add "D:\deepseek-imagegen-plugin"
+python plugins/deepseek-imagegen/scripts/image_gen.py generate "..." --json
+python plugins/deepseek-imagegen/scripts/webui.py          # 旧入口，等价 imagegen serve
 ```
 
 CLI、WebUI 与 Codex Adapter 统一通过 `src/imagegen` 的 Public API（`imagegen` 根模块）

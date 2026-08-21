@@ -28,7 +28,7 @@ plugins/deepseek-imagegen/
 │   ├── image_gen.py              # 薄入口：加载 src/imagegen 并调用 CLI
 │   ├── prompt_lib.py             # 词库薄入口（兼容旧命令）
 │   ├── codex_adapter.py          # Codex 环境默认值注入（Core 不依赖 Codex）
-│   ├── webui.py                  # 网页界面（洛天依主题，默认 8766 端口）
+│   ├── webui.py                  # 兼容 launcher：启动 standalone ImageGen WebUI
 │   ├── config.example.json       # 配置示例（真实 Key 放本地）
 └── （生图核心已迁移到仓库根 src/imagegen/，插件不再包含实现）
 ```
@@ -88,9 +88,14 @@ python ../../tests/run_smoke_test.py
 
 ## 网页界面（Web UI）
 
-- **启动**：双击桌面快捷方式「洛天依生图网页」，或运行 `python scripts/webui.py`（默认打开 http://127.0.0.1:8766；`--port` 可改端口，`--no-browser` 不自动打开浏览器）。
-- **生成页**：提示词 + 参考图上传（拖拽/点选，PNG/JPG/WebP，最多 4 张 + 每张用途标签）+ 后端选择 / 快捷尺寸 / 构图预设 / 模型下拉（含 DragToken 2K/4K 变体）/ 批量出图 / 去噪强度 / 种子 / 翻译官 / 词库开关 → 一键生图，预览、下载、显示种子与真实尺寸。
-- **设置页**：可视化编辑 `~/.deepseek-imagegen/config.json`（翻译官、默认出图参数、尺寸策略、词库、MySQL、Vertex、备用后端、参考图识别、壁纸），密钥打码显示；未改动的密钥不会被覆盖。
-- **历史画廊**：最近 50 张生成记录，可回填参数重新生成、下载、复制生效提示词全文。
-- **壁纸**：首次启动自动使用本机洛天依壁纸（`~/.deepseek-imagegen/webui/wallpaper.png`），设置页可随时更换。壁纸、历史记录、上传的参考图均只存本机，不进入仓库。
-- **提示**：想严格保留参考图的角色身份时，请在生成页把「参考图类型」选为「角色人物」。
+- **启动**：运行 `python scripts/webui.py`（默认打开 http://127.0.0.1:8765；`--port` 可改端口，
+  `--no-browser` 不自动打开浏览器）。这是兼容 launcher：实际 WebUI 由独立 ImageGen
+  Server（`imagegen serve`）提供，前端只通过 `/api/v1/*` 通信，不再由插件内部实现。
+- **生成页**：提示词 + 参考图路径（每行一张，最多 4 张）+ 后端选择 / 快捷尺寸 / 构图预设 /
+  模型下拉 / 批量出图 / 种子 / 翻译官 / 词库开关 → 经 `/api/v1/generate` 生成，
+  预览与下载使用 `output_url`。
+- **设置页**：可视化编辑配置（翻译官、默认出图参数、尺寸策略 auto/aspect/exact、词库、
+  MySQL、Vertex、备用后端、参考图识别），密钥打码显示，保存走 `PATCH /api/v1/config`。
+- **会话画廊**：仅当前页面会话内的生成结果（不持久化，Phase 5 提供 History API）。
+- **提示**：当前 WebUI 为 v1 本地版：参考图使用本机路径（same-machine），历史为当前页面会话；
+  浏览器文件上传与持久化历史将在后续版本提供。
