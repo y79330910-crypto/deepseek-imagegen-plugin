@@ -530,7 +530,8 @@ class Handler(BaseHTTPRequestHandler):
                 if target:
                     items = [it for it in items if str(it.get("id") or "") != target]
                 else:
-                    items = []
+                    self._json({"ok": False, "error": "缺少 id 参数，已取消删除（不会清空历史）。"}, 400)
+                    return
                 save_history(items)
                 self._json({"ok": True, "history": items})
             elif path == "/api/history/clear":
@@ -962,10 +963,10 @@ async function loadHistory(){
  const g=$("gal");g.innerHTML="";
  if(!h.length){$("galEmpty").style.display="block";return}$("galEmpty").style.display="none";
  h.forEach(it=>{const card=document.createElement("div");card.className="gcard";
-  card.innerHTML='<img src="/api/image?path='+encodeURIComponent(it.path||"")+'" alt="缩略图"><div class="gbody"><div class="gp">'+esc(it.prompt||"")+'</div><div class="gm">'+esc(it.backend||"vertex")+' · 种子 '+(it.seed??"-")+' · '+(it.size||"")+' · '+(it.actual_size||"")+(it.refs&&it.refs.length?' · 参考'+(it.refs.length)+'张':'')+'<br>'+esc(it.ts||"")+'</div>'+(it.prompt_used?'<details class="gm"><summary style="cursor:pointer">生效提示词（点击展开）</summary><div class="detail-prompt">'+esc(it.prompt_used)+'</div><button class="btn ghost small" data-act="copy" type="button">复制提示词</button></details>':"")+'<div class="gbtn"><button class="btn ghost small" data-act="fill">回填重搞</button><button class="btn ghost small" data-act="del">删除</button><a class="btn ghost small" href="/api/image?path='+encodeURIComponent(it.path||"")+'" download="result.png">下载</a></div></div>';
+  card.innerHTML='<img src="/api/image?path='+encodeURIComponent(it.path||"")+'" alt="缩略图"><div class="gbody"><div class="gp">'+esc(it.prompt||"")+'</div><div class="gm">'+esc(it.backend||"vertex")+' · 种子 '+(it.seed??"-")+' · '+(it.size||"")+' · '+(it.actual_size||"")+(it.refs&&it.refs.length?' · 参考'+(it.refs.length)+'张':'')+'<br>'+esc(it.ts||"")+'</div>'+(it.prompt_used?'<details class="gm"><summary style="cursor:pointer">生效提示词（点击展开）</summary><div class="detail-prompt">'+esc(it.prompt_used)+'</div><button class="btn ghost small" data-act="copy" type="button">复制提示词</button></details>':"")+'<div class="gbtn"><button class="btn ghost small" data-act="fill">回填重搞</button>'+(it.id?'<button class="btn ghost small" data-act="del" type="button">删除</button>':"")+'<a class="btn ghost small" href="/api/image?path='+encodeURIComponent(it.path||"")+'" download="result.png">下载</a></div></div>';
   card.querySelector("img").onclick=()=>{window.open("/api/image?path="+encodeURIComponent(it.path||""))};
   card.querySelector('[data-act="fill"]').onclick=()=>{fillForm(it);switchTab("generate")};
-  card.querySelector('[data-act="del"]').onclick=async()=>{if(!confirm("删除这张历史记录？"))return;try{await api("/api/history?id="+encodeURIComponent(it.id||""),{method:"DELETE"});loadHistory()}catch(e){showErr("删除失败："+e.message)}};
+  const delBtn=card.querySelector('[data-act="del"]');if(delBtn)delBtn.onclick=async()=>{if(!confirm("删除这张历史记录？"))return;try{await api("/api/history?id="+encodeURIComponent(it.id||""),{method:"DELETE"});loadHistory()}catch(e){showErr("删除失败："+e.message)}};
   const cp=card.querySelector('[data-act="copy"]');
   if(cp)cp.onclick=async(e)=>{e.stopPropagation();try{await navigator.clipboard.writeText(it.prompt_used||"")}catch(err){const ta=document.createElement("textarea");ta.value=it.prompt_used||"";document.body.appendChild(ta);ta.select();document.execCommand("copy");ta.remove()}cp.textContent="已复制";setTimeout(()=>cp.textContent="复制提示词",1500)};
   g.appendChild(card)});}
