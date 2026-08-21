@@ -69,6 +69,62 @@ CLI、WebUI 与 Codex Adapter 统一通过 `src/imagegen` 的 Public API（`imag
 `CORE_API_VERSION`、`ImageGenEngine`、`GenerateRequest`、`GenerateResult`、
 `BackendCapabilities` 与错误类型等稳定公共接口。
 
+## Local HTTP API v1
+
+在 Services 之上提供本地 HTTP 适配器（纯协议层，不包含生图业务规则）：
+
+```bash
+imagegen serve
+# 默认监听 http://127.0.0.1:8765；或 python -m imagegen serve
+```
+
+接口全部位于 `/api/v1/`：
+
+```text
+GET   /api/v1/health
+GET   /api/v1/backends
+GET   /api/v1/backends/{backend_id}
+GET   /api/v1/backends/{backend_id}/models
+POST  /api/v1/generate
+GET   /api/v1/config
+PATCH /api/v1/config
+POST  /api/v1/doctor
+GET   /api/v1/outputs/{generation_id}
+```
+
+示例：
+
+```bash
+curl http://127.0.0.1:8765/api/v1/health
+
+curl -X POST http://127.0.0.1:8765/api/v1/generate \
+  -H "Content-Type: application/json" \
+  -d '{"prompt":"a cat","size":"1024x1024"}'
+```
+
+PowerShell 示例：
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8765/api/v1/health
+Invoke-RestMethod -Method Post http://127.0.0.1:8765/api/v1/generate `
+  -ContentType "application/json" `
+  -Body '{"prompt":"a cat","size":"1024x1024"}'
+```
+
+`POST /api/v1/generate` 的请求体直接使用 `GenerateRequest` JSON contract，响应基于
+`GenerateResult.to_dict()` 并附加 `output_url`；生成结果通过 `generation_id`
+经 `/api/v1/outputs/{generation_id}` 读取（进程内注册表，不提供任意文件读取）。
+`GET /api/v1/config` 只返回打码后的配置，`PATCH` 复用 `ConfigService.update`。
+
+### 安全说明
+
+- 默认仅监听 `127.0.0.1`；绑定非 loopback 地址必须显式 `--allow-remote`。
+- `--allow-remote` 无身份验证，只应在可信网络环境使用；当前 API 不适合公开互联网部署。
+- 默认不发送全局 CORS 头，不提供认证系统（后续按需设计）。
+- v1 Local API 的 `images` 指向运行 ImageGen Server 的本机可访问路径
+  （same-machine API）；文件上传协议留待后续版本。
+- 所有错误统一为 `{"error": {"type": "...", "message": "..."}}`。
+
 ## 安装
 
 ```bash

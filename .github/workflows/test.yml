@@ -29,6 +29,7 @@ jobs:
         run: |
           python -m imagegen --help
           python -m imagegen config --json
+          python -m imagegen serve --help
 
       - name: Core import without Codex plugin dirs
         run: |

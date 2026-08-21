@@ -67,6 +67,8 @@ class ApiHandler(BaseHTTPRequestHandler):
     def _read_body(self) -> bytes:
         length = int(self.headers.get("Content-Length") or 0)
         if length > MAX_BODY_BYTES:
+            # 读取并丢弃前 MAX+1 字节，避免客户端仍在发送时连接被粗暴中断
+            self.rfile.read(MAX_BODY_BYTES + 1)
             raise ApiError(
                 400,
                 "payload_too_large",
