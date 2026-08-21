@@ -27,6 +27,11 @@ class OutputRegistry:
         with self._lock:
             return self._entries.get(str(generation_id))
 
+    def unregister(self, generation_id: str) -> bool:
+        """移除某条注册；删除历史记录时调用，保证当前进程也无法再访问。"""
+        with self._lock:
+            return self._entries.pop(str(generation_id), None) is not None
+
     def __len__(self) -> int:
         with self._lock:
             return len(self._entries)

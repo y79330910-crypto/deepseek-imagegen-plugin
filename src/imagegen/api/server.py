@@ -14,6 +14,7 @@ from ..services import (
     ConfigService,
     DiagnosticService,
     GenerationService,
+    HistoryService,
     ModelService,
 )
 from . import routes
@@ -49,12 +50,14 @@ class ApiContext:
         model_service: ModelService,
         diagnostic_service: DiagnosticService,
         output_registry: OutputRegistry,
+        history_service: HistoryService,
     ):
         self.config_service = config_service
         self.generation_service = generation_service
         self.model_service = model_service
         self.diagnostic_service = diagnostic_service
         self.output_registry = output_registry
+        self.history_service = history_service
         self.generation_lock = threading.Lock()
 
 
@@ -129,11 +132,19 @@ def create_server(
     model_service: Optional[ModelService] = None,
     diagnostic_service: Optional[DiagnosticService] = None,
     output_registry: Optional[OutputRegistry] = None,
+    history_service: Optional[HistoryService] = None,
+    history_db_path: str | Path | None = None,
 ) -> ThreadingHTTPServer:
     """构建 HTTP API v1 server；services 缺省时基于同一 config_path 创建。"""
     cfg_service = config_service or ConfigService(config_path)
+    if history_service is None:
+        history_service = HistoryService(
+            db_path=history_db_path or (cfg_service.path().parent / "imagegen.db")
+        )
     if generation_service is None:
-        generation_service = GenerationService(config_service=cfg_service)
+        generation_service = GenerationService(
+            config_service=cfg_service, history_service=history_service
+        )
     if model_service is None:
         model_service = ModelService(config_service=cfg_service)
     if diagnostic_service is None:
@@ -145,6 +156,7 @@ def create_server(
         model_service=model_service,
         diagnostic_service=diagnostic_service,
         output_registry=registry,
+        history_service=history_service,
     )
     server = ThreadingHTTPServer((host, port), ApiHandler)
     server.daemon_threads = True

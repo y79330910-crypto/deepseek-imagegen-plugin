@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import unquote
+from urllib.parse import parse_qs, unquote
 
 from ..backends.base import BACKEND_API_VERSION
 from ..errors import BackendError, ConfigurationError, ImageGenError, ValidationError
@@ -130,8 +130,12 @@ def handle_asset(context: Any, name: str, body: bytes = b"") -> Response:
 
 
 def handle_output(context: Any, generation_id: str) -> Response:
-    """只允许读取当前 Server 注册过的生成结果，不提供任意文件读取。"""
+    """只允许读取当前 Server 注册过或历史记录里的合法生成结果，不提供任意文件读取。"""
     path = context.output_registry.get(generation_id)
+    if path is None and context.history_service is not None:
+        record = context.history_service.get(generation_id)
+        if record is not None:
+            path = record.output_path
     if path is None:
         return error_response(404, "not_found", "unknown generation_id")
     file_path = Path(path)
@@ -148,6 +152,66 @@ def handle_output(context: Any, generation_id: str) -> Response:
         content_type=content_type,
         headers={"Cache-Control": "private"},
     )
+
+
+def history_public_dict(record: Any) -> dict[str, Any]:
+    """历史记录对外契约：不暴露 output_path，使用 output_url。"""
+    return {
+        "generation_id": record.id,
+        "created_at": record.created_at,
+        "prompt": record.prompt,
+        "backend": record.backend,
+        "image_model_used": record.image_model_used,
+        "seed": record.seed,
+        "requested_size": record.requested_size,
+        "actual_size": record.actual_size,
+        "output_url": f"/api/v1/outputs/{record.id}",
+    }
+
+
+def _query_int(
+    query: dict[str, list[str]],
+    name: str,
+    default: int,
+    min_value: int | None = None,
+    max_value: int | None = None,
+) -> int:
+    raw = (query.get(name) or [None])[0]
+    if raw is None or str(raw) == "":
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ApiError(400, "validation_error", f"{name} must be an integer") from exc
+    if min_value is not None and value < min_value:
+        raise ApiError(400, "validation_error", f"{name} must be >= {min_value}")
+    if max_value is not None and value > max_value:
+        raise ApiError(400, "validation_error", f"{name} must be <= {max_value}")
+    return value
+
+
+def handle_history_list(context: Any, query: dict[str, list[str]]) -> Response:
+    q = ((query.get("q") or [""])[0] or "").strip()
+    limit = _query_int(query, "limit", 50, 1, 100)
+    offset = _query_int(query, "offset", 0, 0)
+    records = context.history_service.list(query=q, limit=limit, offset=offset)
+    items = [history_public_dict(record) for record in records]
+    return json_response(200, {"items": items, "count": len(items)})
+
+
+def handle_history_get(context: Any, generation_id: str) -> Response:
+    record = context.history_service.get(generation_id)
+    if record is None:
+        return error_response(404, "not_found", "unknown generation_id")
+    return json_response(200, {"item": history_public_dict(record)})
+
+
+def handle_history_delete(context: Any, generation_id: str) -> Response:
+    deleted = context.history_service.delete(generation_id)
+    context.output_registry.unregister(generation_id)
+    if not deleted:
+        return error_response(404, "not_found", "unknown generation_id")
+    return json_response(200, {"deleted": True, "generation_id": generation_id})
 
 
 _STATIC_ROUTES: dict[tuple[str, str], Callable[..., Response]] = {
@@ -176,32 +240,46 @@ def _method_not_allowed(allowed: list[str]) -> Response:
 
 
 def dispatch(context: Any, method: str, path: str, body: bytes) -> Response:
-    handler = _STATIC_ROUTES.get((method, path))
+    path_part, _, query_string = path.partition("?")
+    query = parse_qs(query_string)
+    handler = _STATIC_ROUTES.get((method, path_part))
     if handler is not None:
         return _safe_call(handler, context, body)
-    allowed = [m for (m, p) in _STATIC_ROUTES if p == path]
+    allowed = [m for (m, p) in _STATIC_ROUTES if p == path_part]
     if allowed:
         return _method_not_allowed(allowed)
 
-    match = re.fullmatch(r"/api/v1/backends/([^/]+)/models", path)
+    match = re.fullmatch(r"/api/v1/backends/([^/]+)/models", path_part)
     if match:
         if method != "GET":
             return _method_not_allowed(["GET"])
         return _safe_call(handle_backend_models, context, unquote(match.group(1)))
-    match = re.fullmatch(r"/api/v1/backends/([^/]+)", path)
+    match = re.fullmatch(r"/api/v1/backends/([^/]+)", path_part)
     if match:
         if method != "GET":
             return _method_not_allowed(["GET"])
         return _safe_call(handle_backend_info, context, unquote(match.group(1)))
-    match = re.fullmatch(r"/api/v1/outputs/([^/]+)", path)
+
+    if method == "GET" and path_part == "/api/v1/history":
+        return _safe_call(handle_history_list, context, query)
+    match = re.fullmatch(r"/api/v1/history/([^/]+)", path_part)
+    if match:
+        generation_id = unquote(match.group(1))
+        if method == "GET":
+            return _safe_call(handle_history_get, context, generation_id)
+        if method == "DELETE":
+            return _safe_call(handle_history_delete, context, generation_id)
+        return _method_not_allowed(["GET", "DELETE"])
+
+    match = re.fullmatch(r"/api/v1/outputs/([^/]+)", path_part)
     if match:
         if method != "GET":
             return _method_not_allowed(["GET"])
         return _safe_call(handle_output, context, unquote(match.group(1)))
 
-    if method == "GET" and path == "/":
+    if method == "GET" and path_part == "/":
         return _safe_call(handle_index, context, body)
-    match = re.fullmatch(r"/assets/([^/]+)", path)
+    match = re.fullmatch(r"/assets/([^/]+)", path_part)
     if match:
         if method != "GET":
             return _method_not_allowed(["GET"])
