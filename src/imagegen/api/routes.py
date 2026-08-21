@@ -107,6 +107,28 @@ def handle_doctor(context: Any, body: bytes = b"") -> Response:
     return json_response(200, context.diagnostic_service.doctor())
 
 
+def handle_index(context: Any, body: bytes = b"") -> Response:
+    """GET / → standalone WebUI 首页。"""
+    from ..web import asset_content_type, read_index_html
+
+    return Response(
+        200,
+        read_index_html(),
+        content_type=asset_content_type("index.html"),
+    )
+
+
+def handle_asset(context: Any, name: str, body: bytes = b"") -> Response:
+    """GET /assets/{name} → 只允许白名单内的静态资源。"""
+    from ..web import asset_content_type, read_asset
+
+    try:
+        data = read_asset(name)
+    except FileNotFoundError:
+        return error_response(404, "not_found", "asset not found")
+    return Response(200, data, content_type=asset_content_type(name))
+
+
 def handle_output(context: Any, generation_id: str) -> Response:
     """只允许读取当前 Server 注册过的生成结果，不提供任意文件读取。"""
     path = context.output_registry.get(generation_id)
@@ -176,4 +198,13 @@ def dispatch(context: Any, method: str, path: str, body: bytes) -> Response:
         if method != "GET":
             return _method_not_allowed(["GET"])
         return _safe_call(handle_output, context, unquote(match.group(1)))
+
+    if method == "GET" and path == "/":
+        return _safe_call(handle_index, context, body)
+    match = re.fullmatch(r"/assets/([^/]+)", path)
+    if match:
+        if method != "GET":
+            return _method_not_allowed(["GET"])
+        return _safe_call(handle_asset, context, unquote(match.group(1)))
+
     return error_response(404, "not_found", "not found")
