@@ -57,7 +57,7 @@ codex plugin marketplace add "D:\deepseek-imagegen-plugin"
 - `translator`：deepseek 的地址/密钥/模型 + gemini 模型（留空自动选最佳文本模型）
 - `prompt_library`：MySQL 连接、Embedding / Rerank（SiliconFlow）、分类置顶
 - `reference`：参考图自动分类与视觉识别（`auto_classify` / `vision_script` / `classify_timeout`）
-- `size_policy`：`mode`（auto / strict / warn）、`retries`、`tolerance`、`probe_cache`
+- `size_policy`：`mode`（auto / aspect / exact；`strict` 已弃用等价 `aspect`，`warn` 已弃用等价 `auto`）、`retries`、`tolerance`、`probe_cache`
 
 ## 词库整理说明（v1.0 已执行）
 

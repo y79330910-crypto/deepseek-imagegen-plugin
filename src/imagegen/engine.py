@@ -17,7 +17,7 @@ from .backends.openai_images import (
 from .backends.registry import get_backend
 from .composition import composition_prompt_suffix, resolve_composition
 from .config import load_config
-from .errors import ConfigurationError, GenError, ValidationError
+from .errors import BackendError, ConfigurationError, GenError
 from .image_utils import (
     aspect_ratio_key,
     canvas_size_for,
@@ -26,9 +26,15 @@ from .image_utils import (
     mirror_output,
     parse_size,
     probe_image_size_ext,
+    size_matches,
     sizes_match,
 )
-from .models import GenerateRequest, GenerateResult, validate_backend_request
+from .models import (
+    GenerateRequest,
+    GenerateResult,
+    normalize_size_policy,
+    validate_backend_request,
+)
 from .translator import translate_prompt
 
 
@@ -77,12 +83,12 @@ def _run_generation(
     comp_suffix = composition_prompt_suffix(comp_preset, cfg)
 
     # ---- 尺寸策略（代码默认：auto / 重试 2 次 / 容差 6%）
-    policy = (
+    raw_policy = (
         request.size_policy
         or str(cfg.get("size_policy", {}).get("mode") or "auto")
-    ).strip().lower()
-    if policy not in ("strict", "auto", "warn"):
-        policy = "auto"
+    )
+    policy, policy_warnings = normalize_size_policy(raw_policy)
+    warnings.extend(policy_warnings)
     sp_cfg = cfg.get("size_policy") or {}
     tolerance = float(sp_cfg.get("tolerance", 0.06) or 0.06)
     size_retries = max(0, int(sp_cfg.get("retries", 2) or 0))
@@ -326,9 +332,9 @@ def _run_generation(
             requested = parse_size(size_str)
         except Exception:  # noqa: BLE001
             requested = (width, height)
-    match = sizes_match(requested, actual_size, tolerance)
+    match_ok = size_matches(requested, actual_size, policy, tolerance)
     if (
-        not match["ok"]
+        not match_ok
         and actual_size is not None
         and not init_images_data
         and backend_name == "vertex"
@@ -341,22 +347,26 @@ def _run_generation(
                     empty_retries=empty_retries, retry_delay_base=retry_delay_base,
                 )
                 actual_size = probe_image_size_ext(data, "")
-                match = sizes_match(requested, actual_size, tolerance)
+                match_ok = size_matches(requested, actual_size, policy, tolerance)
                 used_canvas_first = True
                 size_actions.append(f"画布优先重试（{canvas_w}x{canvas_h} 画布）")
-                if match["ok"]:
+                if match_ok:
                     break
             except GenError as exc:
                 warnings.append(f"画布优先兜底失败：{str(exc)[:150]}")
                 break
-    if match["ok"]:
+    if match_ok:
         if used_canvas_first:
             warnings.append("已启用画布优先：代理文生图不遵守尺寸，改用目标画幅画布出图。")
     else:
-        reason = match.get("reason") or "尺寸不符"
-        if policy == "strict":
-            raise ValidationError(
-                f"尺寸策略为 strict：{reason}"
+        reason = (
+            sizes_match(requested, actual_size, tolerance).get("reason")
+            if actual_size is not None
+            else "无法读取生成图的真实尺寸"
+        )
+        if policy in ("aspect", "exact"):
+            raise BackendError(
+                f"尺寸策略为 {policy}：{reason}"
                 + (f"，已尝试：{'；'.join(size_actions)}" if size_actions else "")
                 + "。可改用 --size-policy auto 自动兜底。"
             )
@@ -390,13 +400,17 @@ def _run_generation(
         warnings=warnings,
         quality=request.quality,
         size_hint=size_hint if backend_name != "vertex" else "",
-        size_match=bool(actual_size and match["ok"]),
+        size_match=bool(actual_size and match_ok),
         size_check={
             "requested": f"{width}x{height}",
             "effective": size_str if backend_name != "vertex" else "",
             "actual": f"{actual_size[0]}x{actual_size[1]}" if actual_size else None,
-            "match": bool(actual_size and match["ok"]),
-            "reason": match.get("reason") or "",
+            "match": bool(actual_size and match_ok),
+            "reason": (
+                sizes_match(requested, actual_size, tolerance).get("reason")
+                if actual_size is not None
+                else ""
+            ),
             "canvas_first": used_canvas_first,
         },
         composition=request.composition,

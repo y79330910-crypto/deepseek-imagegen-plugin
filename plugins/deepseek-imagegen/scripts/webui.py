@@ -639,7 +639,7 @@ textarea{min-height:96px;resize:vertical}
           <select data-path="composition.preset"><option value="auto">自动</option><option value="full-body">全身</option><option value="half-body">半身</option><option value="portrait">特写</option><option value="landscape">横版</option></select>
         </div>
         <div class="field"><label>尺寸策略</label>
-          <select data-path="size_policy.mode"><option value="auto">auto（自动兜底）</option><option value="strict">strict（不符报错）</option><option value="warn">warn（仅提示）</option></select>
+          <select data-path="size_policy.mode"><option value="auto">auto（自动兜底）</option><option value="aspect">aspect（保持画幅）</option><option value="exact">exact（严格像素）</option><option value="strict">strict（已弃用=aspect）</option></select>
         </div>
         <div class="field"><label>尺寸兜底重试次数</label><input data-path="size_policy.retries" type="number" min="0" max="5"></div>
         <div class="field"><label>尺寸容差（如 0.06）</label><input data-path="size_policy.tolerance" type="number" step="0.01" min="0" max="0.3"></div>

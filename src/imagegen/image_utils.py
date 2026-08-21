@@ -236,6 +236,25 @@ def sizes_match(
     return result
 
 
+def size_matches(
+    requested: tuple[int, int],
+    actual: Optional[tuple[int, int]],
+    policy: str = "auto",
+    tolerance: float = 0.06,
+) -> bool:
+    """按 size_policy 判断最终尺寸是否合格。
+
+    exact → 像素完全一致；aspect / auto → 复用 sizes_match（画幅比例与方向）。
+    """
+    if actual is None:
+        return False
+    rw, rh = (int(x) for x in requested)
+    aw, ah = (int(x) for x in actual)
+    if policy == "exact":
+        return (rw, rh) == (aw, ah)
+    return bool(sizes_match((rw, rh), (aw, ah), tolerance).get("ok"))
+
+
 def canvas_size_for(width: int, height: int) -> tuple[int, int]:
     """画布优先兜底使用的画布尺寸（已实测代理会原样返回的档位优先）。"""
     if width <= 0 or height <= 0:

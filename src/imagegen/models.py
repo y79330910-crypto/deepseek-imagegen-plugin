@@ -12,6 +12,30 @@ from .image_utils import parse_size
 from .reference import MAX_REF_IMAGES
 
 
+def normalize_size_policy(value: str) -> tuple[str, list[str]]:
+    """规范化 size_policy，返回 (最终策略, deprecation warnings)。
+
+    正式契约：auto / aspect / exact。
+    兼容："" → auto；strict → aspect（弃用）；warn → auto（弃用，保持旧行为）。
+    非法值抛 ValidationError，不静默 fallback。
+    """
+    raw = str(value or "").strip().lower()
+    if raw in ("", "auto"):
+        return "auto", []
+    if raw == "aspect":
+        return "aspect", []
+    if raw == "exact":
+        return "exact", []
+    if raw == "strict":
+        return "aspect", ["size_policy='strict' is deprecated; use 'aspect'"]
+    if raw == "warn":
+        return "auto", ["size_policy='warn' is deprecated; use 'auto'"]
+    raise ValidationError(
+        f"未知 size_policy：{value!r}。可选：auto / aspect / exact"
+        "（strict 已弃用，等价 aspect）。"
+    )
+
+
 @dataclass
 class GenerateRequest:
     """一次生图的完整输入。"""
@@ -125,6 +149,7 @@ class GenerateRequest:
         """请求基础合法性校验（不依赖具体 Backend）。"""
         if not str(self.prompt or "").strip():
             raise ValidationError("提示词不能为空。")
+        normalize_size_policy(self.size_policy)
         size = str(self.size or "").strip().lower()
         if size and size != "auto":
             parse_size(size)
@@ -146,6 +171,10 @@ class GenerateRequest:
             )
         if len(self.reference_roles) > len(self.images):
             raise ValidationError("reference_roles 数量不能超过 images 数量。")
+
+    def normalized_size_policy(self) -> tuple[str, list[str]]:
+        """返回 (规范化后的策略, deprecation warnings)。"""
+        return normalize_size_policy(self.size_policy)
 
 
 def validate_backend_request(

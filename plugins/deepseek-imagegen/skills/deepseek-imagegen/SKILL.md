@@ -27,7 +27,7 @@ python "<脚本路径>" generate "<提示词>" [选项]
 - `--out <输出文件路径>`：指定输出文件（项目相关图片必须保存到工作区）
 - `--size 1024x1024`：分辨率（宽x高）
 - `--composition full-body|half-body|portrait|landscape|auto`：构图预设
-- `--size-policy strict|auto|warn`：尺寸不符时的处理策略（默认 auto）
+- `--size-policy auto|aspect|exact`：尺寸不符时的处理策略（默认 auto；`strict` 已弃用等价 `aspect`，`warn` 已弃用等价 `auto`）
 - `--seed 12345`：随机种子（复现同一张图）
 - `--model <模型名>`：指定模型（默认自动选最佳图像模型）
 - `--translator deepseek|gemini|off|auto`：提示词翻译官（默认跟随配置，deepseek 为默认引擎）

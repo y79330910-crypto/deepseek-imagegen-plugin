@@ -85,7 +85,7 @@ codex plugin marketplace add "D:\deepseek-imagegen-plugin"
 - `extra_backends`：备用后端（如 DragToken），含尺寸白名单与 `quality` 参数
 - `translator`：deepseek 地址 / 密钥 / 模型 + gemini 模型（留空自动选最佳文本模型）
 - `prompt_library`：MySQL 连接、Embedding / Rerank（SiliconFlow）、分类置顶
-- `size_policy`：`mode`（auto / strict / warn）、`retries`、`tolerance`、`probe_cache`
+- `size_policy`：`mode`（auto / aspect / exact；`strict` 已弃用等价 `aspect`，`warn` 已弃用等价 `auto`）、`retries`、`tolerance`、`probe_cache`
 - `reference`：参考图自动分类与视觉识别脚本
 
 ## 测试

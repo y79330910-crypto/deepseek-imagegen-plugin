@@ -230,8 +230,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--size-policy",
         dest="size_policy",
         default="",
-        choices=["", "strict", "auto", "warn"],
-        help="尺寸不符策略：strict 严格报错 / auto 自动兜底重试(默认) / warn 仅警告",
+        choices=["", "auto", "aspect", "exact", "strict", "warn"],
+        help="尺寸不符策略：auto 尽力满足(默认) / aspect 保持画幅 / exact 严格像素；"
+             "strict 已弃用等价 aspect，warn 已弃用等价 auto",
     )
     gen.add_argument(
         "--backend",
