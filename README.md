@@ -21,11 +21,18 @@ DeepSeek 本身无法直接生成图片；本插件提供图像生成桥接：�
 ```
 .
 ├── .agents/plugins/marketplace.json      # Codex marketplace 清单
+├── pyproject.toml                        # 独立包（pip install -e . / imagegen 命令）
 ├── src/imagegen/                         # ImageGen Core（独立于 Codex）
+│   ├── __init__.py                       # Public Core API（CORE_API_VERSION=1）
 │   ├── engine.py / models.py / errors.py # 编排、统一数据模型、通用错误
 │   ├── config.py / http.py / image_utils.py
 │   ├── composition.py / reference.py / translator.py
-│   ├── library.py / doctor.py / cli.py
+│   ├── library.py / doctor.py / cli.py / __main__.py
+│   ├── services/                         # Application Service 层
+│   │   ├── generation.py                 # GenerationService
+│   │   ├── models.py                     # ModelService
+│   │   ├── config.py                     # ConfigService
+│   │   └── diagnostics.py                # DiagnosticService
 │   └── backends/                         # Backend API v1 + 注册表
 │       ├── base.py / registry.py
 │       ├── vertex.py                     # 本地 Vertex Proxy
@@ -44,6 +51,23 @@ DeepSeek 本身无法直接生成图片；本插件提供图像生成桥接：�
     ├── run_smoke_test.py                 # 统一测试入口
     └── test_*.py                         # Core / Backend / 回归测试
 ```
+
+## 独立安装（不依赖 Codex 插件）
+
+```bash
+pip install -e .
+imagegen generate "..." --composition full-body
+imagegen config
+imagegen doctor
+imagegen list-models
+# 或
+python -m imagegen ...
+```
+
+CLI、WebUI 与 Codex Adapter 统一通过 `src/imagegen` 的 Public API（`imagegen` 根模块）
+与 Service 层（`imagegen.services`）消费 Core；`import imagegen` 提供
+`CORE_API_VERSION`、`ImageGenEngine`、`GenerateRequest`、`GenerateResult`、
+`BackendCapabilities` 与错误类型等稳定公共接口。
 
 ## 安装
 
@@ -72,3 +96,7 @@ python tests/run_smoke_test.py
 ```
 
 覆盖：配置合并与密钥打码、尺寸工具、模型挑选、构图预设、翻译官 off、参考图三段式（类型 / 避免项 / 简报）、出图编排（模拟后端）、输出路径与镜像副本、CLI JSON 输出、词库统计。
+
+另含：Public API / Service 层（Generation / Model / Config / Diagnostic）测试、
+CLI / WebUI 依赖边界（AST 扫描）、独立打包入口（`python -m imagegen`）与
+无 Codex 插件目录的 Core 独立导入测试。

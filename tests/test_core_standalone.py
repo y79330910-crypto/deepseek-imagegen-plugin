@@ -41,6 +41,8 @@ class TestCoreStandalone(unittest.TestCase):
                 env=env,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=60,
             )
         self.assertEqual(proc.returncode, 0, proc.stderr)
@@ -71,6 +73,8 @@ class TestCoreStandalone(unittest.TestCase):
                 env=env,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=60,
             )
         self.assertEqual(proc.returncode, 0, proc.stderr)

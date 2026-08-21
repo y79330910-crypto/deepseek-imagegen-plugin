@@ -36,6 +36,9 @@ plugins/deepseek-imagegen/
 > 本插件目录只保留 Adapter（`.codex-plugin/`、`skills/`、`assets/`、薄入口与 WebUI）。
 > 真正的生图核心位于仓库根 `src/imagegen/`，即使删除 `.codex-plugin/` 与 `skills/`，
 > `python scripts/image_gen.py ...` 仍可正常出图。
+>
+> CLI 与 WebUI 统一通过 `src/imagegen` 的 Public API / Service 层消费 Core，
+> 插件目录不再直接依赖生图内部实现。
 
 ## 安装
 
