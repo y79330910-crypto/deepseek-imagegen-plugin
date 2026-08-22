@@ -63,6 +63,8 @@ const api = {
     if (offset) params.set("offset", String(offset));
     return apiRequest("GET", "/api/v2/history?" + params.toString());
   },
+  getHistory: (id) =>
+    apiRequest("GET", "/api/v2/history/" + encodeURIComponent(id)),
   deleteHistory: (id) =>
     apiRequest("DELETE", "/api/v2/history/" + encodeURIComponent(id)),
 };
@@ -605,12 +607,20 @@ function renderGallery() {
           '</div><button class="btn ghost small" data-act="copy" type="button">复制提示词</button></details>'
         : "") +
       '<div class="gbtn"><button class="btn ghost small" data-act="fill" type="button">回填提示词</button>' +
+      '<button class="btn ghost small" data-act="reuse" type="button">复用参数</button>' +
       '<button class="btn ghost small" data-act="del" type="button">删除记录</button>' +
       '<a class="btn ghost small" href="' + esc(it.output_url) + '" download="result.png">下载</a></div></div>';
     card.querySelector("img").onclick = () => window.open(it.output_url);
     card.querySelector('[data-act="fill"]').onclick = () => {
       $("prompt").value = it.prompt || "";
       switchTab("generate");
+    };
+    card.querySelector('[data-act="reuse"]').onclick = async () => {
+      try {
+        await reuseGeneration(it.generation_id);
+      } catch (err) {
+        showError("复用参数失败：" + err.message);
+      }
     };
     const delBtn = card.querySelector('[data-act="del"]');
     delBtn.onclick = async () => {
@@ -642,6 +652,40 @@ function renderGallery() {
     }
     gal.appendChild(card);
   });
+}
+
+/* ============ History reuse ============ */
+
+async function reuseGeneration(generationId) {
+  const data = await api.getHistory(generationId);
+  const item = data.item || {};
+  const req = item.request || {};
+  const set = (id, value) => {
+    const el = $(id);
+    if (el && value !== undefined && value !== null) el.value = String(value);
+  };
+  set("prompt", req.prompt != null ? req.prompt : item.prompt);
+  set("size", req.size);
+  set("model", req.model);
+  set("quality", req.quality);
+  set("composition", req.composition);
+  set("translator", req.translator);
+  $("library").value =
+    req.library_enabled === undefined || req.library_enabled === null
+      ? "auto"
+      : req.library_enabled
+        ? "on"
+        : "off";
+  $("seed").value = ""; // Phase 7：复用参数默认不复用 seed
+  state.references = (item.references || []).map((ref) => ({
+    asset_id: ref.asset_id,
+    content_url: ref.content_url,
+    original_name: "历史参考图",
+    role: ref.role || "auto",
+    status: "ready",
+  }));
+  renderRefPanel();
+  switchTab("generate");
 }
 
 /* ============ Events / Init ============ */
