@@ -107,6 +107,7 @@ class AssetRecord:
             "width": self.width,
             "height": self.height,
             "content_url": f"/api/v2/assets/{self.asset_id}/content",
+            "thumbnail_url": f"/api/v2/assets/{self.asset_id}/thumbnail",
             "created_at": self.created_at,
         }
 

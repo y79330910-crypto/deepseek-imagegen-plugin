@@ -247,6 +247,7 @@ def history_public_dict(record: Any) -> dict[str, Any]:
         "requested_size": record.requested_size,
         "actual_size": record.actual_size,
         "output_url": f"/api/v2/outputs/{record.id}",
+        "thumbnail_url": f"/api/v2/outputs/{record.id}/thumbnail",
     }
 
 
@@ -275,9 +276,21 @@ def handle_history_list(context: Any, query: dict[str, list[str]]) -> Response:
     q = ((query.get("q") or [""])[0] or "").strip()
     limit = _query_int(query, "limit", 50, 1, 100)
     offset = _query_int(query, "offset", 0, 0)
-    records = context.history_service.list(query=q, limit=limit, offset=offset)
+    records = context.history_service.list(query=q, limit=limit + 1, offset=offset)
     items = [history_public_dict(record) for record in records]
-    return json_response(200, {"items": items, "count": len(items)})
+    return json_response(200, _paged_response(items, offset, limit))
+
+
+def _paged_response(items: list[Any], offset: int, limit: int) -> dict[str, Any]:
+    """分页响应：limit+1 探测 has_more，next_offset 仅在有更多时给出。"""
+    has_more = len(items) > limit
+    page = items[:limit]
+    return {
+        "items": page,
+        "count": len(page),
+        "has_more": has_more,
+        "next_offset": offset + len(page) if has_more else None,
+    }
 
 
 def handle_history_get(context: Any, generation_id: str) -> Response:
@@ -361,10 +374,10 @@ def handle_assets_list(context: Any, query: dict[str, list[str]]) -> Response:
     limit = _query_int(query, "limit", 50, 1, 100)
     offset = _query_int(query, "offset", 0, 0)
     records = context.asset_service.list(
-        kind=kind, query=q, limit=limit, offset=offset
+        kind=kind, query=q, limit=limit + 1, offset=offset
     )
     items = [record.to_public_dict() for record in records]
-    return json_response(200, {"items": items, "count": len(items)})
+    return json_response(200, _paged_response(items, offset, limit))
 
 
 def handle_assets_get(context: Any, asset_id: str) -> Response:
