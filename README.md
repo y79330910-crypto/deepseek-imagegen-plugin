@@ -3,22 +3,25 @@
 **Standalone local image generation application with CLI, WebUI and Codex integration.**
 
 ImageGen 是一个本地图像生成应用：提供 Python Core / Services、命令行（`imagegen`）、
-Local HTTP API v1 与完整 WebUI。默认连接本地 Vertex Proxy（隐私可控、零云端依赖），
-也可附加 OpenAI 兼容备用后端（如 DragToken）。
+Local HTTP API v1 与完整 WebUI。最终架构只保留两套独立的 OpenAI-Compatible API：
+提示词 API（`/v1/chat/completions`，明确不支持时 fallback `/v1/responses`）与
+图像 API（`/v1/images/generations` / `/v1/images/edits`），两者共用统一 OpenAIClient。
 
 Codex 集成是可选的 Adapter：DeepSeek 等纯文本模型通过薄 CLI 调用 ImageGen Core 出图。
 
 ## 功能
 
-- **主后端（本地 Vertex Proxy）**：自动读取代理端口 / 密钥 / 模型列表，选用最佳图像模型（`gemini-3-pro-image` 等），隐私可控、零云端依赖
-- **备用后端（extra_backends）**：默认 Vertex 不变，可附加备用后端（如 DragToken `gpt-image-2`）；方向优先尺寸映射（竖版 1024x1536 / 横版 1536x1024 / 方图 1254x1254）、尺寸白名单（2K / 4K 超分 / 原生 4K）、`quality` 参数，出图时自动把尺寸写进提示词
-- **提示词翻译官**：中文需求自动改写为结构化生图提示词（DeepSeek 默认，通道异常时本地 Gemini 自动兜底，`off` 直传）；兼容 `/v1` 端点（支持 opencode-go 等上游）
-- **构图预设 + 真实尺寸校验**：`--composition full-body / half-body / portrait / landscape`，锁定画幅 + 取景规则；生成后实测尺寸，代理不守尺寸时自动画布优先兜底
+- **提示词 OpenAI API**：独立 `base_url` / `api_key` / `model`，默认 `POST /v1/chat/completions`，仅在上游明确不支持（404 / 405 / 501）时 fallback `/v1/responses`；401 / 403 / 429 / 500 / 超时 / 网络错误直接返回原始错误
+- **图像 OpenAI API**：独立 `base_url` / `api_key` / `model`；文生图 `POST /v1/images/generations`、图生图/参考图 `POST /v1/images/edits`（支持多参考图，兼容 `b64_json` / `image` / `url` / `data:image/...` 返回）
+- **尺寸原样透传**：任意合法 `WxH`（如 1920x1080 / 1080x1920 / 3440x1440）原样发送上游，不存在白名单 / 自动归一化 / Canvas fallback / 尺寸失败自动重试；输出尺寸不符只产生 warning
+- **构图预设 + 输出尺寸检查**：`--composition full-body / half-body / portrait / landscape` 锁定画幅与取景规则；生成后读取真实输出尺寸，`size_check` 可开启/关闭（不符时警告）
+- **WebUI 推荐尺寸**：画幅 × 1K/2K/4K 预设（1:1 / 16:9 / 9:16 / 4:3 / 3:4 / 3:2 / 2:3），最终只发送 `WxH`，仍可自由手填自定义尺寸
 - **参考图**：三段式提示词自动生成（类型识别 + 身份锚点清单 + 场景锚点丢弃）；支持最多 4 张多参考图，每张带用途标签，生成角色隔离简报；Reference Asset System 提供持久化素材库（上传 / 拖放 / 粘贴 / 本机导入 → managed asset → Asset API）
 - **提示词词库**：MySQL + SiliconFlow Embedding / Rerank 向量检索（`prompt_library` 库），生成时喂示例给翻译官
 - **Standalone WebUI（洛天依主题）**：`imagegen serve --open` 启动（默认 http://127.0.0.1:8765），
-  与 HTTP API 同源运行；生成页（提示词 / 参考图路径 / 尺寸 / 构图 / 模型 / 批量出图）、
-设置页（可视化编辑配置，密钥打码）、诊断页、持久化历史画廊（最近 50 条）；前端只通过 `/api/v1/*` 与 Core 通信
+  与 HTTP API 同源运行；生成页（提示词 / 参考图 / 画幅×档位尺寸 / 构图 / 模型 / 批量出图）、
+设置页（提示词与图像两组 OpenAI API，含「拉取模型」连接测试）、诊断页、持久化历史画廊（最近 50 条）；
+前端只通过 `/api/v1/*` 与 Core 通信
 - **自动副本**：生成成功后自动在 `mirror_dir` 保留副本
 - **诊断**：`doctor`（连通性 + 尺寸探针）、`config`（密钥打码）、`list-models`
 
@@ -34,6 +37,7 @@ Codex 集成是可选的 Adapter：DeepSeek 等纯文本模型通过薄 CLI 调�
 │   ├── config.py / http.py / image_utils.py
 │   ├── composition.py / reference.py / translator.py
 │   ├── library.py / doctor.py / cli.py / __main__.py
+│   ├── openai_client.py                 # 统一 OpenAI-Compatible Client（endpoint / 文本 / 图像 / 模型）
 │   ├── api/                               # Local HTTP API v1（纯协议适配器）
 │   │   ├── server.py / routes.py / responses.py / outputs.py
 │   ├── web/                               # Standalone WebUI 静态资源
@@ -46,10 +50,6 @@ Codex 集成是可选的 Adapter：DeepSeek 等纯文本模型通过薄 CLI 调�
 │   │   ├── models.py                     # ModelService
 │   │   ├── config.py                     # ConfigService
 │   │   └── diagnostics.py                # DiagnosticService
-│   └── backends/                         # Backend API v1 + 注册表
-│       ├── base.py / registry.py
-│       ├── vertex.py                     # 本地 Vertex Proxy
-│       └── openai_images.py              # OpenAI 兼容 / extra_backends
 ├── plugins/deepseek-imagegen/            # Codex 插件（仅 Adapter）
 │   ├── .codex-plugin/plugin.json         # 插件清单
 │   ├── skills/deepseek-imagegen/         # 技能（触发图像生成桥接）
@@ -102,8 +102,8 @@ python plugins/deepseek-imagegen/scripts/webui.py          # 旧入口，等价 
 
 CLI、WebUI 与 Codex Adapter 统一通过 `src/imagegen` 的 Public API（`imagegen` 根模块）
 与 Service 层（`imagegen.services`）消费 Core；`import imagegen` 提供
-`CORE_API_VERSION`、`ImageGenEngine`、`GenerateRequest`、`GenerateResult`、
-`BackendCapabilities` 与错误类型等稳定公共接口。
+`CORE_API_VERSION`、`ImageGenEngine`、`GenerateRequest`、`GenerateResult`
+与错误类型等稳定公共接口。
 
 ## Local HTTP API v1
 
@@ -118,10 +118,8 @@ imagegen serve
 
 ```text
 GET   /api/v1/health
-GET   /api/v1/backends
-GET   /api/v1/backends/{backend_id}
-GET   /api/v1/backends/{backend_id}/models
 POST  /api/v1/generate
+POST  /api/v1/models                      # 模型拉取 {target: "translator" | "image"}
 GET   /api/v1/config
 PATCH /api/v1/config
 POST  /api/v1/doctor
@@ -160,6 +158,21 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8765/api/v1/generate `
 `GenerateResult.to_dict()` 并附加 `output_url`；生成结果通过 `generation_id`
 经 `/api/v1/outputs/{generation_id}` 读取（进程内注册表，不提供任意文件读取）。
 `GET /api/v1/config` 只返回打码后的配置，`PATCH` 复用 `ConfigService.update`。
+
+### 模型拉取（非强依赖）
+
+`POST /api/v1/models` 按 target 分别请求两组上游的 `/v1/models`，各自使用自己的 API Key：
+
+```json
+{"target": "image"}
+```
+
+```json
+{"target": "translator"}
+```
+
+返回 `{"models": ["model-a", "model-b"]}`。`/v1/models` 不可用时不影响实际调用——
+`translator.model` / `image.model` 始终允许手工填写。WebUI 的「拉取模型」同时承担连接测试。
 
 ### Reference Asset System
 
@@ -221,16 +234,19 @@ codex plugin marketplace add "D:\deepseek-imagegen-plugin"
 
 然后在 Codex 应用中安装 `DeepSeek ImageGen` 插件，并参考 [插件 README](plugins/deepseek-imagegen/README.md) 使用与配置。
 
-## 配置
+## 配置（双 OpenAI-Compatible API）
 
 配置位置：`~/.deepseek-imagegen/config.json`，模板见 `scripts/config.example.json`。
 
-- `vertex.dir`：本地 Vertex Proxy 目录，自动读取端口 / 密钥 / 模型列表
-- `extra_backends`：备用后端（如 DragToken），含尺寸白名单与 `quality` 参数
-- `translator`：deepseek 地址 / 密钥 / 模型 + gemini 模型（留空自动选最佳文本模型）
+- `translator`：提示词上游 `enabled` / `base_url` / `api_key` / `model` / `output_lang`
+- `image`：图像上游 `base_url` / `api_key` / `model` / `quality`（`quality` 留空则向上游省略该字段）
+- `size_check`：`enabled`（默认 true）+ `tolerance`（默认 0.06）；输出尺寸不符只加 warning
 - `prompt_library`：MySQL 连接、Embedding / Rerank（SiliconFlow）、分类置顶
-- `size_policy`：`mode`（auto / aspect / exact；`strict` 已弃用等价 `aspect`，`warn` 已弃用等价 `auto`）、`retries`、`tolerance`、`probe_cache`
 - `reference`：参考图自动分类与视觉识别脚本
+
+旧配置迁移（简单、确定）：`translator.deepseek.*` 值明确时自动升级为 `translator.*`；
+`translator.engine=off` 迁移为 `enabled=false`；`vertex` 与 `extra_backends.*` 不猜测，
+`image.*` 保持为空，由用户重新配置；`size_policy.tolerance` 迁移为 `size_check.tolerance`。
 
 ## 测试
 
@@ -239,7 +255,11 @@ python tests/run_smoke_test.py
 # 等价：python -m unittest
 ```
 
-覆盖：配置合并与密钥打码、尺寸工具、模型挑选、构图预设、翻译官 off、参考图三段式（类型 / 避免项 / 简报）、出图编排（模拟后端）、输出路径与镜像副本、CLI JSON 输出、词库统计、SQLite schema v2 迁移、AssetService（上传 / 导入 / 检索 / 删除 / 引用关系）、Asset API、references → ReferenceResolver 集成与 History references 回归、WebUI Reference Panel 前端契约。
+覆盖：配置合并与密钥打码、尺寸工具、构图预设、翻译官 off、参考图三段式（类型 / 避免项 / 简报）、
+出图编排（模拟 OpenAI 上游）、输出路径与镜像副本、CLI JSON 输出、词库统计、
+SQLite schema v2 迁移、AssetService / Asset API、references → ReferenceResolver 集成、
+OpenAIClient（endpoint 归一化 / Chat→Responses fallback / generations / edits / 模型拉取）、
+尺寸原样透传与不符警告、WebUI 双 API 与参考面板前端契约。
 
 另含：Public API / Service 层（Generation / Model / Config / Diagnostic）测试、
 CLI / WebUI 依赖边界（AST 扫描）、独立打包入口（`python -m imagegen`）与
