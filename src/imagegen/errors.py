@@ -28,3 +28,15 @@ GenError = ImageGenError
 
 class EmptyImageError(BackendError):
     """图像接口返回了空结果（常见于上游限流但代理返回 HTTP 200 + 空 data）。"""
+
+
+class AssetError(ImageGenError):
+    """Reference Asset System 公共错误基类。"""
+
+
+class AssetNotFoundError(AssetError):
+    """资产不存在（未知 asset_id / managed 文件丢失 / 本机导入路径找不到）。"""
+
+
+class AssetInUseError(AssetError):
+    """资产已被历史 generation 引用，不允许删除。"""

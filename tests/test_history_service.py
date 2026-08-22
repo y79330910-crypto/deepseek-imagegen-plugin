@@ -29,7 +29,7 @@ class TestHistoryService(unittest.TestCase):
         self.db_path = Path(self.tmp.name) / "imagegen.db"
         self.svc = HistoryService(self.db_path)
 
-    def test_db_created_and_user_version_1(self):
+    def test_db_created_and_user_version_2(self):
         import sqlite3
 
         self.assertTrue(self.db_path.is_file())
@@ -38,7 +38,7 @@ class TestHistoryService(unittest.TestCase):
             version = conn.execute("PRAGMA user_version").fetchone()[0]
         finally:
             conn.close()
-        self.assertEqual(version, 1)
+        self.assertEqual(version, 2)
 
     def test_record_get_round_trip(self):
         req = GenerateRequest(prompt="hello", size="1024x1024", seed=7)
@@ -134,4 +134,3 @@ class TestHistoryRecord(unittest.TestCase):
         self.assertEqual(d["output_path"], r"D:\out.png")
         self.assertEqual(d["warnings"], ["w"])
         self.assertEqual(d["request"]["prompt"], "p")
-

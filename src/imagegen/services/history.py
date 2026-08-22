@@ -15,26 +15,8 @@ from typing import Any, Optional
 
 from ..config import default_history_db_path
 from ..models import GenerateRequest, GenerateResult
+from .db import migrate_db
 
-
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS generations (
-    id TEXT PRIMARY KEY,
-    created_at TEXT NOT NULL,
-    output_path TEXT NOT NULL,
-    backend TEXT,
-    image_model_used TEXT,
-    prompt TEXT NOT NULL,
-    prompt_used TEXT,
-    seed INTEGER,
-    requested_size TEXT,
-    actual_size TEXT,
-    warnings_json TEXT NOT NULL,
-    metadata_json TEXT NOT NULL,
-    request_json TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_generations_created_at ON generations(created_at DESC);
-"""
 
 MAX_LIMIT = 100
 DEFAULT_LIMIT = 50
@@ -125,16 +107,7 @@ class HistoryService:
         return sqlite3.connect(self.db_path, timeout=5.0)
 
     def _migrate(self) -> None:
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = self._connect()
-        try:
-            version = conn.execute("PRAGMA user_version").fetchone()[0]
-            if version == 0:
-                conn.executescript(_SCHEMA)
-                conn.execute("PRAGMA user_version = 1")
-                conn.commit()
-        finally:
-            conn.close()
+        migrate_db(self.db_path)
 
     def record(self, request: GenerateRequest, result: GenerateResult) -> HistoryRecord:
         """把一个完成的 generation 落库（调用者不负责拆字段）。"""

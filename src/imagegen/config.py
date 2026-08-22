@@ -27,6 +27,11 @@ def default_history_db_path() -> Path:
     return Path.home() / ".deepseek-imagegen" / "imagegen.db"
 
 
+def default_asset_dir() -> Path:
+    """ImageGen 默认 managed asset 目录（单一来源，跨模块复用）。"""
+    return Path.home() / ".deepseek-imagegen" / "assets" / "references"
+
+
 # 兼容常量（新代码优先使用 default_config_path()）
 CONFIG_DIR = Path.home() / ".deepseek-imagegen"
 CONFIG_FILE = default_config_path()

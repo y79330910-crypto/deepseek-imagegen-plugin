@@ -2,17 +2,23 @@
 
 from __future__ import annotations
 
+from .assets import AssetLink, AssetRecord, AssetService
 from .config import ConfigService
 from .diagnostics import DiagnosticService
 from .generation import GenerationService
 from .history import HistoryRecord, HistoryService
 from .models import ModelService
+from .references import ReferenceResolver
 
 __all__ = [
+    "AssetLink",
+    "AssetRecord",
+    "AssetService",
     "ConfigService",
     "DiagnosticService",
     "GenerationService",
     "HistoryRecord",
     "HistoryService",
     "ModelService",
+    "ReferenceResolver",
 ]
