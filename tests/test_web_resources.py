@@ -27,7 +27,7 @@ class TestPackageResources(unittest.TestCase):
         from imagegen.web import asset_content_type, read_asset, read_index_html
 
         self.assertIn("<!DOCTYPE html>", read_index_html())
-        self.assertIn(b"/api/v1/generate", read_asset("app.js"))
+        self.assertIn(b"/api/v2/generate", read_asset("app.js"))
         self.assertTrue(asset_content_type("app.js").startswith("application/javascript"))
 
     def test_resources_work_from_non_source_cwd(self):

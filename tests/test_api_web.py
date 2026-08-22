@@ -25,7 +25,7 @@ class TestStaticServing(unittest.TestCase):
         status, headers, body = self.server.request("GET", "/assets/app.js")
         self.assertEqual(status, 200)
         self.assertTrue(headers.get("Content-Type", "").startswith("application/javascript"))
-        self.assertIn(b"/api/v1/generate", body)
+        self.assertIn(b"/api/v2/generate", body)
 
     def test_style_css(self):
         status, headers, body = self.server.request("GET", "/assets/style.css")
@@ -49,6 +49,6 @@ class TestStaticServing(unittest.TestCase):
         self.assertEqual(status, 404)
 
     def test_api_routes_still_work(self):
-        status, _, data = self.server.json("GET", "/api/v1/health")
+        status, _, data = self.server.json("GET", "/api/v2/health")
         self.assertEqual(status, 200)
         self.assertEqual(data["status"], "ok")

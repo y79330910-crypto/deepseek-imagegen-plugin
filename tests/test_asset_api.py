@@ -1,4 +1,4 @@
-"""Asset HTTP API v1 测试（upload / import / list / get / content / delete）。"""
+"""Asset HTTP API v2 测试（upload / import / list / get / content / delete）。"""
 
 from __future__ import annotations
 
@@ -64,7 +64,7 @@ class TestAssetApi(unittest.TestCase):
         raw = make_png_bytes()
         body, ctype = make_multipart(raw, filename="miku.png")
         status, _, payload = self.server.json(
-            "POST", "/api/v1/assets", body=body, headers={"Content-Type": ctype}
+            "POST", "/api/v2/assets", body=body, headers={"Content-Type": ctype}
         )
         self.assertEqual(status, 201)
         self.assertEqual(payload["source"], "upload")
@@ -74,13 +74,13 @@ class TestAssetApi(unittest.TestCase):
         self.assertEqual(payload["size_bytes"], len(raw))
         self.assertEqual(payload["width"], 32)
         self.assertEqual(payload["height"], 32)
-        self.assertEqual(payload["content_url"], f"/api/v1/assets/{payload['asset_id']}/content")
+        self.assertEqual(payload["content_url"], f"/api/v2/assets/{payload['asset_id']}/content")
         self.assertIn("created_at", payload)
         self.assertNotIn("file_path", payload)
         self.assertNotIn("sha256", payload)
         asset_id = payload["asset_id"]
         status, headers, body = self.server.request(
-            "GET", f"/api/v1/assets/{asset_id}/content"
+            "GET", f"/api/v2/assets/{asset_id}/content"
         )
         self.assertEqual(status, 200)
         self.assertEqual(headers.get("Content-Type"), "image/png")
@@ -94,7 +94,7 @@ class TestAssetApi(unittest.TestCase):
         ).encode("utf-8")
         status, _, payload = self.server.json(
             "POST",
-            "/api/v1/assets",
+            "/api/v2/assets",
             body=body,
             headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
         )
@@ -104,17 +104,17 @@ class TestAssetApi(unittest.TestCase):
     def test_upload_non_image_400(self):
         body, ctype = make_multipart(b"plain text", filename="a.txt", content_type="text/plain")
         status, _, payload = self.server.json(
-            "POST", "/api/v1/assets", body=body, headers={"Content-Type": ctype}
+            "POST", "/api/v2/assets", body=body, headers={"Content-Type": ctype}
         )
         self.assertEqual(status, 400)
         self.assertEqual(payload["error"]["type"], "validation_error")
-        status, _, data = self.server.json("GET", "/api/v1/assets")
+        status, _, data = self.server.json("GET", "/api/v2/assets")
         self.assertEqual(data["count"], 0)
 
     def test_upload_bad_content_type_400(self):
         status, _, payload = self.server.json(
             "POST",
-            "/api/v1/assets",
+            "/api/v2/assets",
             body=b"{}",
             headers={"Content-Type": "application/json"},
         )
@@ -126,7 +126,7 @@ class TestAssetApi(unittest.TestCase):
         Image.new("RGB", (16, 24), (1, 2, 3)).save(src, format="PNG")
         status, _, payload = self.server.json(
             "POST",
-            "/api/v1/assets/import",
+            "/api/v2/assets/import",
             {"path": str(src), "kind": "reference"},
         )
         self.assertEqual(status, 201)
@@ -136,7 +136,7 @@ class TestAssetApi(unittest.TestCase):
         self.assertEqual(payload["height"], 24)
         self.assertNotIn("file_path", payload)
         status, _, body = self.server.request(
-            "GET", f"/api/v1/assets/{payload['asset_id']}/content"
+            "GET", f"/api/v2/assets/{payload['asset_id']}/content"
         )
         self.assertEqual(status, 200)
         self.assertEqual(body, src.read_bytes())
@@ -144,14 +144,14 @@ class TestAssetApi(unittest.TestCase):
     def test_import_missing_path_404(self):
         status, _, payload = self.server.json(
             "POST",
-            "/api/v1/assets/import",
+            "/api/v2/assets/import",
             {"path": str(Path(self.tmp.name) / "nope.png")},
         )
         self.assertEqual(status, 404)
         self.assertEqual(payload["error"]["type"], "not_found")
 
     def test_import_requires_path(self):
-        status, _, payload = self.server.json("POST", "/api/v1/assets/import", {})
+        status, _, payload = self.server.json("POST", "/api/v2/assets/import", {})
         self.assertEqual(status, 400)
         self.assertEqual(payload["error"]["type"], "validation_error")
 
@@ -160,7 +160,7 @@ class TestAssetApi(unittest.TestCase):
             self.asset_svc.create_from_upload(
                 make_png_bytes(), original_name=f"ref-{i}.png"
             )
-        status, _, payload = self.server.json("GET", "/api/v1/assets")
+        status, _, payload = self.server.json("GET", "/api/v2/assets")
         self.assertEqual(status, 200)
         self.assertEqual(payload["count"], 3)
         for item in payload["items"]:
@@ -171,53 +171,53 @@ class TestAssetApi(unittest.TestCase):
             self.asset_svc.create_from_upload(
                 make_png_bytes(), original_name=f"cat-{i}.png"
             )
-        status, _, payload = self.server.json("GET", "/api/v1/assets?q=cat-1")
+        status, _, payload = self.server.json("GET", "/api/v2/assets?q=cat-1")
         self.assertEqual(payload["count"], 1)
         self.assertEqual(payload["items"][0]["original_name"], "cat-1.png")
-        status, _, payload = self.server.json("GET", "/api/v1/assets?limit=2&offset=0")
+        status, _, payload = self.server.json("GET", "/api/v2/assets?limit=2&offset=0")
         self.assertEqual(payload["count"], 2)
-        status, _, payload = self.server.json("GET", "/api/v1/assets?limit=2&offset=2")
+        status, _, payload = self.server.json("GET", "/api/v2/assets?limit=2&offset=2")
         self.assertEqual(payload["count"], 1)
-        status, _, payload = self.server.json("GET", "/api/v1/assets?kind=other")
+        status, _, payload = self.server.json("GET", "/api/v2/assets?kind=other")
         self.assertEqual(payload["count"], 0)
 
     def test_get_asset(self):
         rec = self.asset_svc.create_from_upload(make_png_bytes(), original_name="a.png")
-        status, _, payload = self.server.json("GET", f"/api/v1/assets/{rec.asset_id}")
+        status, _, payload = self.server.json("GET", f"/api/v2/assets/{rec.asset_id}")
         self.assertEqual(status, 200)
         self.assertEqual(payload["asset_id"], rec.asset_id)
         self.assertEqual(payload["original_name"], "a.png")
         self.assertNotIn("file_path", payload)
 
     def test_get_unknown_asset_404(self):
-        status, _, payload = self.server.json("GET", "/api/v1/assets/deadbeef")
+        status, _, payload = self.server.json("GET", "/api/v2/assets/deadbeef")
         self.assertEqual(status, 404)
         self.assertEqual(payload["error"]["type"], "not_found")
 
     def test_content_unknown_asset_404(self):
-        status, _, payload = self.server.json("GET", "/api/v1/assets/deadbeef/content")
+        status, _, payload = self.server.json("GET", "/api/v2/assets/deadbeef/content")
         self.assertEqual(status, 404)
 
     def test_delete_unused_asset(self):
         rec = self.asset_svc.create_from_upload(make_png_bytes(), original_name="d.png")
-        status, _, payload = self.server.json("DELETE", f"/api/v1/assets/{rec.asset_id}")
+        status, _, payload = self.server.json("DELETE", f"/api/v2/assets/{rec.asset_id}")
         self.assertEqual(status, 200)
         self.assertTrue(payload["deleted"])
-        status, _, _ = self.server.json("GET", f"/api/v1/assets/{rec.asset_id}")
+        status, _, _ = self.server.json("GET", f"/api/v2/assets/{rec.asset_id}")
         self.assertEqual(status, 404)
 
     def test_delete_used_asset_409(self):
         rec = self.asset_svc.create_from_upload(make_png_bytes(), original_name="u.png")
         self.asset_svc.attach_to_generation("g1", rec.asset_id, "character", 0)
-        status, _, payload = self.server.json("DELETE", f"/api/v1/assets/{rec.asset_id}")
+        status, _, payload = self.server.json("DELETE", f"/api/v2/assets/{rec.asset_id}")
         self.assertEqual(status, 409)
         self.assertEqual(payload["error"]["type"], "asset_in_use")
 
     def test_delete_unknown_asset_404(self):
-        status, _, payload = self.server.json("DELETE", "/api/v1/assets/deadbeef")
+        status, _, payload = self.server.json("DELETE", "/api/v2/assets/deadbeef")
         self.assertEqual(status, 404)
 
     def test_wrong_method_405(self):
-        status, headers, _ = self.server.json("PATCH", "/api/v1/assets")
+        status, headers, _ = self.server.json("PATCH", "/api/v2/assets")
         self.assertEqual(status, 405)
         self.assertIn("POST", headers.get("Allow", ""))

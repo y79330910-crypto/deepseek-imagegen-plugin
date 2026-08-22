@@ -1,4 +1,4 @@
-"""HTTP API v1 基础集成测试：server / health / 路由 / 错误契约 / remote bind guard。"""
+"""HTTP API v2 基础集成测试：server / health / 路由 / 错误契约 / remote bind guard。"""
 
 from __future__ import annotations
 
@@ -20,14 +20,14 @@ class TestServerBasics(unittest.TestCase):
         self.addCleanup(self.server.close)
 
     def test_health(self):
-        status, _, data = self.server.json("GET", "/api/v1/health")
+        status, _, data = self.server.json("GET", "/api/v2/health")
         self.assertEqual(status, 200)
         self.assertEqual(data["status"], "ok")
         self.assertEqual(data["api_version"], HTTP_API_VERSION)
-        self.assertEqual(data["core_api_version"], 1)
+        self.assertEqual(data["core_api_version"], 2)
 
     def test_unknown_route_404(self):
-        status, _, data = self.server.json("GET", "/api/v1/nope")
+        status, _, data = self.server.json("GET", "/api/v2/nope")
         self.assertEqual(status, 404)
         self.assertEqual(data["error"]["type"], "not_found")
 
@@ -37,20 +37,32 @@ class TestServerBasics(unittest.TestCase):
         status, _, _ = self.server.json("GET", "/generate")
         self.assertEqual(status, 404)
 
+    def test_v1_routes_404(self):
+        for path in (
+            "/api/v1/health",
+            "/api/v1/generate",
+            "/api/v1/config",
+            "/api/v1/history",
+            "/api/v1/assets",
+            "/api/v1/outputs/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ):
+            status, _, _ = self.server.json("GET", path)
+            self.assertEqual(status, 404, path)
+
     def test_wrong_method_405(self):
-        status, headers, data = self.server.json("POST", "/api/v1/health")
+        status, headers, data = self.server.json("POST", "/api/v2/health")
         self.assertEqual(status, 405)
         self.assertEqual(data["error"]["type"], "method_not_allowed")
         self.assertIn("GET", headers.get("Allow", ""))
 
     def test_invalid_json_400(self):
-        status, _, data = self.server.json("POST", "/api/v1/generate", body="{bad json")
+        status, _, data = self.server.json("POST", "/api/v2/generate", body="{bad json")
         self.assertEqual(status, 400)
         self.assertEqual(data["error"]["type"], "invalid_json")
 
     def test_payload_too_large_400(self):
         big = "x" * (1024 * 1024 + 1)
-        status, _, data = self.server.json("POST", "/api/v1/generate", body=big)
+        status, _, data = self.server.json("POST", "/api/v2/generate", body=big)
         self.assertEqual(status, 400)
         self.assertEqual(data["error"]["type"], "payload_too_large")
 

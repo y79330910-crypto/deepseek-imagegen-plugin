@@ -1,4 +1,4 @@
-"""Local HTTP API v1 server：ThreadingHTTPServer + 轻量 handler。"""
+"""Local HTTP API v2 server：ThreadingHTTPServer + 轻量 handler。"""
 
 from __future__ import annotations
 
@@ -90,7 +90,7 @@ class ApiHandler(BaseHTTPRequestHandler):
         try:
             limit = (
                 MAX_UPLOAD_BYTES
-                if method == "POST" and self.path.startswith("/api/v1/assets")
+                if method == "POST" and self.path.startswith("/api/v2/assets")
                 else MAX_BODY_BYTES
             )
             body = self._read_body(limit) if has_body else b""
@@ -155,7 +155,7 @@ def create_server(
     asset_service: Optional[AssetService] = None,
     asset_dir: str | Path | None = None,
 ) -> ThreadingHTTPServer:
-    """构建 HTTP API v1 server；services 缺省时基于同一 config_path 创建。"""
+    """构建 HTTP API v2 server；services 缺省时基于同一 config_path 创建。"""
     cfg_service = config_service or ConfigService(config_path)
     db_path = history_db_path or (cfg_service.path().parent / "imagegen.db")
     if history_service is None:

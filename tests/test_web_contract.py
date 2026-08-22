@@ -1,4 +1,4 @@
-"""新 WebUI 前端契约测试：只用 /api/v1/*，Phase 6 双 OpenAI-Compatible UI。"""
+"""新 WebUI 前端契约测试：只用 /api/v2/*，Phase 6 双 OpenAI-Compatible UI。"""
 
 from __future__ import annotations
 
@@ -15,12 +15,12 @@ class TestWebContract(unittest.TestCase):
     def test_app_js_uses_v1_api_only(self):
         text = APP_JS.read_text(encoding="utf-8")
         for endpoint in (
-            "/api/v1/generate",
-            "/api/v1/config",
-            "/api/v1/models",
-            "/api/v1/doctor",
-            "/api/v1/history",
-            "/api/v1/assets",
+            "/api/v2/generate",
+            "/api/v2/config",
+            "/api/v2/models",
+            "/api/v2/doctor",
+            "/api/v2/history",
+            "/api/v2/assets",
         ):
             self.assertIn(endpoint, text, endpoint)
 
@@ -35,7 +35,7 @@ class TestWebContract(unittest.TestCase):
 
     def test_no_backend_endpoints_in_js(self):
         text = APP_JS.read_text(encoding="utf-8")
-        self.assertNotIn("/api/v1/backends", text)
+        self.assertNotIn("/api/v2/backends", text)
         self.assertNotIn("listBackends", text)
 
     def test_no_absolute_server_url_in_js(self):

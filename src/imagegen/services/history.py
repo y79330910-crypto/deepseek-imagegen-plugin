@@ -15,7 +15,7 @@ from typing import Any, Optional
 
 from ..config import default_history_db_path
 from ..models import GenerateRequest, GenerateResult
-from .db import migrate_db
+from .db import initialize_db
 
 
 MAX_LIMIT = 100
@@ -63,16 +63,15 @@ class HistoryRecord:
             id=row[0],
             created_at=row[1],
             output_path=row[2],
-            # 旧 schema 的 backend 列（index 3）在 ImageGen 2 lineage 中删除
-            image_model_used=row[4] or "",
-            prompt=row[5] or "",
-            prompt_used=row[6] or "",
-            seed=row[7],
-            requested_size=row[8] or "",
-            actual_size=row[9] or "",
-            warnings=_loads(row[10], []),
-            metadata=_loads(row[11], {}),
-            request=_loads(row[12], {}),
+            image_model_used=row[3] or "",
+            prompt=row[4] or "",
+            prompt_used=row[5] or "",
+            seed=row[6],
+            requested_size=row[7] or "",
+            actual_size=row[8] or "",
+            warnings=_loads(row[9], []),
+            metadata=_loads(row[10], {}),
+            request=_loads(row[11], {}),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -105,7 +104,7 @@ class HistoryService:
         return sqlite3.connect(self.db_path, timeout=5.0)
 
     def _migrate(self) -> None:
-        migrate_db(self.db_path)
+        initialize_db(self.db_path)
 
     def record(self, request: GenerateRequest, result: GenerateResult) -> HistoryRecord:
         """把一个完成的 generation 落库（调用者不负责拆字段）。"""
@@ -125,17 +124,15 @@ class HistoryService:
         )
         conn = self._connect()
         try:
-            # backend 列将在 ImageGen 2 DB lineage 中删除；新代码统一写入空值。
             conn.execute(
                 "INSERT OR REPLACE INTO generations "
-                "(id, created_at, output_path, backend, image_model_used, prompt, prompt_used, "
+                "(id, created_at, output_path, image_model_used, prompt, prompt_used, "
                 " seed, requested_size, actual_size, warnings_json, metadata_json, request_json) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     rec.id,
                     rec.created_at,
                     rec.output_path,
-                    "",
                     rec.image_model_used,
                     rec.prompt,
                     rec.prompt_used,

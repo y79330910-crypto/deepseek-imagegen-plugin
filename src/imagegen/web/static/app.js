@@ -35,36 +35,36 @@ async function apiRequest(method, path, body) {
 }
 
 const api = {
-  generate: (req) => apiRequest("POST", "/api/v1/generate", req),
+  generate: (req) => apiRequest("POST", "/api/v2/generate", req),
   uploadAsset: (file) => {
     const fd = new FormData();
     fd.append("file", file);
     fd.append("kind", "reference");
-    return apiRequest("POST", "/api/v1/assets", fd);
+    return apiRequest("POST", "/api/v2/assets", fd);
   },
   importAsset: (path) =>
-    apiRequest("POST", "/api/v1/assets/import", { path, kind: "reference" }),
+    apiRequest("POST", "/api/v2/assets/import", { path, kind: "reference" }),
   listAssets: (kind, q, limit, offset) => {
     const params = new URLSearchParams();
     if (kind) params.set("kind", kind);
     if (q) params.set("q", q);
     if (limit) params.set("limit", String(limit));
     if (offset) params.set("offset", String(offset));
-    return apiRequest("GET", "/api/v1/assets?" + params.toString());
+    return apiRequest("GET", "/api/v2/assets?" + params.toString());
   },
-  getConfig: () => apiRequest("GET", "/api/v1/config"),
-  updateConfig: (patch) => apiRequest("PATCH", "/api/v1/config", patch),
-  models: (target) => apiRequest("POST", "/api/v1/models", { target }),
-  doctor: () => apiRequest("POST", "/api/v1/doctor"),
+  getConfig: () => apiRequest("GET", "/api/v2/config"),
+  updateConfig: (patch) => apiRequest("PATCH", "/api/v2/config", patch),
+  models: (target) => apiRequest("POST", "/api/v2/models", { target }),
+  doctor: () => apiRequest("POST", "/api/v2/doctor"),
   listHistory: (q, limit, offset) => {
     const params = new URLSearchParams();
     if (q) params.set("q", q);
     if (limit) params.set("limit", String(limit));
     if (offset) params.set("offset", String(offset));
-    return apiRequest("GET", "/api/v1/history?" + params.toString());
+    return apiRequest("GET", "/api/v2/history?" + params.toString());
   },
   deleteHistory: (id) =>
-    apiRequest("DELETE", "/api/v1/history/" + encodeURIComponent(id)),
+    apiRequest("DELETE", "/api/v2/history/" + encodeURIComponent(id)),
 };
 
 /* ============ State ============ */
@@ -416,9 +416,8 @@ function renderResult(res) {
   const warns = res.warnings || [];
   let info =
     "<b>图像模型：</b>" + esc(res.image_model_used || "自动") +
-    " · <b>文件：</b>" + esc(res.path) +
     "<br><b>种子：</b>" + esc(res.seed) +
-    "<br><b>尺寸：</b>请求 " + esc(res.size) + " → 实际 " + esc(res.actual_size) +
+    "<br><b>尺寸：</b>请求 " + esc(res.requested_size) + " → 实际 " + esc(res.actual_size) +
     " " + (res.size_match ? "✓" : "✗") + "<br>";
   if (res.composition_preset && res.composition_preset !== "auto") {
     info += "<b>构图：</b>" + esc(res.composition_preset) + "<br>";
@@ -431,7 +430,6 @@ function renderResult(res) {
   if (tr.model) {
     info += "<b>提示词处理：</b>已开启<br>";
   }
-  if (res.mirror_path) info += "<b>镜像副本：</b>" + esc(res.mirror_path) + "<br>";
   if (res.prompt_used) {
     info +=
       '<details><summary style="cursor:pointer"><b>实际生效提示词</b></summary>' +
@@ -439,7 +437,6 @@ function renderResult(res) {
   }
   if (warns.length) info += '<br><span class="warn">提示：' + esc(warns.join("；")) + "</span>";
   $("resultInfo").innerHTML = info;
-  $("mirrorNote").textContent = res.mirror_path ? "已自动备份一份到镜像目录" : "";
   $("result").style.display = "block";
 }
 

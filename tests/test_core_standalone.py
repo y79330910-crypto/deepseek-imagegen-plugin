@@ -51,7 +51,7 @@ class TestCoreStandalone(unittest.TestCase):
         self.assertIn(os.sep + "src" + os.sep + "imagegen", core_file)
         self.assertNotIn("plugins" + os.sep + "deepseek-imagegen", core_file)
         self.assertNotIn("codex", core_file.lower())
-        self.assertEqual(out_lines[1], "1")
+        self.assertEqual(out_lines[1], "2")
 
     def test_cli_parser_builds_without_plugin_dirs(self):
         """CLI 参数解析不依赖插件目录。"""

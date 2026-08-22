@@ -27,7 +27,7 @@ from imagegen.errors import (
 
 class TestPublicApi(unittest.TestCase):
     def test_core_api_version(self):
-        self.assertEqual(CORE_API_VERSION, 1)
+        self.assertEqual(CORE_API_VERSION, 2)
 
     def test_public_objects_accessible_from_root(self):
         for obj in (

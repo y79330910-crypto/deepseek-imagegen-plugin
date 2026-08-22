@@ -1,4 +1,4 @@
-"""HTTP API v1 POST /generate 集成测试。"""
+"""HTTP API v2 POST /generate 集成测试。"""
 
 from __future__ import annotations
 
@@ -28,12 +28,12 @@ class TestGenerateRoute(unittest.TestCase):
         self.addCleanup(server.close)
         status, _, data = server.json(
             "POST",
-            "/api/v1/generate",
+            "/api/v2/generate",
             {"prompt": "a cat", "size": "1024x1024"},
         )
         self.assertEqual(status, 200)
         self.assertEqual(data["generation_id"], self.result.generation_id)
-        self.assertEqual(data["output_url"], f"/api/v1/outputs/{self.result.generation_id}")
+        self.assertEqual(data["output_url"], f"/api/v2/outputs/{self.result.generation_id}")
         self.assertEqual(data["image_model_used"], "gemini-3-pro-image")
         self.assertEqual(data["warnings"], ["w1"])
         self.assertEqual(fake.last_request.prompt, "a cat")
@@ -44,7 +44,7 @@ class TestGenerateRoute(unittest.TestCase):
         server = ApiTestServer(generation_service=fake)
         self.addCleanup(server.close)
         status, _, data = server.json(
-            "POST", "/api/v1/generate", {"prompt": "x"}
+            "POST", "/api/v2/generate", {"prompt": "x"}
         )
         self.assertEqual(status, 400)
         self.assertEqual(data["error"]["type"], "validation_error")
@@ -55,7 +55,7 @@ class TestGenerateRoute(unittest.TestCase):
         server = ApiTestServer(generation_service=fake)
         self.addCleanup(server.close)
         status, _, data = server.json(
-            "POST", "/api/v1/generate", {"prompt": "x"}
+            "POST", "/api/v2/generate", {"prompt": "x"}
         )
         self.assertEqual(status, 502)
         self.assertEqual(data["error"]["type"], "upstream_error")
@@ -67,7 +67,7 @@ class TestGenerateRoute(unittest.TestCase):
         server = ApiTestServer(generation_service=fake)
         self.addCleanup(server.close)
         status, _, data = server.json(
-            "POST", "/api/v1/generate", {"prompt": "x"}
+            "POST", "/api/v2/generate", {"prompt": "x"}
         )
         self.assertEqual(status, 500)
         self.assertEqual(data["error"]["type"], "internal_error")
@@ -78,6 +78,6 @@ class TestGenerateRoute(unittest.TestCase):
     def test_empty_body_400(self):
         server = ApiTestServer()
         self.addCleanup(server.close)
-        status, _, data = server.json("POST", "/api/v1/generate", body="")
+        status, _, data = server.json("POST", "/api/v2/generate", body="")
         self.assertEqual(status, 400)
         self.assertEqual(data["error"]["type"], "invalid_json")

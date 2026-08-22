@@ -25,7 +25,7 @@ class TestWebReferenceContract(unittest.TestCase):
         self.assertIn("refFile", self.js)
 
     def test_asset_api_usage(self):
-        for token in ("/api/v1/assets", "uploadAsset", "importAsset", "listAssets"):
+        for token in ("/api/v2/assets", "uploadAsset", "importAsset", "listAssets"):
             self.assertIn(token, self.js, token)
 
     def test_references_contract(self):

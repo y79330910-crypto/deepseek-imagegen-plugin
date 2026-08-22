@@ -44,3 +44,10 @@ class AssetNotFoundError(AssetError):
 
 class AssetInUseError(AssetError):
     """资产已被历史 generation 引用，不允许删除。"""
+
+
+class IncompatibleDatabaseError(ImageGenError):
+    """新路径数据库已存在但 schema 与当前 ImageGen 2 lineage 不兼容。
+
+    不允许静默删除 / 重建用户数据；必须明确失败并报告。
+    """

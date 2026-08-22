@@ -18,7 +18,7 @@ from typing import Any, Optional
 from ..config import default_asset_dir, default_history_db_path
 from ..errors import AssetInUseError, AssetNotFoundError, ValidationError
 from ..image_utils import MAX_INIT_BYTES, _guess_mime, probe_image_size_ext
-from .db import migrate_db
+from .db import initialize_db
 from .history import utc_now_iso
 
 
@@ -106,7 +106,7 @@ class AssetRecord:
             "size_bytes": self.size_bytes,
             "width": self.width,
             "height": self.height,
-            "content_url": f"/api/v1/assets/{self.asset_id}/content",
+            "content_url": f"/api/v2/assets/{self.asset_id}/content",
             "created_at": self.created_at,
         }
 
@@ -140,7 +140,7 @@ class AssetService:
             if asset_dir is not None
             else default_asset_dir()
         )
-        migrate_db(self.db_path)
+        initialize_db(self.db_path)
 
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self.db_path, timeout=5.0)

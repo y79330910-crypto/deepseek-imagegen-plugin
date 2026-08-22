@@ -24,7 +24,7 @@ from .services import (
 )
 from ._version import __version__
 
-CORE_API_VERSION = 1
+CORE_API_VERSION = 2
 
 __all__ = [
     "CORE_API_VERSION",

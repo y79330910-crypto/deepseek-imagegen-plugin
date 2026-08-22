@@ -28,8 +28,10 @@ class TestHistoryService(unittest.TestCase):
         self.db_path = Path(self.tmp.name) / "imagegen.db"
         self.svc = HistoryService(self.db_path)
 
-    def test_db_created_and_user_version_2(self):
+    def test_db_created_with_imagegen2_schema(self):
         import sqlite3
+
+        from imagegen.services.db import DB_SCHEMA_VERSION
 
         self.assertTrue(self.db_path.is_file())
         conn = sqlite3.connect(self.db_path)
@@ -37,7 +39,7 @@ class TestHistoryService(unittest.TestCase):
             version = conn.execute("PRAGMA user_version").fetchone()[0]
         finally:
             conn.close()
-        self.assertEqual(version, 2)
+        self.assertEqual(version, DB_SCHEMA_VERSION)
 
     def test_record_get_round_trip(self):
         req = GenerateRequest(prompt="hello", size="1024x1024", seed=7)

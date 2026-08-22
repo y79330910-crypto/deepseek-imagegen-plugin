@@ -74,7 +74,7 @@ class TestHistoryReferences(unittest.TestCase):
         self.addCleanup(server1.close)
         status, _, data = server1.json(
             "POST",
-            "/api/v1/generate",
+            "/api/v2/generate",
             {
                 "prompt": "hello",
                 "references": [
@@ -88,7 +88,7 @@ class TestHistoryReferences(unittest.TestCase):
         # 模拟重启：新 registry + 同一 DB / asset 目录
         server2 = self._server()
         self.addCleanup(server2.close)
-        status, _, data = server2.json("GET", f"/api/v1/history/{self.generation_id}")
+        status, _, data = server2.json("GET", f"/api/v2/history/{self.generation_id}")
         self.assertEqual(status, 200)
         refs = data["item"]["references"]
         self.assertEqual(
@@ -98,12 +98,12 @@ class TestHistoryReferences(unittest.TestCase):
         self.assertEqual([r["position"] for r in refs], [0, 1])
         for ref in refs:
             self.assertEqual(
-                ref["content_url"], f"/api/v1/assets/{ref['asset_id']}/content"
+                ref["content_url"], f"/api/v2/assets/{ref['asset_id']}/content"
             )
             self.assertNotIn("file_path", ref)
         # asset content 仍可读取
         status, headers, body = server2.request(
-            "GET", f"/api/v1/assets/{a.asset_id}/content"
+            "GET", f"/api/v2/assets/{a.asset_id}/content"
         )
         self.assertEqual(status, 200)
         self.assertEqual(body, Path(a.file_path).read_bytes())
@@ -114,13 +114,13 @@ class TestHistoryReferences(unittest.TestCase):
         self.addCleanup(server.close)
         server.json(
             "POST",
-            "/api/v1/generate",
+            "/api/v2/generate",
             {
                 "prompt": "hello",
                 "references": [{"asset_id": a.asset_id, "role": "character"}],
             },
         )
-        status, _, data = server.json("GET", "/api/v1/history")
+        status, _, data = server.json("GET", "/api/v2/history")
         self.assertEqual(status, 200)
         self.assertEqual(data["count"], 1)
         self.assertNotIn("references", data["items"][0])
@@ -130,9 +130,9 @@ class TestHistoryReferences(unittest.TestCase):
         self.addCleanup(server.close)
         server.json(
             "POST",
-            "/api/v1/generate",
+            "/api/v2/generate",
             {"prompt": "x", "images": [r"D:\old\a.png"]},
         )
-        status, _, data = server.json("GET", f"/api/v1/history/{self.generation_id}")
+        status, _, data = server.json("GET", f"/api/v2/history/{self.generation_id}")
         self.assertEqual(status, 200)
         self.assertEqual(data["item"]["references"], [])

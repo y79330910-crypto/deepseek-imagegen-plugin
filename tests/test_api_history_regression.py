@@ -62,14 +62,14 @@ class TestRestartRegression(unittest.TestCase):
             history_service=HistoryService(self.db),
         )
         self.addCleanup(server2.close)
-        status, _, hist = server2.json("GET", "/api/v1/history")
+        status, _, hist = server2.json("GET", "/api/v2/history")
         self.assertEqual(status, 200)
         self.assertEqual(hist["count"], 1)
         self.assertEqual(hist["items"][0]["prompt"], "persisted prompt")
         self.assertEqual(
-            hist["items"][0]["output_url"], f"/api/v1/outputs/{'a' * 32}"
+            hist["items"][0]["output_url"], f"/api/v2/outputs/{'a' * 32}"
         )
-        status, headers, body = server2.request("GET", f"/api/v1/outputs/{'a' * 32}")
+        status, headers, body = server2.request("GET", f"/api/v2/outputs/{'a' * 32}")
         self.assertEqual(status, 200)
         self.assertEqual(headers.get("Content-Type"), "image/png")
         self.assertEqual(body, self.out_file.read_bytes())

@@ -1,4 +1,4 @@
-"""HTTP API v1 Config 路由测试（临时配置，不触碰真实用户配置）。"""
+"""HTTP API v2 Config 路由测试（临时配置，不触碰真实用户配置）。"""
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ class TestConfigRoutes(unittest.TestCase):
         self.addCleanup(self.server.close)
 
     def test_get_config_masks_secret(self):
-        status, _, data = self.server.json("GET", "/api/v1/config")
+        status, _, data = self.server.json("GET", "/api/v2/config")
         self.assertEqual(status, 200)
         masked = data["config"]
         self.assertIn("*", masked["translator"]["api_key"])
@@ -42,7 +42,7 @@ class TestConfigRoutes(unittest.TestCase):
     def test_patch_plain_and_nested(self):
         status, _, data = self.server.json(
             "PATCH",
-            "/api/v1/config",
+            "/api/v2/config",
             {"save_dir": "/new/out", "translator": {"output_lang": "en"}},
         )
         self.assertEqual(status, 200)
@@ -56,7 +56,7 @@ class TestConfigRoutes(unittest.TestCase):
         patch_secret = masked["translator"]["api_key"]
         status, _, _ = self.server.json(
             "PATCH",
-            "/api/v1/config",
+            "/api/v2/config",
             {"translator": {"api_key": patch_secret}},
         )
         self.assertEqual(status, 200)
@@ -66,7 +66,7 @@ class TestConfigRoutes(unittest.TestCase):
     def test_patch_new_secret_updates(self):
         status, _, _ = self.server.json(
             "PATCH",
-            "/api/v1/config",
+            "/api/v2/config",
             {"translator": {"api_key": "sk-brand-new-999"}},
         )
         self.assertEqual(status, 200)
@@ -74,15 +74,15 @@ class TestConfigRoutes(unittest.TestCase):
         self.assertEqual(cfg["translator"]["api_key"], "sk-brand-new-999")
 
     def test_config_isolated_from_default(self):
-        self.server.json("PATCH", "/api/v1/config", {"save_dir": "/isolated"})
+        self.server.json("PATCH", "/api/v2/config", {"save_dir": "/isolated"})
         raw = json.loads(self.config_path.read_text(encoding="utf-8"))
         self.assertEqual(raw["save_dir"], "/isolated")
 
     def test_put_and_post_config_rejected(self):
         status, _, data = self.server.json(
-            "PUT", "/api/v1/config", {"save_dir": "/x"}
+            "PUT", "/api/v2/config", {"save_dir": "/x"}
         )
         self.assertEqual(status, 405)
         self.assertEqual(data["error"]["type"], "method_not_allowed")
-        status, _, _ = self.server.json("POST", "/api/v1/config", {"save_dir": "/x"})
+        status, _, _ = self.server.json("POST", "/api/v2/config", {"save_dir": "/x"})
         self.assertEqual(status, 405)

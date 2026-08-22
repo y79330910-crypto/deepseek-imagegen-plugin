@@ -1,4 +1,4 @@
-"""Output Registry 与 GET /api/v1/outputs/{generation_id} 集成测试。"""
+"""Output Registry 与 GET /api/v2/outputs/{generation_id} 集成测试。"""
 
 from __future__ import annotations
 
@@ -58,25 +58,25 @@ class TestOutputRoute(unittest.TestCase):
 
     def test_get_registered_output(self):
         status, headers, body = self.server.request(
-            "GET", f"/api/v1/outputs/{'a' * 32}"
+            "GET", f"/api/v2/outputs/{'a' * 32}"
         )
         self.assertEqual(status, 200)
         self.assertEqual(headers.get("Content-Type"), "image/png")
         self.assertEqual(body, self.png)
 
     def test_unknown_generation_id_404(self):
-        status, _, data = self.server.json("GET", f"/api/v1/outputs/{'b' * 32}")
+        status, _, data = self.server.json("GET", f"/api/v2/outputs/{'b' * 32}")
         self.assertEqual(status, 404)
         self.assertEqual(data["error"]["type"], "not_found")
 
     def test_deleted_file_404(self):
         self.out_file.unlink()
-        status, _, data = self.server.json("GET", f"/api/v1/outputs/{'a' * 32}")
+        status, _, data = self.server.json("GET", f"/api/v2/outputs/{'a' * 32}")
         self.assertEqual(status, 404)
         self.assertEqual(data["error"]["type"], "not_found")
 
     def test_no_path_query_api(self):
         status, _, _ = self.server.json(
-            "GET", "/api/v1/outputs?path=C%3A%5CWindows%5Cwin.ini"
+            "GET", "/api/v2/outputs?path=C%3A%5CWindows%5Cwin.ini"
         )
         self.assertEqual(status, 404)

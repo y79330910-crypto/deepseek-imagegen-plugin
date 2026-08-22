@@ -54,7 +54,7 @@ class TestHistoryApi(unittest.TestCase):
         self.addCleanup(self.server.close)
 
     def test_list_history(self):
-        status, _, data = self.server.json("GET", "/api/v1/history")
+        status, _, data = self.server.json("GET", "/api/v2/history")
         self.assertEqual(status, 200)
         self.assertEqual(data["count"], 2)
         ids = {item["generation_id"] for item in data["items"]}
@@ -65,39 +65,39 @@ class TestHistoryApi(unittest.TestCase):
             self.assertIn("prompt", item)
 
     def test_get_history_item(self):
-        status, _, data = self.server.json("GET", f"/api/v1/history/{'a' * 32}")
+        status, _, data = self.server.json("GET", f"/api/v2/history/{'a' * 32}")
         self.assertEqual(status, 200)
         self.assertEqual(data["item"]["generation_id"], "a" * 32)
         self.assertEqual(data["item"]["prompt"], "sakura princess")
-        self.assertEqual(data["item"]["output_url"], f"/api/v1/outputs/{'a' * 32}")
+        self.assertEqual(data["item"]["output_url"], f"/api/v2/outputs/{'a' * 32}")
 
     def test_get_unknown_history_404(self):
-        status, _, data = self.server.json("GET", f"/api/v1/history/{'c' * 32}")
+        status, _, data = self.server.json("GET", f"/api/v2/history/{'c' * 32}")
         self.assertEqual(status, 404)
         self.assertEqual(data["error"]["type"], "not_found")
 
     def test_search_history(self):
-        status, _, data = self.server.json("GET", "/api/v1/history?q=beach")
+        status, _, data = self.server.json("GET", "/api/v2/history?q=beach")
         self.assertEqual(status, 200)
         self.assertEqual(data["count"], 1)
         self.assertEqual(data["items"][0]["generation_id"], "b" * 32)
 
     def test_limit_and_offset_validation(self):
-        status, _, data = self.server.json("GET", "/api/v1/history?limit=0")
+        status, _, data = self.server.json("GET", "/api/v2/history?limit=0")
         self.assertEqual(status, 400)
         self.assertEqual(data["error"]["type"], "validation_error")
-        status, _, data = self.server.json("GET", "/api/v1/history?limit=101")
+        status, _, data = self.server.json("GET", "/api/v2/history?limit=101")
         self.assertEqual(status, 400)
-        status, _, data = self.server.json("GET", "/api/v1/history?offset=-1")
+        status, _, data = self.server.json("GET", "/api/v2/history?offset=-1")
         self.assertEqual(status, 400)
-        status, _, data = self.server.json("GET", "/api/v1/history?limit=abc")
+        status, _, data = self.server.json("GET", "/api/v2/history?limit=abc")
         self.assertEqual(status, 400)
 
     def test_delete_history(self):
-        status, _, data = self.server.json("DELETE", f"/api/v1/history/{'a' * 32}")
+        status, _, data = self.server.json("DELETE", f"/api/v2/history/{'a' * 32}")
         self.assertEqual(status, 200)
         self.assertTrue(data["deleted"])
-        status, _, _ = self.server.json("GET", f"/api/v1/history/{'a' * 32}")
+        status, _, _ = self.server.json("GET", f"/api/v2/history/{'a' * 32}")
         self.assertEqual(status, 404)
 
 
@@ -121,7 +121,7 @@ class TestOutputFallback(unittest.TestCase):
             output_registry=OutputRegistry(),
         )
         self.addCleanup(server.close)
-        status, headers, body = server.request("GET", f"/api/v1/outputs/{'d' * 32}")
+        status, headers, body = server.request("GET", f"/api/v2/outputs/{'d' * 32}")
         self.assertEqual(status, 200)
         self.assertEqual(headers.get("Content-Type"), "image/png")
         self.assertEqual(body, self.out_file.read_bytes())
@@ -134,7 +134,7 @@ class TestOutputFallback(unittest.TestCase):
             output_registry=OutputRegistry(),
         )
         self.addCleanup(server.close)
-        status, _, _ = server.json("GET", f"/api/v1/outputs/{'d' * 32}")
+        status, _, _ = server.json("GET", f"/api/v2/outputs/{'d' * 32}")
         self.assertEqual(status, 404)
 
     def test_cannot_fetch_arbitrary_path(self):
@@ -145,12 +145,12 @@ class TestOutputFallback(unittest.TestCase):
         )
         self.addCleanup(server.close)
         # 未注册 / 不在历史里的 id 不能读取
-        status, _, _ = server.json("GET", f"/api/v1/outputs/{'f' * 32}")
+        status, _, _ = server.json("GET", f"/api/v2/outputs/{'f' * 32}")
         self.assertEqual(status, 404)
         # path 参数完全不可用
         status, _, _ = server.json(
             "GET",
-            "/api/v1/outputs?path=C%3A%5CWindows%5Cwin.ini",
+            "/api/v2/outputs?path=C%3A%5CWindows%5Cwin.ini",
         )
         self.assertEqual(status, 404)
 
@@ -174,11 +174,11 @@ class TestDeleteUnregistersOutput(unittest.TestCase):
             output_registry=registry,
         )
         self.addCleanup(server.close)
-        self.assertEqual(server.request("GET", f"/api/v1/outputs/{'e' * 32}")[0], 200)
+        self.assertEqual(server.request("GET", f"/api/v2/outputs/{'e' * 32}")[0], 200)
         self.assertEqual(
-            server.request("DELETE", f"/api/v1/history/{'e' * 32}")[0], 200
+            server.request("DELETE", f"/api/v2/history/{'e' * 32}")[0], 200
         )
-        self.assertEqual(server.request("GET", f"/api/v1/outputs/{'e' * 32}")[0], 404)
+        self.assertEqual(server.request("GET", f"/api/v2/outputs/{'e' * 32}")[0], 404)
 
 
 class TestGenerateRoutePersistsHistory(unittest.TestCase):
@@ -199,7 +199,7 @@ class TestGenerateRoutePersistsHistory(unittest.TestCase):
         )
         self.addCleanup(server.close)
         status, _, data = server.json(
-            "POST", "/api/v1/generate", {"prompt": "hello", "size": "1024x1024"}
+            "POST", "/api/v2/generate", {"prompt": "hello", "size": "1024x1024"}
         )
         self.assertEqual(status, 200)
         record = history.get("c" * 32)

@@ -95,7 +95,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         return 1
     display_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host
     url = f"http://{display_host}:{args.port}/"
-    print(f"ImageGen WebUI + HTTP API v1 已启动：{url}")
+    print(f"ImageGen WebUI + HTTP API v2 已启动：{url}")
     if getattr(args, "open", False):
         webbrowser.open(url)
     try:
@@ -235,7 +235,7 @@ def build_parser() -> argparse.ArgumentParser:
     models_parser = sub.add_parser("list-models", help="查看提示词 / 图像上游可用模型")
     models_parser.add_argument("--json", action="store_true", help="输出 JSON（机器可读）")
 
-    serve = sub.add_parser("serve", help="启动本地 HTTP API v1")
+    serve = sub.add_parser("serve", help="启动本地 HTTP API v2")
     serve.add_argument("--host", default="127.0.0.1", help="监听地址（默认 127.0.0.1）")
     serve.add_argument("--port", type=int, default=8765, help="端口（默认 8765）")
     serve.add_argument(

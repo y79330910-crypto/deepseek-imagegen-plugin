@@ -71,7 +71,7 @@ class TestGenerateReferences(unittest.TestCase):
         b = self.assets.create_from_upload(make_png_bytes(), original_name="b.png")
         status, _, data = self.server.json(
             "POST",
-            "/api/v1/generate",
+            "/api/v2/generate",
             {
                 "prompt": "hello",
                 "references": [
@@ -93,7 +93,7 @@ class TestGenerateReferences(unittest.TestCase):
     def test_legacy_images_still_work(self):
         status, _, data = self.server.json(
             "POST",
-            "/api/v1/generate",
+            "/api/v2/generate",
             {"prompt": "x", "images": [r"D:\old\a.png"]},
         )
         self.assertEqual(status, 200)
@@ -105,7 +105,7 @@ class TestGenerateReferences(unittest.TestCase):
     def test_unknown_asset_404(self):
         status, _, data = self.server.json(
             "POST",
-            "/api/v1/generate",
+            "/api/v2/generate",
             {"prompt": "x", "references": [{"asset_id": "deadbeef"}]},
         )
         self.assertEqual(status, 404)
@@ -115,7 +115,7 @@ class TestGenerateReferences(unittest.TestCase):
         rec = self.assets.create_from_upload(make_png_bytes())
         refs = [{"asset_id": rec.asset_id, "role": "character"} for _ in range(5)]
         status, _, data = self.server.json(
-            "POST", "/api/v1/generate", {"prompt": "x", "references": refs}
+            "POST", "/api/v2/generate", {"prompt": "x", "references": refs}
         )
         self.assertEqual(status, 400)
         self.assertEqual(data["error"]["type"], "validation_error")
@@ -129,7 +129,7 @@ class TestGenerateReferences(unittest.TestCase):
         self.assets.attach_to_generation = boom
         status, _, data = self.server.json(
             "POST",
-            "/api/v1/generate",
+            "/api/v2/generate",
             {
                 "prompt": "x",
                 "references": [{"asset_id": rec.asset_id, "role": "character"}],

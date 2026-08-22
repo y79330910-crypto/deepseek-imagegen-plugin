@@ -20,7 +20,7 @@ from ..errors import (
 from ..models import GenerateRequest
 from .responses import ApiError, parse_json_payload
 
-HTTP_API_VERSION = 1
+HTTP_API_VERSION = 2
 
 
 @dataclass
@@ -73,7 +73,7 @@ def handle_health(context: Any, body: bytes = b"") -> Response:
 
 
 def handle_models(context: Any, body: bytes) -> Response:
-    """POST /api/v1/models：按 target 拉取提示词 / 图像上游模型。"""
+    """POST /api/v2/models：按 target 拉取提示词 / 图像上游模型。"""
     payload = parse_json_payload(body)
     target = str(payload.get("target") or "").strip()
     models = context.model_service.list_models(target)
@@ -94,7 +94,10 @@ def handle_generate(context: Any, body: bytes) -> Response:
     context.output_registry.register(result.generation_id, result.path)
     _attach_asset_references(context, result, payload)
     response = result.to_dict()
-    response["output_url"] = f"/api/v1/outputs/{result.generation_id}"
+    # 安全边界：HTTP 不暴露服务器本地文件路径，统一使用 output_url。
+    response.pop("path", None)
+    response.pop("mirror_path", None)
+    response["output_url"] = f"/api/v2/outputs/{result.generation_id}"
     return json_response(200, response)
 
 
@@ -186,7 +189,7 @@ def history_public_dict(record: Any) -> dict[str, Any]:
         "seed": record.seed,
         "requested_size": record.requested_size,
         "actual_size": record.actual_size,
-        "output_url": f"/api/v1/outputs/{record.id}",
+        "output_url": f"/api/v2/outputs/{record.id}",
     }
 
 
@@ -240,7 +243,7 @@ def _history_references(context: Any, generation_id: str) -> list[dict[str, Any]
             "asset_id": link.asset_id,
             "role": link.role,
             "position": link.position,
-            "content_url": f"/api/v1/assets/{link.asset_id}/content",
+            "content_url": f"/api/v2/assets/{link.asset_id}/content",
         }
         for link in links
     ]
@@ -257,7 +260,7 @@ def handle_history_delete(context: Any, generation_id: str) -> Response:
 def handle_assets_create(
     context: Any, body: bytes, content_type: str = ""
 ) -> Response:
-    """POST /api/v1/assets：multipart/form-data 文件上传。"""
+    """POST /api/v2/assets：multipart/form-data 文件上传。"""
     from .multipart import parse_multipart
 
     try:
@@ -285,7 +288,7 @@ def handle_assets_create(
 
 
 def handle_assets_import(context: Any, body: bytes) -> Response:
-    """POST /api/v1/assets/import：服务器本机路径导入。"""
+    """POST /api/v2/assets/import：服务器本机路径导入。"""
     payload = parse_json_payload(body)
     path = str(payload.get("path") or "").strip()
     if not path:
@@ -343,12 +346,12 @@ def handle_assets_delete(context: Any, asset_id: str) -> Response:
 
 
 _STATIC_ROUTES: dict[tuple[str, str], Callable[..., Response]] = {
-    ("GET", "/api/v1/health"): handle_health,
-    ("POST", "/api/v1/models"): handle_models,
-    ("POST", "/api/v1/generate"): handle_generate,
-    ("GET", "/api/v1/config"): handle_get_config,
-    ("PATCH", "/api/v1/config"): handle_patch_config,
-    ("POST", "/api/v1/doctor"): handle_doctor,
+    ("GET", "/api/v2/health"): handle_health,
+    ("POST", "/api/v2/models"): handle_models,
+    ("POST", "/api/v2/generate"): handle_generate,
+    ("GET", "/api/v2/config"): handle_get_config,
+    ("PATCH", "/api/v2/config"): handle_patch_config,
+    ("POST", "/api/v2/doctor"): handle_doctor,
 }
 
 
@@ -384,9 +387,9 @@ def dispatch(
     if allowed:
         return _method_not_allowed(allowed)
 
-    if method == "GET" and path_part == "/api/v1/history":
+    if method == "GET" and path_part == "/api/v2/history":
         return _safe_call(handle_history_list, context, query)
-    match = re.fullmatch(r"/api/v1/history/([^/]+)", path_part)
+    match = re.fullmatch(r"/api/v2/history/([^/]+)", path_part)
     if match:
         generation_id = unquote(match.group(1))
         if method == "GET":
@@ -395,7 +398,7 @@ def dispatch(
             return _safe_call(handle_history_delete, context, generation_id)
         return _method_not_allowed(["GET", "DELETE"])
 
-    if path_part == "/api/v1/assets":
+    if path_part == "/api/v2/assets":
         if method == "GET":
             return _safe_call(handle_assets_list, context, query)
         if method == "POST":
@@ -407,16 +410,16 @@ def dispatch(
             )
         return _method_not_allowed(["GET", "POST"])
 
-    if method == "POST" and path_part == "/api/v1/assets/import":
+    if method == "POST" and path_part == "/api/v2/assets/import":
         return _safe_call(handle_assets_import, context, body)
 
-    match = re.fullmatch(r"/api/v1/assets/([^/]+)/content", path_part)
+    match = re.fullmatch(r"/api/v2/assets/([^/]+)/content", path_part)
     if match:
         if method != "GET":
             return _method_not_allowed(["GET"])
         return _safe_call(handle_assets_content, context, unquote(match.group(1)))
 
-    match = re.fullmatch(r"/api/v1/assets/([^/]+)", path_part)
+    match = re.fullmatch(r"/api/v2/assets/([^/]+)", path_part)
     if match:
         asset_id = unquote(match.group(1))
         if method == "GET":
@@ -425,7 +428,7 @@ def dispatch(
             return _safe_call(handle_assets_delete, context, asset_id)
         return _method_not_allowed(["GET", "DELETE"])
 
-    match = re.fullmatch(r"/api/v1/outputs/([^/]+)", path_part)
+    match = re.fullmatch(r"/api/v2/outputs/([^/]+)", path_part)
     if match:
         if method != "GET":
             return _method_not_allowed(["GET"])

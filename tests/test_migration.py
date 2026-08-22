@@ -1,4 +1,4 @@
-"""Schema v2 迁移测试：空库 / Phase 5A v1 升级 / 幂等。"""
+"""ImageGen 2 DB 基线测试：全新初始化 / 幂等打开 / 不兼容 DB 保护。"""
 
 from __future__ import annotations
 
@@ -7,28 +7,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from imagegen.errors import IncompatibleDatabaseError
 from imagegen.models import GenerateRequest, GenerateResult
-from imagegen.services.db import CURRENT_SCHEMA_VERSION, migrate_db
+from imagegen.services.db import DB_SCHEMA_VERSION, initialize_db
 from imagegen.services.history import HistoryService
-
-
-V1_GENERATIONS_SCHEMA = """
-CREATE TABLE generations (
-    id TEXT PRIMARY KEY,
-    created_at TEXT NOT NULL,
-    output_path TEXT NOT NULL,
-    backend TEXT,
-    image_model_used TEXT,
-    prompt TEXT NOT NULL,
-    prompt_used TEXT,
-    seed INTEGER,
-    requested_size TEXT,
-    actual_size TEXT,
-    warnings_json TEXT NOT NULL,
-    metadata_json TEXT NOT NULL,
-    request_json TEXT NOT NULL
-);
-"""
 
 
 def make_result(generation_id: str) -> GenerateResult:
@@ -43,113 +25,105 @@ def make_result(generation_id: str) -> GenerateResult:
     )
 
 
-class TestMigration(unittest.TestCase):
+class TestInitializeDb(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.db_path = Path(self.tmp.name) / "imagegen.db"
 
-    def _make_v1_db(self) -> None:
+    def _tables(self) -> set[str]:
         conn = sqlite3.connect(self.db_path)
         try:
-            conn.executescript(V1_GENERATIONS_SCHEMA)
-            conn.execute(
-                "INSERT INTO generations (id, created_at, output_path, backend, "
-                " image_model_used, prompt, prompt_used, seed, requested_size, actual_size, "
-                " warnings_json, metadata_json, request_json) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (
-                    "a" * 32,
-                    "2026-08-22T03:31:46.123Z",
-                    r"D:\out.png",
-                    "vertex",
-                    "gemini-3-pro-image",
-                    "sakura princess",
-                    "a princess",
-                    7,
-                    "1024x1024",
-                    "1024x1024",
-                    "[]",
-                    "{}",
-                    '{"prompt": "sakura princess"}',
-                ),
-            )
-            conn.execute("PRAGMA user_version = 1")
-            conn.commit()
-        finally:
-            conn.close()
-
-    def test_fresh_db_creates_full_v2_schema(self):
-        migrate_db(self.db_path)
-        conn = sqlite3.connect(self.db_path)
-        try:
-            version = conn.execute("PRAGMA user_version").fetchone()[0]
-            self.assertEqual(version, 2)
-            tables = {
+            return {
                 row[0]
                 for row in conn.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'"
                 )
             }
-            self.assertTrue({"generations", "assets", "generation_assets"} <= tables)
-            asset_cols = [row[1] for row in conn.execute("PRAGMA table_info(assets)")]
-            for col in (
-                "id", "created_at", "kind", "source", "file_path", "original_name",
-                "mime_type", "size_bytes", "width", "height", "sha256", "metadata_json",
-            ):
-                self.assertIn(col, asset_cols, col)
-            link_cols = [
-                row[1] for row in conn.execute("PRAGMA table_info(generation_assets)")
-            ]
-            for col in ("generation_id", "asset_id", "relation", "role", "position"):
-                self.assertIn(col, link_cols, col)
         finally:
             conn.close()
 
-    def test_v1_db_upgrades_and_preserves_generations(self):
-        self._make_v1_db()
-        migrate_db(self.db_path)
+    def test_fresh_db_creates_full_schema(self):
+        initialize_db(self.db_path)
+        self.assertTrue(self.db_path.is_file())
         conn = sqlite3.connect(self.db_path)
         try:
             version = conn.execute("PRAGMA user_version").fetchone()[0]
-            self.assertEqual(version, 2)
-            row = conn.execute("SELECT * FROM generations WHERE id=?", ("a" * 32,)).fetchone()
-            self.assertIsNotNone(row)
-            self.assertEqual(row[5], "sakura princess")
-            tables = {
-                r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            self.assertEqual(version, DB_SCHEMA_VERSION)
+            cols = {
+                row[1] for row in conn.execute("PRAGMA table_info(generations)")
             }
-            self.assertIn("assets", tables)
-            self.assertIn("generation_assets", tables)
+            self.assertIn("id", cols)
+            self.assertIn("output_path", cols)
+            self.assertIn("image_model_used", cols)
+            self.assertIn("request_json", cols)
+            self.assertNotIn("backend", cols)
         finally:
             conn.close()
+        self.assertTrue(
+            {"generations", "assets", "generation_assets"} <= self._tables()
+        )
 
-    def test_history_service_upgrades_v1_db(self):
-        self._make_v1_db()
+    def test_reopen_current_schema_idempotent(self):
+        initialize_db(self.db_path)
+        initialize_db(self.db_path)
+        initialize_db(self.db_path)
+        conn = sqlite3.connect(self.db_path)
+        try:
+            self.assertEqual(
+                conn.execute("PRAGMA user_version").fetchone()[0],
+                DB_SCHEMA_VERSION,
+            )
+        finally:
+            conn.close()
+        # 重复打开后读写仍正常
         svc = HistoryService(self.db_path)
-        conn = sqlite3.connect(self.db_path)
-        try:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 2)
-        finally:
-            conn.close()
-        record = svc.get("a" * 32)
-        self.assertIsNotNone(record)
-        self.assertEqual(record.prompt, "sakura princess")
-        self.assertEqual(record.output_path, r"D:\out.png")
+        rec = svc.record(GenerateRequest(prompt="x"), make_result("b" * 32))
+        self.assertEqual(svc.get(rec.id).prompt, "x")
 
-    def test_migration_idempotent(self):
-        migrate_db(self.db_path)
-        migrate_db(self.db_path)
-        migrate_db(self.db_path)
+    def test_incompatible_existing_db_not_deleted(self):
+        # 构造旧 lineage（含 backend 列、user_version=2）的数据库
         conn = sqlite3.connect(self.db_path)
         try:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 2)
-            # 升级后写入仍然正常
-            svc = HistoryService(self.db_path)
-            rec = svc.record(GenerateRequest(prompt="x"), make_result("b" * 32))
-            self.assertEqual(svc.get(rec.id).prompt, "x")
+            conn.execute(
+                "CREATE TABLE generations ("
+                " id TEXT PRIMARY KEY, created_at TEXT NOT NULL, output_path TEXT NOT NULL,"
+                " backend TEXT, image_model_used TEXT, prompt TEXT NOT NULL)"
+            )
+            conn.execute(
+                "INSERT INTO generations VALUES (?,?,?,?,?,?)",
+                ("a" * 32, "2026-08-22T00:00:00Z", r"D:\out.png", "vertex", "m", "p"),
+            )
+            conn.execute("PRAGMA user_version = 2")
+            conn.commit()
         finally:
             conn.close()
 
-    def test_current_schema_version_constant(self):
-        self.assertEqual(CURRENT_SCHEMA_VERSION, 2)
+        with self.assertRaises(IncompatibleDatabaseError):
+            initialize_db(self.db_path)
+
+        # 数据库与用户数据必须原样保留，不允许删除 / 重建
+        self.assertTrue(self.db_path.is_file())
+        conn = sqlite3.connect(self.db_path)
+        try:
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 2)
+            row = conn.execute("SELECT prompt FROM generations").fetchone()
+            self.assertIsNotNone(row)
+            self.assertEqual(row[0], "p")
+        finally:
+            conn.close()
+
+    def test_incompatible_db_with_unknown_user_version(self):
+        conn = sqlite3.connect(self.db_path)
+        try:
+            conn.execute("CREATE TABLE unrelated (x TEXT)")
+            conn.execute("PRAGMA user_version = 99")
+            conn.commit()
+        finally:
+            conn.close()
+        with self.assertRaises(IncompatibleDatabaseError):
+            initialize_db(self.db_path)
+        self.assertTrue(self.db_path.is_file())
+
+    def test_schema_version_constant(self):
+        self.assertEqual(DB_SCHEMA_VERSION, 1)

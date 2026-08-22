@@ -1,4 +1,4 @@
-"""HTTP API v1 POST /api/v1/models 测试（translator / image 双 target）。"""
+"""HTTP API v2 POST /api/v2/models 测试（translator / image 双 target）。"""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ class TestModelsRoute(unittest.TestCase):
         server = ApiTestServer(model_service=fake)
         self.addCleanup(server.close)
         status, _, data = server.json(
-            "POST", "/api/v1/models", {"target": "translator"}
+            "POST", "/api/v2/models", {"target": "translator"}
         )
         self.assertEqual(status, 200)
         self.assertEqual(data["models"], ["deepseek-v4-flash", "other"])
@@ -24,7 +24,7 @@ class TestModelsRoute(unittest.TestCase):
         fake = FakeModelService(models=["gemini-3-pro-image"])
         server = ApiTestServer(model_service=fake)
         self.addCleanup(server.close)
-        status, _, data = server.json("POST", "/api/v1/models", {"target": "image"})
+        status, _, data = server.json("POST", "/api/v2/models", {"target": "image"})
         self.assertEqual(status, 200)
         self.assertEqual(data["models"], ["gemini-3-pro-image"])
 
@@ -32,21 +32,21 @@ class TestModelsRoute(unittest.TestCase):
         fake = FakeModelService(exc=ValidationError("未知 target"))
         server = ApiTestServer(model_service=fake)
         self.addCleanup(server.close)
-        status, _, data = server.json("POST", "/api/v1/models", {"target": "vertex"})
+        status, _, data = server.json("POST", "/api/v2/models", {"target": "vertex"})
         self.assertEqual(status, 400)
         self.assertEqual(data["error"]["type"], "validation_error")
 
     def test_models_missing_target_400(self):
         server = ApiTestServer(model_service=FakeModelService())
         self.addCleanup(server.close)
-        status, _, data = server.json("POST", "/api/v1/models", {})
+        status, _, data = server.json("POST", "/api/v2/models", {})
         self.assertEqual(status, 400)
         self.assertEqual(data["error"]["type"], "validation_error")
 
     def test_models_wrong_method_405(self):
         server = ApiTestServer(model_service=FakeModelService())
         self.addCleanup(server.close)
-        status, _, data = server.json("GET", "/api/v1/models")
+        status, _, data = server.json("GET", "/api/v2/models")
         self.assertEqual(status, 405)
         self.assertEqual(data["error"]["type"], "method_not_allowed")
 
@@ -54,9 +54,9 @@ class TestModelsRoute(unittest.TestCase):
         server = ApiTestServer(model_service=FakeModelService())
         self.addCleanup(server.close)
         for path in (
-            "/api/v1/backends",
-            "/api/v1/backends/vertex",
-            "/api/v1/backends/vertex/models",
+            "/api/v2/backends",
+            "/api/v2/backends/vertex",
+            "/api/v2/backends/vertex/models",
         ):
             status, _, data = server.json("GET", path)
             self.assertEqual(status, 404, path)

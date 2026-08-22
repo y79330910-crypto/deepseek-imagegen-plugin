@@ -21,7 +21,7 @@ Codex 集成是可选的 Adapter：DeepSeek 等纯文本模型通过薄 CLI 调�
 - **Standalone WebUI（洛天依主题）**：`imagegen serve --open` 启动（默认 http://127.0.0.1:8765），
   与 HTTP API 同源运行；生成页（提示词 / 参考图 / 画幅×档位尺寸 / 构图 / 模型 / 批量出图）、
 设置页（提示词与图像两组 OpenAI API，含「拉取模型」连接测试）、诊断页、持久化历史画廊（最近 50 条）；
-前端只通过 `/api/v1/*` 与 Core 通信
+前端只通过 `/api/v2/*` 与 Core 通信
 - **自动副本**：生成成功后自动在 `mirror_dir` 保留副本
 - **诊断**：`doctor`（连通性 + 尺寸探针）、`config`（密钥打码）、`list-models`
 
@@ -114,33 +114,33 @@ imagegen serve
 # 默认监听 http://127.0.0.1:8765；或 python -m imagegen serve
 ```
 
-接口全部位于 `/api/v1/`：
+接口全部位于 `/api/v2/`：
 
 ```text
-GET   /api/v1/health
-POST  /api/v1/generate
-POST  /api/v1/models                      # 模型拉取 {target: "translator" | "image"}
-GET   /api/v1/config
-PATCH /api/v1/config
-POST  /api/v1/doctor
-GET   /api/v1/outputs/{generation_id}
-GET   /api/v1/history
-GET   /api/v1/history/{generation_id}
-DELETE /api/v1/history/{generation_id}
-POST  /api/v1/assets                       # multipart 文件上传（file + kind=reference）
-POST  /api/v1/assets/import                # 服务器本机路径导入 {path, kind}
-GET   /api/v1/assets                       # ?kind=&q=&limit=&offset=
-GET   /api/v1/assets/{asset_id}
-GET   /api/v1/assets/{asset_id}/content    # 预览 / 缩略图
-DELETE /api/v1/assets/{asset_id}           # 被历史引用时返回 409 asset_in_use
+GET   /api/v2/health
+POST  /api/v2/generate
+POST  /api/v2/models                      # 模型拉取 {target: "translator" | "image"}
+GET   /api/v2/config
+PATCH /api/v2/config
+POST  /api/v2/doctor
+GET   /api/v2/outputs/{generation_id}
+GET   /api/v2/history
+GET   /api/v2/history/{generation_id}
+DELETE /api/v2/history/{generation_id}
+POST  /api/v2/assets                       # multipart 文件上传（file + kind=reference）
+POST  /api/v2/assets/import                # 服务器本机路径导入 {path, kind}
+GET   /api/v2/assets                       # ?kind=&q=&limit=&offset=
+GET   /api/v2/assets/{asset_id}
+GET   /api/v2/assets/{asset_id}/content    # 预览 / 缩略图
+DELETE /api/v2/assets/{asset_id}           # 被历史引用时返回 409 asset_in_use
 ```
 
 示例：
 
 ```bash
-curl http://127.0.0.1:8765/api/v1/health
+curl http://127.0.0.1:8765/api/v2/health
 
-curl -X POST http://127.0.0.1:8765/api/v1/generate \
+curl -X POST http://127.0.0.1:8765/api/v2/generate \
   -H "Content-Type: application/json" \
   -d '{"prompt":"a cat","size":"1024x1024"}'
 ```
@@ -148,20 +148,20 @@ curl -X POST http://127.0.0.1:8765/api/v1/generate \
 PowerShell 示例：
 
 ```powershell
-Invoke-RestMethod http://127.0.0.1:8765/api/v1/health
-Invoke-RestMethod -Method Post http://127.0.0.1:8765/api/v1/generate `
+Invoke-RestMethod http://127.0.0.1:8765/api/v2/health
+Invoke-RestMethod -Method Post http://127.0.0.1:8765/api/v2/generate `
   -ContentType "application/json" `
   -Body '{"prompt":"a cat","size":"1024x1024"}'
 ```
 
-`POST /api/v1/generate` 的请求体直接使用 `GenerateRequest` JSON contract，响应基于
+`POST /api/v2/generate` 的请求体直接使用 `GenerateRequest` JSON contract，响应基于
 `GenerateResult.to_dict()` 并附加 `output_url`；生成结果通过 `generation_id`
-经 `/api/v1/outputs/{generation_id}` 读取（进程内注册表，不提供任意文件读取）。
-`GET /api/v1/config` 只返回打码后的配置，`PATCH` 复用 `ConfigService.update`。
+经 `/api/v2/outputs/{generation_id}` 读取（进程内注册表，不提供任意文件读取）。
+`GET /api/v2/config` 只返回打码后的配置，`PATCH` 复用 `ConfigService.update`。
 
 ### 模型拉取（非强依赖）
 
-`POST /api/v1/models` 按 target 分别请求两组上游的 `/v1/models`，各自使用自己的 API Key：
+`POST /api/v2/models` 按 target 分别请求两组上游的 `/v1/models`，各自使用自己的 API Key：
 
 ```json
 {"target": "image"}
@@ -185,7 +185,7 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8765/api/v1/generate `
 └ assets/references/ # <asset_id>.png/.jpg/...（不登记原始路径）
 ```
 
-`POST /api/v1/generate` 新增 `references` 协议（与旧 `images` 路径兼容并存）：
+`POST /api/v2/generate` 新增 `references` 协议（与旧 `images` 路径兼容并存）：
 
 ```json
 {
@@ -200,7 +200,7 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8765/api/v1/generate `
 HTTP 层通过 `ReferenceResolver` 把 `asset_id` 解析成 managed 本地路径，再转换成现有
 Core 契约 `images` + `reference_roles`；`GenerateRequest` / Engine 不知道 asset_id。
 生成成功后 best-effort 记录 `generation_assets`（generation → asset、role、position），
-写入失败只追加 warning，不影响生成成功。`GET /api/v1/history/{generation_id}` 返回
+写入失败只追加 warning，不影响生成成功。`GET /api/v2/history/{generation_id}` 返回
 `references`（asset_id / role / position / content_url），列表接口不塞完整引用数据；
 HTTP 任何位置都不暴露 managed `file_path`。
 
@@ -212,8 +212,8 @@ HTTP 任何位置都不暴露 managed `file_path`。
 默认 ~/.deepseek-imagegen/imagegen.db（可自定义 Path 注入）
 ```
 
-HTTP 层通过 `/api/v1/history` 读取/删除；历史记录不暴露 `output_path`，而是返回
-`output_url`。`/api/v1/outputs/{generation_id}` 优先读取进程内注册表，未命中时回退到
+HTTP 层通过 `/api/v2/history` 读取/删除；历史记录不暴露 `output_path`，而是返回
+`output_url`。`/api/v2/outputs/{generation_id}` 优先读取进程内注册表，未命中时回退到
 历史记录里的输出文件，因此 Server 重启后旧图片仍可访问。历史写入失败只追加 warning，
 不影响生成成功；持久化历史自 Phase 5A 后开始记录（不导入旧 history.json）。
 
