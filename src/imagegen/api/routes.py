@@ -10,7 +10,14 @@ from typing import Any, Callable
 from urllib.parse import parse_qs, unquote
 
 from ..backends.base import BACKEND_API_VERSION
-from ..errors import BackendError, ConfigurationError, ImageGenError, ValidationError
+from ..errors import (
+    AssetInUseError,
+    AssetNotFoundError,
+    BackendError,
+    ConfigurationError,
+    ImageGenError,
+    ValidationError,
+)
 from ..models import GenerateRequest
 from .responses import ApiError, parse_json_payload
 
@@ -43,6 +50,10 @@ def map_exception(exc: BaseException) -> Response:
         return error_response(400, "configuration_error", str(exc))
     if isinstance(exc, BackendError):
         return error_response(502, "backend_error", str(exc))
+    if isinstance(exc, AssetNotFoundError):
+        return error_response(404, "not_found", str(exc))
+    if isinstance(exc, AssetInUseError):
+        return error_response(409, "asset_in_use", str(exc))
     if isinstance(exc, ImageGenError):
         return error_response(500, "imagegen_error", str(exc))
     return error_response(500, "internal_error", "internal server error")
@@ -84,13 +95,37 @@ def handle_backend_models(context: Any, backend_id: str) -> Response:
 
 def handle_generate(context: Any, body: bytes) -> Response:
     payload = parse_json_payload(body)
-    request = GenerateRequest.from_dict(payload)
+    resolver = getattr(context, "reference_resolver", None)
+    if resolver is not None:
+        resolved = resolver.resolve(payload)
+    else:
+        resolved = dict(payload)
+        resolved.pop("references", None)
+    request = GenerateRequest.from_dict(resolved)
     with context.generation_lock:
         result = context.generation_service.generate(request)
     context.output_registry.register(result.generation_id, result.path)
+    _attach_asset_references(context, result, payload)
     response = result.to_dict()
     response["output_url"] = f"/api/v1/outputs/{result.generation_id}"
     return json_response(200, response)
+
+
+def _attach_asset_references(context: Any, result: Any, payload: dict[str, Any]) -> None:
+    """Asset Reference 生成成功后 best-effort 记录 generation_assets；失败不改变结果。"""
+    asset_service = getattr(context, "asset_service", None)
+    references = payload.get("references") or []
+    if asset_service is None or not references:
+        return
+    for position, ref in enumerate(references):
+        try:
+            asset_id = str(ref.get("asset_id") or "").strip()
+            role = str(ref.get("role") or "auto").strip() or "auto"
+            asset_service.attach_to_generation(
+                result.generation_id, asset_id, role, position
+            )
+        except Exception as exc:  # noqa: BLE001
+            result.warnings.append(f"reference relation persistence failed: {exc}")
 
 
 def handle_get_config(context: Any, body: bytes = b"") -> Response:
@@ -203,7 +238,26 @@ def handle_history_get(context: Any, generation_id: str) -> Response:
     record = context.history_service.get(generation_id)
     if record is None:
         return error_response(404, "not_found", "unknown generation_id")
-    return json_response(200, {"item": history_public_dict(record)})
+    item = history_public_dict(record)
+    item["references"] = _history_references(context, generation_id)
+    return json_response(200, {"item": item})
+
+
+def _history_references(context: Any, generation_id: str) -> list[dict[str, Any]]:
+    """History detail 的 references：来自 generation_assets，不塞入列表接口。"""
+    asset_service = getattr(context, "asset_service", None)
+    if asset_service is None:
+        return []
+    links = asset_service.list_for_generation(generation_id)
+    return [
+        {
+            "asset_id": link.asset_id,
+            "role": link.role,
+            "position": link.position,
+            "content_url": f"/api/v1/assets/{link.asset_id}/content",
+        }
+        for link in links
+    ]
 
 
 def handle_history_delete(context: Any, generation_id: str) -> Response:
@@ -212,6 +266,94 @@ def handle_history_delete(context: Any, generation_id: str) -> Response:
     if not deleted:
         return error_response(404, "not_found", "unknown generation_id")
     return json_response(200, {"deleted": True, "generation_id": generation_id})
+
+
+def handle_assets_create(
+    context: Any, body: bytes, content_type: str = ""
+) -> Response:
+    """POST /api/v1/assets：multipart/form-data 文件上传。"""
+    from .multipart import parse_multipart
+
+    try:
+        parts = parse_multipart(body, content_type)
+    except ValueError as exc:
+        raise ApiError(400, "validation_error", str(exc)) from exc
+    file_part = next((p for p in parts if p.name == "file"), None)
+    if file_part is None or not file_part.data:
+        raise ApiError(400, "validation_error", "missing file field")
+    kind = next(
+        (
+            p.data.decode("utf-8", "replace").strip()
+            for p in parts
+            if p.name == "kind"
+        ),
+        "reference",
+    )
+    record = context.asset_service.create_from_upload(
+        data=file_part.data,
+        original_name=file_part.filename or "",
+        kind=kind or "reference",
+        mime_type=file_part.content_type or "",
+    )
+    return Response(201, record.to_public_dict())
+
+
+def handle_assets_import(context: Any, body: bytes) -> Response:
+    """POST /api/v1/assets/import：服务器本机路径导入。"""
+    payload = parse_json_payload(body)
+    path = str(payload.get("path") or "").strip()
+    if not path:
+        raise ApiError(400, "validation_error", "path is required")
+    kind = str(payload.get("kind") or "reference").strip() or "reference"
+    record = context.asset_service.import_path(path, kind=kind)
+    return Response(201, record.to_public_dict())
+
+
+def handle_assets_list(context: Any, query: dict[str, list[str]]) -> Response:
+    kind = (query.get("kind") or [""])[0] or None
+    q = ((query.get("q") or [""])[0] or "").strip()
+    limit = _query_int(query, "limit", 50, 1, 100)
+    offset = _query_int(query, "offset", 0, 0)
+    records = context.asset_service.list(
+        kind=kind, query=q, limit=limit, offset=offset
+    )
+    items = [record.to_public_dict() for record in records]
+    return json_response(200, {"items": items, "count": len(items)})
+
+
+def handle_assets_get(context: Any, asset_id: str) -> Response:
+    record = context.asset_service.get(asset_id)
+    if record is None:
+        return error_response(404, "not_found", "unknown asset_id")
+    return json_response(200, record.to_public_dict())
+
+
+def handle_assets_content(context: Any, asset_id: str) -> Response:
+    record = context.asset_service.get(asset_id)
+    if record is None:
+        return error_response(404, "not_found", "unknown asset_id")
+    file_path = Path(context.asset_service.resolve_path(asset_id))
+    try:
+        data = file_path.read_bytes()
+    except OSError:
+        return error_response(404, "not_found", "asset file not found")
+    content_type = record.mime_type or "application/octet-stream"
+    return Response(
+        200,
+        data,
+        content_type=content_type,
+        headers={"Cache-Control": "private"},
+    )
+
+
+def handle_assets_delete(context: Any, asset_id: str) -> Response:
+    try:
+        deleted = context.asset_service.delete(asset_id)
+    except AssetInUseError as exc:
+        return error_response(409, "asset_in_use", str(exc))
+    if not deleted:
+        return error_response(404, "not_found", "unknown asset_id")
+    return json_response(200, {"deleted": True, "asset_id": asset_id})
 
 
 _STATIC_ROUTES: dict[tuple[str, str], Callable[..., Response]] = {
@@ -239,9 +381,16 @@ def _method_not_allowed(allowed: list[str]) -> Response:
     )
 
 
-def dispatch(context: Any, method: str, path: str, body: bytes) -> Response:
+def dispatch(
+    context: Any,
+    method: str,
+    path: str,
+    body: bytes,
+    headers: dict[str, str] | None = None,
+) -> Response:
     path_part, _, query_string = path.partition("?")
     query = parse_qs(query_string)
+    headers = headers or {}
     handler = _STATIC_ROUTES.get((method, path_part))
     if handler is not None:
         return _safe_call(handler, context, body)
@@ -269,6 +418,36 @@ def dispatch(context: Any, method: str, path: str, body: bytes) -> Response:
             return _safe_call(handle_history_get, context, generation_id)
         if method == "DELETE":
             return _safe_call(handle_history_delete, context, generation_id)
+        return _method_not_allowed(["GET", "DELETE"])
+
+    if path_part == "/api/v1/assets":
+        if method == "GET":
+            return _safe_call(handle_assets_list, context, query)
+        if method == "POST":
+            return _safe_call(
+                handle_assets_create,
+                context,
+                body,
+                headers.get("Content-Type", ""),
+            )
+        return _method_not_allowed(["GET", "POST"])
+
+    if method == "POST" and path_part == "/api/v1/assets/import":
+        return _safe_call(handle_assets_import, context, body)
+
+    match = re.fullmatch(r"/api/v1/assets/([^/]+)/content", path_part)
+    if match:
+        if method != "GET":
+            return _method_not_allowed(["GET"])
+        return _safe_call(handle_assets_content, context, unquote(match.group(1)))
+
+    match = re.fullmatch(r"/api/v1/assets/([^/]+)", path_part)
+    if match:
+        asset_id = unquote(match.group(1))
+        if method == "GET":
+            return _safe_call(handle_assets_get, context, asset_id)
+        if method == "DELETE":
+            return _safe_call(handle_assets_delete, context, asset_id)
         return _method_not_allowed(["GET", "DELETE"])
 
     match = re.fullmatch(r"/api/v1/outputs/([^/]+)", path_part)

@@ -11,11 +11,13 @@ from typing import Any, Optional
 
 from ..errors import ConfigurationError
 from ..services import (
+    AssetService,
     ConfigService,
     DiagnosticService,
     GenerationService,
     HistoryService,
     ModelService,
+    ReferenceResolver,
 )
 from . import routes
 from .outputs import OutputRegistry
@@ -23,7 +25,8 @@ from .responses import ApiError
 
 LOGGER = logging.getLogger("imagegen.api")
 
-MAX_BODY_BYTES = 1024 * 1024  # 1 MB
+MAX_BODY_BYTES = 1024 * 1024  # 1 MB（JSON 接口）
+MAX_UPLOAD_BYTES = 32 * 1024 * 1024  # 32 MB（multipart 上传接口）
 
 
 def validate_bind_address(host: str, allow_remote: bool = False) -> str:
@@ -51,6 +54,8 @@ class ApiContext:
         diagnostic_service: DiagnosticService,
         output_registry: OutputRegistry,
         history_service: HistoryService,
+        asset_service: AssetService,
+        reference_resolver: ReferenceResolver,
     ):
         self.config_service = config_service
         self.generation_service = generation_service
@@ -58,6 +63,8 @@ class ApiContext:
         self.diagnostic_service = diagnostic_service
         self.output_registry = output_registry
         self.history_service = history_service
+        self.asset_service = asset_service
+        self.reference_resolver = reference_resolver
         self.generation_lock = threading.Lock()
 
 
@@ -67,22 +74,33 @@ class ApiHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: Any) -> None:
         LOGGER.debug("request: %s", fmt % args)
 
-    def _read_body(self) -> bytes:
+    def _read_body(self, max_bytes: int) -> bytes:
         length = int(self.headers.get("Content-Length") or 0)
-        if length > MAX_BODY_BYTES:
+        if length > max_bytes:
             # 读取并丢弃前 MAX+1 字节，避免客户端仍在发送时连接被粗暴中断
-            self.rfile.read(MAX_BODY_BYTES + 1)
+            self.rfile.read(max_bytes + 1)
             raise ApiError(
                 400,
                 "payload_too_large",
-                f"request body exceeds {MAX_BODY_BYTES} bytes",
+                f"request body exceeds {max_bytes} bytes",
             )
         return self.rfile.read(length)
 
     def _handle(self, method: str, has_body: bool) -> None:
         try:
-            body = self._read_body() if has_body else b""
-            response = routes.dispatch(self.server.context, method, self.path, body)
+            limit = (
+                MAX_UPLOAD_BYTES
+                if method == "POST" and self.path.startswith("/api/v1/assets")
+                else MAX_BODY_BYTES
+            )
+            body = self._read_body(limit) if has_body else b""
+            response = routes.dispatch(
+                self.server.context,
+                method,
+                self.path,
+                body,
+                dict(self.headers),
+            )
         except ApiError as exc:
             response = routes.error_response(exc.status, exc.error_type, exc.message)
         except Exception:  # noqa: BLE001
@@ -134,13 +152,21 @@ def create_server(
     output_registry: Optional[OutputRegistry] = None,
     history_service: Optional[HistoryService] = None,
     history_db_path: str | Path | None = None,
+    asset_service: Optional[AssetService] = None,
+    asset_dir: str | Path | None = None,
 ) -> ThreadingHTTPServer:
     """构建 HTTP API v1 server；services 缺省时基于同一 config_path 创建。"""
     cfg_service = config_service or ConfigService(config_path)
+    db_path = history_db_path or (cfg_service.path().parent / "imagegen.db")
     if history_service is None:
-        history_service = HistoryService(
-            db_path=history_db_path or (cfg_service.path().parent / "imagegen.db")
+        history_service = HistoryService(db_path=db_path)
+    if asset_service is None:
+        asset_service = AssetService(
+            db_path=getattr(history_service, "db_path", db_path),
+            asset_dir=asset_dir
+            or (cfg_service.path().parent / "assets" / "references"),
         )
+    reference_resolver = ReferenceResolver(asset_service)
     if generation_service is None:
         generation_service = GenerationService(
             config_service=cfg_service, history_service=history_service
@@ -157,6 +183,8 @@ def create_server(
         diagnostic_service=diagnostic_service,
         output_registry=registry,
         history_service=history_service,
+        asset_service=asset_service,
+        reference_resolver=reference_resolver,
     )
     server = ThreadingHTTPServer((host, port), ApiHandler)
     server.daemon_threads = True
