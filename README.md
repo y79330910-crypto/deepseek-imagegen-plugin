@@ -46,7 +46,7 @@ Local HTTP API v2 与完整 WebUI。架构只保留两套独立的 OpenAI-Compat
 ├── LICENSE                           # MIT License
 ├── src/imagegen/                     # ImageGen Core（独立应用）
 │   ├── __init__.py                   # Public Core API（CORE_API_VERSION=2）
-│   ├── _version.py                   # 唯一版本源（__version__ = "2.0.0"）
+│   ├── _version.py                   # 唯一版本源（__version__ = "2.1.0"）
 │   ├── engine.py / models.py / errors.py
 │   ├── config.py / http.py / image_utils.py
 │   ├── composition.py / reference.py / translator.py
@@ -58,7 +58,7 @@ Local HTTP API v2 与完整 WebUI。架构只保留两套独立的 OpenAI-Compat
 │   │   └── static/index.html / app.js / style.css
 │   └── services/                     # Application Service 层
 │       ├── db.py                     # ImageGen 2 SQLite（DB_SCHEMA_VERSION=1）
-│       ├── assets.py / references.py / generation.py
+│       ├── assets.py / references.py / generation.py / previews.py
 │       ├── models.py / config.py / diagnostics.py
 └── tests/                            # 统一测试（python -m unittest）
     └── test_*.py
@@ -179,6 +179,30 @@ Core 契约 `images` + `reference_roles`；`GenerateRequest` / Engine 不知道 
 生成成功后 best-effort 记录 `generation_assets`（generation → asset、role、position），
 写入失败只追加 warning。历史详情返回 `references`，HTTP 任何位置都不暴露
 managed `file_path`。
+
+## 缩略图 / Preview 缓存（2.1.0）
+
+- **懒缩略图**：`GET /api/v2/outputs/{generation_id}/thumbnail` 与
+  `GET /api/v2/assets/{asset_id}/thumbnail` 按需生成 WebP（max side 512、
+  quality 82），不请求不会预先生成。
+- **Preview 缓存**：`~/.imagegen/cache/previews/{generations,assets}/`；
+  cache identity = logical id + 源文件 size + mtime_ns + profile version，
+  源文件变化 / profile 变化自动失效；写入使用临时文件 + atomic replace。
+- **浏览器缓存**：缩略图与 managed asset 使用
+  `private, max-age=31536000, immutable`；generation 原图使用
+  `private, max-age=3600`；全部响应带 `ETag` / `Last-Modified`，
+  `If-None-Match` 命中返回空 body 的 `304 Not Modified`。
+- **删除联动**：删除历史只清理对应 generation preview（原图保留）；
+  删除 asset 同时删除 managed 文件与 preview；`asset_in_use → 409` 语义不变。
+- **分页**：`GET /api/v2/history` 与 `GET /api/v2/assets` 支持
+  `limit` / `offset`，响应含 `has_more` / `next_offset`（limit+1 探测）；
+  WebUI 默认每页 24，卡片使用 `thumbnail_url` + `loading="lazy"` +
+  `decoding="async"`，加载失败自动回退原图。
+- **历史复用**：Gallery 卡片「复用参数」→ `GET /api/v2/history/{id}` →
+  恢复 prompt / size / model / quality / composition / translator /
+  library_enabled 与 references（role 顺序保持）；seed 默认留空不复用。
+  History Detail 的 `request` 只公开 allow-list 字段，本机路径字段
+  （images / out / path / output_path / mirror_path / file_path）绝不外泄。
 
 ### 安全说明
 
@@ -315,4 +339,7 @@ python tests/run_smoke_test.py
 secret 安全、旧路径忽略、DB 初始化与不兼容保护、HTTP v2 路由、CLI contract、
 Chat-first / Responses fallback（仅 404/405/501）、两组 models 独立、
 generations / edits 选择、尺寸原样透传、quality 省略、response parsing、
-endpoint 归一化、打包与 WebUI 前端契约。
+endpoint 归一化、打包与 WebUI 前端契约；2.1.0 另覆盖 Preview 管线
+（横/竖/方图、不放大、透明、EXIF、动画首帧、缓存命中与失效）、thumbnail
+HTTP 端点（ETag / 304 / 404）、History / Asset 分页、Detail 安全字段与
+参数复用前端契约。

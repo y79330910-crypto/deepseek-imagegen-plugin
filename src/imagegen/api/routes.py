@@ -358,6 +358,10 @@ def handle_history_delete(context: Any, generation_id: str) -> Response:
     context.output_registry.unregister(generation_id)
     if not deleted:
         return error_response(404, "not_found", "unknown generation_id")
+    preview_service = getattr(context, "preview_service", None)
+    if preview_service is not None:
+        # 删除历史 ≠ 删除输出图片；只清理对应 generation preview 缓存
+        preview_service.invalidate_generation(generation_id)
     return json_response(200, {"deleted": True, "generation_id": generation_id})
 
 
@@ -467,6 +471,9 @@ def handle_assets_delete(context: Any, asset_id: str) -> Response:
         return error_response(409, "asset_in_use", str(exc))
     if not deleted:
         return error_response(404, "not_found", "unknown asset_id")
+    preview_service = getattr(context, "preview_service", None)
+    if preview_service is not None:
+        preview_service.invalidate_asset(asset_id)
     return json_response(200, {"deleted": True, "asset_id": asset_id})
 
 
