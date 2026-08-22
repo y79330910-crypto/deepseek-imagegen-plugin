@@ -64,12 +64,13 @@ def map_exception(exc: BaseException) -> Response:
 
 def handle_health(context: Any, body: bytes = b"") -> Response:
     """轻量健康检查：只表示 Server 与 Core 已启动，不访问任何后端。"""
-    from .. import CORE_API_VERSION
+    from .. import CORE_API_VERSION, __version__
 
     return json_response(
         200,
         {
             "status": "ok",
+            "app_version": __version__,
             "api_version": HTTP_API_VERSION,
             "core_api_version": CORE_API_VERSION,
         },

@@ -11,7 +11,6 @@ import json
 import time
 from typing import Any, Optional
 
-from .config import APP_NAME
 from .errors import (
     ConfigurationError,
     EmptyImageError,
@@ -20,6 +19,7 @@ from .errors import (
 )
 from .http import HEALTH_TIMEOUT, http
 from .image_utils import multipart
+from ._version import __version__
 
 
 # Chat Completions 明确不支持（端点不存在 / 方法不允许 / 未实现）时才 fallback Responses
@@ -104,7 +104,7 @@ class OpenAIClient:
     def _headers(self, json_body: bool = False) -> dict[str, str]:
         headers = {
             "Authorization": f"Bearer {self.api_key}",
-            "User-Agent": f"{APP_NAME}/1.0",
+            "User-Agent": f"ImageGen/{__version__}",
         }
         if json_body:
             headers["Content-Type"] = "application/json"
@@ -267,7 +267,7 @@ class OpenAIClient:
             headers={
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": content_type,
-                "User-Agent": f"{APP_NAME}/1.0",
+                "User-Agent": f"ImageGen/{__version__}",
             },
             raw_body=body,
         )
