@@ -49,3 +49,31 @@ class TestLegacyRemoval(unittest.TestCase):
             for token in FORBIDDEN_TOKENS:
                 self.assertNotIn(token, text, f"{path} 残留 {token!r}")
         self.assertGreater(scanned, 20)
+
+
+class TestSeedContractScan(unittest.TestCase):
+    def test_no_seed_randomness_contract_in_src(self):
+        targets: list[Path] = [
+            REPO_ROOT / "src",
+            REPO_ROOT / "README.md",
+            REPO_ROOT / "pyproject.toml",
+        ]
+        files: list[Path] = []
+        for target in targets:
+            if target.is_file():
+                files.append(target)
+            elif target.is_dir():
+                files.extend(p for p in target.rglob("*") if p.is_file())
+        forbidden = ("--seed", "随机种子", "request.seed", "result.seed", "可复现")
+        for path in files:
+            if any(part in _SKIP_DIRS for part in path.parts):
+                continue
+            if path.suffix.lower() not in _TEXT_SUFFIXES:
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+            for token in forbidden:
+                self.assertNotIn(token, text, f"{path} 残留 seed 契约描述 {token!r}")
+
+    def test_readme_does_not_advertise_seed(self):
+        readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertNotIn("seed", readme)

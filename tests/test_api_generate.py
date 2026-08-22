@@ -36,6 +36,7 @@ class TestGenerateRoute(unittest.TestCase):
         self.assertEqual(data["image_model_used"], "gemini-3-pro-image")
         self.assertEqual(data["warnings"], ["w1"])
         self.assertNotIn("backend", data)
+        self.assertNotIn("seed", data)
         self.assertNotIn("path", data)
         self.assertNotIn("mirror_path", data)
         self.assertEqual(fake.last_request.prompt, "a cat")

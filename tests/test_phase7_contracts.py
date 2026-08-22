@@ -160,6 +160,7 @@ class TestHistoryDetailSafety(unittest.TestCase):
         self.assertEqual(status, 200)
         item = data["item"]
         self.assertEqual(item["request"]["prompt"], "safe prompt")
+        self.assertEqual(item["prompt_used"], "p")
         self.assertEqual(item["request"]["composition"], "portrait")
         self.assertEqual(item["request"]["library_enabled"], True)
         self.assertEqual(

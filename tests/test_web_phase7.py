@@ -53,3 +53,7 @@ class TestWebPhase7(unittest.TestCase):
     def test_seed_removed_from_webui(self):
         self.assertNotIn("seed", self.js)
         self.assertNotIn("seed", self.html)
+
+    def test_effective_prompt_viewer_markers(self):
+        for token in ("查看提示词", "生效提示词", "复制生效提示词", "prompt_used", "promptModal"):
+            self.assertIn(token, self.js + self.html, token)

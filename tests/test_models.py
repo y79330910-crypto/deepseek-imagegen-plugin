@@ -110,6 +110,7 @@ class TestGenerateResult(unittest.TestCase):
         self.assertEqual(data["init_images"], [])
         self.assertEqual(data["mirror_path"], "")
         self.assertNotIn("backend", data)
+        self.assertNotIn("seed", data)
         self.assertNotIn("model", data)
         self.assertNotIn("size", data)
         self.assertIn("generation_id", data)

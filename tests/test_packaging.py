@@ -37,3 +37,14 @@ class TestPackaging(unittest.TestCase):
         self.assertIn("[project.scripts]", text)
         self.assertIn('imagegen = "imagegen.cli:main"', text)
         self.assertIn('where = ["src"]', text)
+
+    def test_version_is_dynamic_from_single_source(self):
+        pyproject = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        self.assertIn("dynamic = [\"version\"]", pyproject)
+        self.assertIn(
+            'version = {attr = "imagegen._version.__version__"}', pyproject
+        )
+        version_file = (REPO_ROOT / "src" / "imagegen" / "_version.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("__version__", version_file)

@@ -7,6 +7,7 @@ import subprocess
 import sys
 import unittest
 
+import imagegen
 from imagegen.api import HTTP_API_VERSION
 from imagegen.api.server import validate_bind_address
 from imagegen.errors import ConfigurationError
@@ -23,6 +24,7 @@ class TestServerBasics(unittest.TestCase):
         status, _, data = self.server.json("GET", "/api/v2/health")
         self.assertEqual(status, 200)
         self.assertEqual(data["status"], "ok")
+        self.assertEqual(data["app_version"], imagegen.__version__)
         self.assertEqual(data["api_version"], HTTP_API_VERSION)
         self.assertEqual(data["core_api_version"], 2)
 

@@ -60,6 +60,7 @@ class TestHistoryApi(unittest.TestCase):
         self.assertEqual(ids, {"a" * 32, "b" * 32})
         for item in data["items"]:
             self.assertNotIn("output_path", item)
+            self.assertNotIn("seed", item)
             self.assertIn("output_url", item)
             self.assertIn("prompt", item)
 
@@ -68,6 +69,7 @@ class TestHistoryApi(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(data["item"]["generation_id"], "a" * 32)
         self.assertEqual(data["item"]["prompt"], "sakura princess")
+        self.assertNotIn("seed", data["item"])
         self.assertEqual(data["item"]["output_url"], f"/api/v2/outputs/{'a' * 32}")
 
     def test_get_unknown_history_404(self):

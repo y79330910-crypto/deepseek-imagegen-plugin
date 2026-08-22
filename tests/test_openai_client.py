@@ -7,6 +7,7 @@ import json
 import unittest
 from unittest import mock
 
+import imagegen
 from imagegen.errors import ConfigurationError, HTTPStatusError
 from imagegen.openai_client import (
     OpenAIClient,
@@ -76,6 +77,17 @@ class TestListModels(unittest.TestCase):
         self.assertEqual(models, ["a", "b", "c"])
         self.assertIn("https://example.com/v1/models", http_mock.call_args[0][0])
         self.assertIn("Bearer sk-1", http_mock.call_args[1]["headers"]["Authorization"])
+
+    def test_user_agent_contains_runtime_version(self):
+        body = json.dumps({"data": []}).encode("utf-8")
+        with mock.patch(
+            "imagegen.openai_client.http",
+            return_value=(200, body, "application/json"),
+        ) as http_mock:
+            OpenAIClient("https://example.com", "sk-1").list_models()
+        ua = http_mock.call_args[1]["headers"]["User-Agent"]
+        self.assertIn(imagegen.__version__, ua)
+        self.assertTrue(ua.startswith("ImageGen/"))
 
 
 class TestChatCompletions(unittest.TestCase):
