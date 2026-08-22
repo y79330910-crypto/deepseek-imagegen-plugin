@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -42,6 +43,29 @@ def make_multipart(
         f"--{boundary}--\r\n".encode("utf-8"),
     ]
     return b"".join(parts), f"multipart/form-data; boundary={boundary}"
+
+
+def insert_generation(db_path: Path, generation_id: str) -> None:
+    """插入一条最小 generation 记录（FK 约束要求 generation 先存在）。"""
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            "INSERT INTO generations (id, created_at, output_path, prompt,"
+            " warnings_json, metadata_json, request_json)"
+            " VALUES (?,?,?,?,?,?,?)",
+            (
+                generation_id,
+                "2026-08-22T00:00:00Z",
+                "out.png",
+                "p",
+                "[]",
+                "{}",
+                "{}",
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 class TestAssetApi(unittest.TestCase):
@@ -208,6 +232,7 @@ class TestAssetApi(unittest.TestCase):
 
     def test_delete_used_asset_409(self):
         rec = self.asset_svc.create_from_upload(make_png_bytes(), original_name="u.png")
+        insert_generation(Path(self.tmp.name) / "imagegen.db", "g1")
         self.asset_svc.attach_to_generation("g1", rec.asset_id, "character", 0)
         status, _, payload = self.server.json("DELETE", f"/api/v2/assets/{rec.asset_id}")
         self.assertEqual(status, 409)

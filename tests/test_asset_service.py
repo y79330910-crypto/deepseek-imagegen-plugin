@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -18,6 +19,29 @@ def make_png_bytes(width: int = 64, height: int = 48) -> bytes:
     buf = io.BytesIO()
     Image.new("RGB", (width, height), (10, 20, 30)).save(buf, format="PNG")
     return buf.getvalue()
+
+
+def insert_generation(db_path: Path, generation_id: str) -> None:
+    """插入一条最小 generation 记录（FK 约束要求 generation 先存在）。"""
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            "INSERT INTO generations (id, created_at, output_path, prompt,"
+            " warnings_json, metadata_json, request_json)"
+            " VALUES (?,?,?,?,?,?,?)",
+            (
+                generation_id,
+                "2026-08-22T00:00:00Z",
+                "out.png",
+                "p",
+                "[]",
+                "{}",
+                "{}",
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 class TestAssetService(unittest.TestCase):
@@ -123,6 +147,7 @@ class TestAssetService(unittest.TestCase):
 
     def test_delete_used_asset_raises_in_use(self):
         rec = self.svc.create_from_upload(make_png_bytes())
+        insert_generation(self.db_path, "gen1")
         self.svc.attach_to_generation("gen1", rec.asset_id, "character", 0)
         with self.assertRaises(AssetInUseError):
             self.svc.delete(rec.asset_id)
@@ -131,6 +156,7 @@ class TestAssetService(unittest.TestCase):
     def test_attach_and_list_for_generation(self):
         a = self.svc.create_from_upload(make_png_bytes(), original_name="a.png")
         b = self.svc.create_from_upload(make_png_bytes(), original_name="b.png")
+        insert_generation(self.db_path, "gen1")
         self.svc.attach_to_generation("gen1", a.asset_id, "character", 0)
         self.svc.attach_to_generation("gen1", b.asset_id, "style", 1)
         links = self.svc.list_for_generation("gen1")

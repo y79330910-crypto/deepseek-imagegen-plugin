@@ -18,7 +18,7 @@ from typing import Any, Optional
 from ..config import default_asset_dir, default_history_db_path
 from ..errors import AssetInUseError, AssetNotFoundError, ValidationError
 from ..image_utils import MAX_INIT_BYTES, _guess_mime, probe_image_size_ext
-from .db import initialize_db
+from .db import connect_db, initialize_db
 from .history import utc_now_iso
 
 
@@ -144,7 +144,7 @@ class AssetService:
         initialize_db(self.db_path)
 
     def _connect(self) -> sqlite3.Connection:
-        return sqlite3.connect(self.db_path, timeout=5.0)
+        return connect_db(self.db_path)
 
     def _store(
         self,

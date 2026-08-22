@@ -15,7 +15,7 @@ from typing import Any, Optional
 
 from ..config import default_history_db_path
 from ..models import GenerateRequest, GenerateResult
-from .db import initialize_db
+from .db import connect_db, initialize_db
 
 
 MAX_LIMIT = 100
@@ -101,7 +101,7 @@ class HistoryService:
         self._migrate()
 
     def _connect(self) -> sqlite3.Connection:
-        return sqlite3.connect(self.db_path, timeout=5.0)
+        return connect_db(self.db_path)
 
     def _migrate(self) -> None:
         initialize_db(self.db_path)

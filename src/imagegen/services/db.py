@@ -93,6 +93,17 @@ DB_SCHEMA_VERSION = 2
 _SCHEMA_TABLES = {"generations", "assets", "generation_assets"}
 
 
+def connect_db(db_path: str | Path) -> sqlite3.Connection:
+    """统一业务 SQLite 连接：sqlite3.connect + PRAGMA foreign_keys = ON。
+
+    SQLite 外键是 connection 级别设置，必须在每次连接时开启，
+    保证 ON DELETE CASCADE / ON DELETE RESTRICT 真正生效。
+    """
+    conn = sqlite3.connect(Path(db_path).expanduser(), timeout=5.0)
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
 def _table_names(conn: sqlite3.Connection) -> set[str]:
     return {
         row[0]
