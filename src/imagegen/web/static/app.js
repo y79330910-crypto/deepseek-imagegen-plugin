@@ -73,9 +73,16 @@ const state = {
   models: [],
   config: {},
   history: [],
+  historyOffset: 0,
+  historyHasMore: false,
   references: [],
   libItems: [],
+  libOffset: 0,
+  libHasMore: false,
 };
+
+const GALLERY_PAGE_SIZE = 24;
+const LIB_PAGE_SIZE = 24;
 
 const REF_ROLES = ["auto", "character", "outfit", "style", "scene", "composition", "pose", "object"];
 const REF_ROLE_LABELS = {
@@ -311,12 +318,22 @@ async function addFiles(files) {
 
 let libSelection = new Set();
 
-async function loadLibrary(q) {
-  try {
-    const data = await api.listAssets("reference", q, 50, 0);
-    state.libItems = data.items || [];
-  } catch (err) {
+async function loadLibrary(q, reset) {
+  const query = q == null ? $("libSearch").value.trim() : q;
+  if (reset) {
     state.libItems = [];
+    state.libOffset = 0;
+    state.libHasMore = true;
+  }
+  try {
+    const data = await api.listAssets("reference", query, LIB_PAGE_SIZE, state.libOffset);
+    state.libItems = state.libItems.concat(data.items || []);
+    state.libOffset =
+      data.next_offset != null
+        ? data.next_offset
+        : state.libOffset + (data.items || []).length;
+    state.libHasMore = !!data.has_more;
+  } catch (err) {
     showError("素材库加载失败：" + err.message);
   }
   renderLibrary();
@@ -325,6 +342,7 @@ async function loadLibrary(q) {
 function renderLibrary() {
   const grid = $("libGrid");
   grid.innerHTML = "";
+  $("libMoreBtn").style.display = state.libHasMore ? "" : "none";
   const items = state.libItems.filter(
     (it) => !state.references.some((r) => r.asset_id === it.asset_id)
   );
@@ -337,7 +355,9 @@ function renderLibrary() {
     const card = document.createElement("div");
     card.className = "gcard libcard" + (libSelection.has(it.asset_id) ? " selected" : "");
     card.innerHTML =
-      '<img src="' + esc(it.content_url) + '" alt="' + esc(it.original_name || "") + '">' +
+      '<img src="' + esc(it.thumbnail_url || it.content_url) + '" loading="lazy" decoding="async" ' +
+      'data-fallback="' + esc(it.content_url) + '" alt="' + esc(it.original_name || "") + '" ' +
+      'onerror="this.onerror=null;this.src=this.dataset.fallback;this.alt=\'素材已不存在\'">' +
       '<div class="gbody"><div class="gp">' + esc(it.original_name || "") +
       '</div><div class="gm">' + esc(dims) + "</div></div>";
     card.onclick = () => {
@@ -360,7 +380,7 @@ function openLibrary() {
   libSelection = new Set();
   $("libModal").style.display = "flex";
   $("libSearch").value = "";
-  loadLibrary("");
+  loadLibrary("", true);
 }
 
 function addSelectedFromLibrary() {
@@ -493,7 +513,7 @@ async function handleGenerate() {
       setStatus(errs.length ? "" : "✅ 生成完成");
       if (errs.length) showError(errs.join("\n"));
     }
-    await loadHistory();
+    await loadHistory("", true);
   } catch (err) {
     showError(err.message);
     setStatus("");
@@ -536,12 +556,24 @@ async function handleDoctor() {
 
 /* ============ Gallery (persistent) ============ */
 
-async function loadHistory(q) {
-  try {
-    const data = await api.listHistory(q, 50, 0);
-    state.history = data.items || [];
-  } catch (err) {
+async function loadHistory(q, reset) {
+  const query = q == null ? $("galSearch").value.trim() : q;
+  if (reset) {
     state.history = [];
+    state.historyOffset = 0;
+    state.historyHasMore = true;
+  }
+  try {
+    const data = await api.listHistory(query, GALLERY_PAGE_SIZE, state.historyOffset);
+    state.history = reset
+      ? (data.items || [])
+      : state.history.concat(data.items || []);
+    state.historyOffset =
+      data.next_offset != null
+        ? data.next_offset
+        : state.historyOffset + (data.items || []).length;
+    state.historyHasMore = !!data.has_more;
+  } catch (err) {
     showError("历史加载失败：" + err.message);
   }
   renderGallery();
@@ -551,6 +583,7 @@ function renderGallery() {
   const items = state.history;
   const gal = $("gal");
   gal.innerHTML = "";
+  $("galMoreBtn").style.display = state.historyHasMore ? "" : "none";
   if (!items.length) {
     $("galEmpty").style.display = "block";
     return;
@@ -560,8 +593,9 @@ function renderGallery() {
     const card = document.createElement("div");
     card.className = "gcard";
     card.innerHTML =
-      '<img src="' + esc(it.output_url) + '" alt="缩略图" ' +
-      'onerror="this.onerror=null;this.src=\'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7\';this.alt=\'文件已不存在\'">' +
+      '<img src="' + esc(it.thumbnail_url || it.output_url) + '" alt="缩略图" ' +
+      'loading="lazy" decoding="async" data-fallback="' + esc(it.output_url) + '" ' +
+      'onerror="this.onerror=null;this.src=this.dataset.fallback;this.alt=\'文件已不存在\'">' +
       '<div class="gbody"><div class="gp">' + esc(it.prompt || "") + "</div>" +
       '<div class="gm">种子 ' + esc(it.seed ?? "-") +
       " · " + esc(it.requested_size || "") + " → " + esc(it.actual_size || "") + "</div>" +
@@ -621,7 +655,7 @@ async function init() {
   }
   await loadImageModels();
   renderSettings();
-  await loadHistory();
+  await loadHistory("", true);
 }
 
 document.querySelectorAll(".tab").forEach((t) => {
@@ -641,7 +675,7 @@ $("refFile").onchange = (e) => {
 $("refLibBtn").onclick = openLibrary;
 $("libClose").onclick = () => ($("libModal").style.display = "none");
 $("libAddBtn").onclick = addSelectedFromLibrary;
-$("libSearch").oninput = () => loadLibrary($("libSearch").value.trim());
+$("libSearch").oninput = () => loadLibrary($("libSearch").value.trim(), true);
 $("importBtn").onclick = async () => {
   const path = $("importPath").value.trim();
   if (!path) {
@@ -711,7 +745,9 @@ $("saveBtn").onclick = async () => {
   }
 };
 $("doctorBtn").onclick = handleDoctor;
-$("galSearch").oninput = () => loadHistory($("galSearch").value.trim());
-$("galClear").onclick = () => loadHistory($("galSearch").value.trim());
+$("galSearch").oninput = () => loadHistory($("galSearch").value.trim(), true);
+$("galClear").onclick = () => loadHistory("", true);
+$("galMoreBtn").onclick = () => loadHistory(null, false);
+$("libMoreBtn").onclick = () => loadLibrary(null, false);
 
 init().catch((err) => showError("初始化失败：" + err.message));

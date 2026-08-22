@@ -190,13 +190,16 @@
 
   <section class="glass card" id="page-gallery" style="display:none">
     <div class="row" style="justify-content:space-between">
-      <h3 style="margin:0">🖼 历史画廊（持久化，最近 50 条）</h3>
+      <h3 style="margin:0">🖼 历史画廊（持久化，分页加载）</h3>
       <button class="btn ghost small" id="galClear">刷新记录</button>
     </div>
     <div class="row" style="margin-top:10px">
       <div class="field" style="flex:1;margin:0"><input id="galSearch" placeholder="搜索提示词…"></div>
     </div>
     <div class="gal" id="gal" style="margin-top:12px"></div>
+    <div class="row" style="justify-content:center;margin-top:10px">
+      <button class="btn ghost small" id="galMoreBtn" style="display:none" type="button">加载更多</button>
+    </div>
     <div class="hint" id="galEmpty" style="display:none">还没有生成记录，先去生成一张吧。</div>
   </section>
 </div>
@@ -210,6 +213,9 @@
       <input id="libSearch" placeholder="搜索文件名…">
     </div>
     <div id="libGrid" class="gal" style="margin-top:10px"></div>
+    <div class="row" style="justify-content:center;margin-top:8px">
+      <button class="btn ghost small" id="libMoreBtn" style="display:none" type="button">加载更多素材</button>
+    </div>
     <div class="row" style="justify-content:flex-end;margin-top:10px">
       <button class="btn main small" id="libAddBtn" type="button">添加选中</button>
     </div>
