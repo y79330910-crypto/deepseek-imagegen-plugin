@@ -298,25 +298,59 @@ def handle_history_get(context: Any, generation_id: str) -> Response:
     if record is None:
         return error_response(404, "not_found", "unknown generation_id")
     item = history_public_dict(record)
-    item["references"] = _history_references(context, generation_id)
+    item["prompt_used"] = record.prompt_used
+    item["warnings"] = list(record.warnings)
+    # request 只公开 allow-list 字段；旧记录里的本机路径（images/out 等）绝不外泄。
+    item["request"] = _safe_request_public(record.request or {})
+    references, ref_warnings = _history_references(context, generation_id)
+    item["references"] = references
+    item["warnings"].extend(ref_warnings)
     return json_response(200, {"item": item})
 
 
-def _history_references(context: Any, generation_id: str) -> list[dict[str, Any]]:
-    """History detail 的 references：来自 generation_assets，不塞入列表接口。"""
+HISTORY_REQUEST_ALLOW = (
+    "prompt",
+    "size",
+    "model",
+    "seed",
+    "quality",
+    "composition",
+    "translator",
+    "library_enabled",
+)
+
+
+def _safe_request_public(request: dict[str, Any]) -> dict[str, Any]:
+    """只公开可安全恢复的生成参数，禁止 images / reference_roles / out 等路径字段。"""
+    return {key: request[key] for key in HISTORY_REQUEST_ALLOW if key in request}
+
+
+def _history_references(
+    context: Any, generation_id: str
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """History detail 的 references：来自 generation_assets（position ASC）。
+
+    某条历史 asset 已不存在时跳过该引用并返回 warning，不导致 detail 失败。
+    """
     asset_service = getattr(context, "asset_service", None)
     if asset_service is None:
-        return []
+        return [], []
     links = asset_service.list_for_generation(generation_id)
-    return [
-        {
+    references: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    for link in links:
+        record = asset_service.get(link.asset_id)
+        if record is None:
+            warnings.append(f"reference asset missing: {link.asset_id}")
+            continue
+        references.append({
             "asset_id": link.asset_id,
             "role": link.role,
             "position": link.position,
             "content_url": f"/api/v2/assets/{link.asset_id}/content",
-        }
-        for link in links
-    ]
+            "thumbnail_url": f"/api/v2/assets/{link.asset_id}/thumbnail",
+        })
+    return references, warnings
 
 
 def handle_history_delete(context: Any, generation_id: str) -> Response:
