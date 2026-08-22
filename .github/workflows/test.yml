@@ -54,7 +54,7 @@ jobs:
       - name: Install wheel in fresh venv and smoke test
         run: |
           python -m venv /tmp/imagegen-wheel-venv
-          /tmp/imagegen-wheel-venv/bin/pip install --no-deps dist/*.whl
+          /tmp/imagegen-wheel-venv/bin/pip install dist/*.whl
           cd /tmp
           /tmp/imagegen-wheel-venv/bin/imagegen --help > /dev/null
           /tmp/imagegen-wheel-venv/bin/python -c \
@@ -64,3 +64,21 @@ jobs:
              assert r.joinpath('index.html').is_file(); \
              assert r.joinpath('app.js').is_file(); \
              assert r.joinpath('style.css').is_file()"
+
+  windows-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package (editable)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+      - name: Unit tests
+        run: python -m unittest
+      - name: Standalone CLI
+        run: |
+          python -m imagegen --help
+          python -m imagegen config --json

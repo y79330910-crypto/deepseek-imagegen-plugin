@@ -46,7 +46,7 @@ Local HTTP API v2 与完整 WebUI。架构只保留两套独立的 OpenAI-Compat
 ├── LICENSE                           # MIT License
 ├── src/imagegen/                     # ImageGen Core（独立应用）
 │   ├── __init__.py                   # Public Core API（CORE_API_VERSION=2）
-│   ├── _version.py                   # 唯一版本源（__version__ = "2.1.0"）
+│   ├── _version.py                   # 唯一版本源（__version__ = "2.1.1"）
 │   ├── engine.py / models.py / errors.py
 │   ├── config.py / http.py / image_utils.py
 │   ├── composition.py / reference.py / translator.py
@@ -57,7 +57,7 @@ Local HTTP API v2 与完整 WebUI。架构只保留两套独立的 OpenAI-Compat
 │   ├── web/                          # Standalone WebUI 静态资源
 │   │   └── static/index.html / app.js / style.css
 │   └── services/                     # Application Service 层
-│       ├── db.py                     # ImageGen 2 SQLite（DB_SCHEMA_VERSION=1）
+│       ├── db.py                     # ImageGen 2 SQLite（DB_SCHEMA_VERSION=2）
 │       ├── assets.py / references.py / generation.py / previews.py
 │       ├── models.py / config.py / diagnostics.py
 └── tests/                            # 统一测试（python -m unittest）
@@ -200,9 +200,13 @@ managed `file_path`。
   `decoding="async"`，加载失败自动回退原图。
 - **历史复用**：Gallery 卡片「复用参数」→ `GET /api/v2/history/{id}` →
   恢复 prompt / size / model / quality / composition / translator /
-  library_enabled 与 references（role 顺序保持）；seed 默认留空不复用。
+  library_enabled 与 references（role 顺序保持）。
   History Detail 的 `request` 只公开 allow-list 字段，本机路径字段
   （images / out / path / output_path / mirror_path / file_path）绝不外泄。
+- **生效提示词查看**：Gallery 卡片「查看提示词」→ `GET /api/v2/history/{id}` →
+  生成详情 Modal 显示「原始提示词」（用户输入）与「生效提示词」（`prompt_used`），
+  长文本可展开 / 收起，支持一键复制完整 `prompt_used`；记录未保存生效提示词时
+  明确提示，不冒充原始提示词。
 
 ### 安全说明
 
@@ -291,7 +295,6 @@ effective config 整体写回磁盘。环境变量中的 API Key 会影响运行
 prompt
 size
 model
-seed
 quality
 composition
 translator          # 仅 auto / off
@@ -309,7 +312,7 @@ validation error，而不是静默忽略**。`translator` 只接受 `auto`（跟
 ## 结果 / 错误 contract
 
 - `GenerateResult` 公共字段：`ok` / `generation_id` / `image_model_used` /
-  `quality` / `seed` / `requested_size` / `actual_size` / `size_match` /
+  `quality` / `requested_size` / `actual_size` / `size_match` /
   `size_check` / `prompt_used` / `composition` / `composition_preset` /
   `translator` / `reference` / `prompt_library` / `warnings` / `bytes` /
   `init_images` / `mirror_path`；Core / CLI 另有本地 `path`。
@@ -320,13 +323,24 @@ validation error，而不是静默忽略**。`translator` 只接受 `auto`（跟
 
 ## SQLite
 
-ImageGen 2.x 数据库 schema lineage 第一版（`DB_SCHEMA_VERSION = 1`）：
+ImageGen 2.x 数据库 schema lineage 第二版（`DB_SCHEMA_VERSION = 2`）：
 
 - `generations`：无 `backend` 列
-- `assets` / `generation_assets`：保持现有结构
+- `assets`：保持现有结构
+- `generation_assets`：加入真正的外键（`generation_id → generations(id)`
+  `ON DELETE CASCADE`，`asset_id → assets(id)` `ON DELETE RESTRICT`）
 
-`initialize_db()` 只创建新库或打开当前 schema；已存在但不兼容的
-`~/.imagegen/imagegen.db` 不会被静默删除或重建，而是明确报 schema incompatibility。
+schema v1（2.0 / 2.1.0）数据库会在启动时自动安全迁移到 v2：只重建
+`generation_assets`，**不删除任何 `generations` / `assets` 数据**；仅保留
+generation 与 asset 均仍存在的 relation，孤儿 relation 自动清理。迁移全程
+事务化（all-or-nothing），结束后执行 `foreign_key_check`。
+
+旧的随机性控制参数已从公共契约删除（上游并不消费该值）；数据库中的兼容列
+保留但不进入业务对象，新记录统一写入 NULL。
+
+`initialize_db()` 只创建新库、打开当前 schema 或执行 v1 → v2 迁移；已存在且
+无法识别的 `~/.imagegen/imagegen.db` 不会被静默删除或重建，而是明确报
+schema incompatibility。
 
 ## 测试
 
