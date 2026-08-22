@@ -3,16 +3,98 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from pathlib import Path
 from typing import Any
 
+from .errors import ConfigurationError
+
 
 APP_NAME = "imagegen"
-# 独立程序不内置任何宿主专属路径：
-# - mirror_dir 缺省时可使用环境变量 IMAGEGEN_MIRROR_DIR 指定
-MIRROR_DIR_ENV = "IMAGEGEN_MIRROR_DIR"
 DEFAULT_MIRROR_DIR = ""
+
+# ---------------------------------------------------------------------------
+# IMAGEGEN_* 环境变量（固定优先级：DEFAULT_CONFIG < config.json < IMAGEGEN_*）
+# 字符串：环境变量只要存在就视为显式 override，允许空字符串。
+# 布尔：  true/false、1/0、on/off、yes/no（大小写不敏感），非法值抛
+#         ConfigurationError，不得静默转成 False。
+# 浮点：  显式转换并校验（必须是正数），非法值抛 ConfigurationError。
+# ---------------------------------------------------------------------------
+
+_STRING_ENV_KEYS: dict[str, tuple[str, ...]] = {
+    "IMAGEGEN_TRANSLATOR_BASE_URL": ("translator", "base_url"),
+    "IMAGEGEN_TRANSLATOR_API_KEY": ("translator", "api_key"),
+    "IMAGEGEN_TRANSLATOR_MODEL": ("translator", "model"),
+    "IMAGEGEN_TRANSLATOR_OUTPUT_LANG": ("translator", "output_lang"),
+    "IMAGEGEN_IMAGE_BASE_URL": ("image", "base_url"),
+    "IMAGEGEN_IMAGE_API_KEY": ("image", "api_key"),
+    "IMAGEGEN_IMAGE_MODEL": ("image", "model"),
+    "IMAGEGEN_IMAGE_QUALITY": ("image", "quality"),
+    "IMAGEGEN_DEFAULT_SIZE": ("default_size",),
+    "IMAGEGEN_SAVE_DIR": ("save_dir",),
+    "IMAGEGEN_MIRROR_DIR": ("mirror_dir",),
+}
+
+_BOOL_ENV_KEYS: dict[str, tuple[str, ...]] = {
+    "IMAGEGEN_SIZE_CHECK_ENABLED": ("size_check", "enabled"),
+}
+
+_FLOAT_ENV_KEYS: dict[str, tuple[str, ...]] = {
+    "IMAGEGEN_SIZE_CHECK_TOLERANCE": ("size_check", "tolerance"),
+}
+
+_BOOL_TRUE = {"true", "1", "on", "yes"}
+_BOOL_FALSE = {"false", "0", "off", "no"}
+
+
+def _set_path(cfg: dict[str, Any], path: tuple[str, ...], value: Any) -> None:
+    node = cfg
+    for key in path[:-1]:
+        if not isinstance(node.get(key), dict):
+            node[key] = {}
+        node = node[key]
+    node[path[-1]] = value
+
+
+def _parse_bool_env(name: str, value: str) -> bool:
+    raw = (value or "").strip().lower()
+    if raw in _BOOL_TRUE:
+        return True
+    if raw in _BOOL_FALSE:
+        return False
+    raise ConfigurationError(
+        f"环境变量 {name} 取值无效：{value!r}；"
+        "必须为 true/false、1/0、on/off、yes/no（大小写不敏感）。"
+    )
+
+
+def _parse_float_env(name: str, value: str) -> float:
+    raw = (value or "").strip()
+    try:
+        result = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ConfigurationError(
+            f"环境变量 {name} 必须是数字，当前值：{value!r}。"
+        ) from exc
+    if not math.isfinite(result) or result <= 0:
+        raise ConfigurationError(
+            f"环境变量 {name} 必须是正数，当前值：{value!r}。"
+        )
+    return result
+
+
+def _apply_env_overrides(cfg: dict[str, Any]) -> None:
+    """把 IMAGEGEN_* 环境变量应用到生效配置（env > config.json > default）。"""
+    for name, path in _STRING_ENV_KEYS.items():
+        if name in os.environ:
+            _set_path(cfg, path, os.environ[name])
+    for name, path in _BOOL_ENV_KEYS.items():
+        if name in os.environ:
+            _set_path(cfg, path, _parse_bool_env(name, os.environ[name]))
+    for name, path in _FLOAT_ENV_KEYS.items():
+        if name in os.environ:
+            _set_path(cfg, path, _parse_float_env(name, os.environ[name]))
 
 
 def default_config_path() -> Path:
@@ -127,45 +209,11 @@ def deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
-def _migrate_config(cfg: dict[str, Any]) -> dict[str, Any]:
-    """旧配置迁移到 Phase 6 双 OpenAI-Compatible 结构（简单、确定、可预测）。
-
-    - translator.deepseek.{base_url,api_key,model} → translator.{...}（值明确才迁移）
-    - translator.engine off/none/direct/直传 → translator.enabled=false
-    - vertex / extra_backends.* 不猜测哪个应成为 image 上游 → image.* 保持为空
-    - size_policy.tolerance → size_check.tolerance
-    """
-    tr = cfg.get("translator")
-    if isinstance(tr, dict):
-        if "engine" in tr:
-            legacy_engine = str(tr.get("engine") or "deepseek").strip().lower()
-            tr["enabled"] = legacy_engine not in ("off", "none", "direct", "直传")
-            tr.pop("engine", None)
-        old = tr.get("deepseek")
-        if isinstance(old, dict):
-            for key in ("base_url", "api_key", "model"):
-                value = str(old.get(key) or "").strip()
-                if value and not str(tr.get(key) or "").strip():
-                    tr[key] = value
-        tr.pop("deepseek", None)
-        tr.pop("gemini", None)
-    if not isinstance(cfg.get("image"), dict):
-        cfg["image"] = {}
-    sc = cfg.pop("size_policy", None)
-    if isinstance(sc, dict) and "tolerance" in sc:
-        cfg.setdefault("size_check", {})
-        if isinstance(cfg.get("size_check"), dict):
-            try:
-                cfg["size_check"]["tolerance"] = float(sc["tolerance"])
-            except (TypeError, ValueError):
-                pass
-    cfg.pop("vertex", None)
-    cfg.pop("extra_backends", None)
-    return cfg
-
-
 def load_config(config_path: str | Path | None = None) -> dict[str, Any]:
-    """读取用户配置并合并默认值；config_path 缺省时使用默认路径。"""
+    """读取生效配置：DEFAULT_CONFIG < config.json < IMAGEGEN_*。
+
+    config_path 缺省时使用默认路径。只读取新路径，不识别 / 不迁移旧配置。
+    """
     cfg = json.loads(json.dumps(DEFAULT_CONFIG))
     cfg_path = (
         Path(config_path).expanduser()
@@ -179,21 +227,9 @@ def load_config(config_path: str | Path | None = None) -> dict[str, Any]:
             if isinstance(user_cfg, dict):
                 cfg = deep_merge(cfg, user_cfg)
         except (OSError, json.JSONDecodeError) as exc:
-            from .errors import ConfigurationError
-
             raise ConfigurationError(f"配置文件解析失败（{cfg_path}）：{exc}") from exc
-    if not str(cfg.get("mirror_dir") or "").strip():
-        env_mirror = os.environ.get(MIRROR_DIR_ENV, "").strip()
-        if env_mirror:
-            cfg["mirror_dir"] = env_mirror
-    # 提示词上游兼容：Codex 宿主注入的通用环境变量作为 translator 兜底
-    tr = cfg.get("translator")
-    if isinstance(tr, dict):
-        if not str(tr.get("base_url") or "").strip():
-            tr["base_url"] = os.environ.get("DEEPSEEK_BASE_URL", "").strip()
-        if not str(tr.get("api_key") or "").strip():
-            tr["api_key"] = os.environ.get("DEEPSEEK_API_KEY", "").strip()
-    return _migrate_config(cfg)
+    _apply_env_overrides(cfg)
+    return cfg
 
 
 def save_config(cfg: dict[str, Any], config_path: str | Path | None = None) -> str:

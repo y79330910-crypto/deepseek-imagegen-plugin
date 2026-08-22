@@ -1,4 +1,4 @@
-"""ConfigService：统一配置读取 / 保存 / 打码 / 路径 / 迁移。"""
+"""ConfigService：统一配置读取 / 保存 / 打码 / 路径。"""
 
 from __future__ import annotations
 
@@ -79,11 +79,21 @@ def _deep_merge(base: dict[str, Any], override: Mapping[str, Any]) -> dict[str, 
     return result
 
 
-def _protect_masked_secrets(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
-    """patch 值等于当前 masked 表示时保留原 secret，防止 WebUI 回传打码值覆盖真实值。"""
-    masked = mask_config(base)
+def _protect_masked_secrets(
+    raw: dict[str, Any],
+    effective: dict[str, Any],
+    patch: dict[str, Any],
+) -> dict[str, Any]:
+    """保护 WebUI 回传的 masked secret，禁止 env secret 被物化到 config.json。
 
-    def walk(patch_node: Any, base_node: Any, masked_node: Any) -> Any:
+    - patch 值等于 masked effective 值（用户未修改）时：
+        * raw 已有自己的 secret → 保留 raw 原值；
+        * raw 没有 secret（secret 来自环境变量）→ 忽略该字段，不写入磁盘。
+    - patch 值是新的非 masked secret → 正常写入 raw config。
+    """
+    masked = mask_config(effective)
+
+    def walk(patch_node: Any, raw_node: Any, masked_node: Any) -> Any:
         if not isinstance(patch_node, dict):
             return patch_node
         result = dict(patch_node)
@@ -91,17 +101,20 @@ def _protect_masked_secrets(base: dict[str, Any], patch: dict[str, Any]) -> dict
             if isinstance(value, dict):
                 result[key] = walk(
                     value,
-                    base_node.get(key, {}) if isinstance(base_node, dict) else {},
+                    raw_node.get(key, {}) if isinstance(raw_node, dict) else {},
                     masked_node.get(key, {}) if isinstance(masked_node, dict) else {},
                 )
             elif key in SECRET_KEYS and isinstance(value, str):
                 masked_value = masked_node.get(key) if isinstance(masked_node, dict) else None
                 if value == masked_value:
-                    base_value = base_node.get(key) if isinstance(base_node, dict) else None
-                    result[key] = base_value if base_value is not None else ""
+                    raw_value = raw_node.get(key) if isinstance(raw_node, dict) else None
+                    if raw_value is not None and str(raw_value) != "":
+                        result[key] = raw_value
+                    else:
+                        result.pop(key, None)
         return result
 
-    return walk(patch, base, masked)
+    return walk(patch, raw, masked)
 
 
 class ConfigService:
@@ -117,7 +130,7 @@ class ConfigService:
         )
 
     def load(self) -> dict[str, Any]:
-        """合并默认值后的生效配置（含旧配置迁移与环境变量）。"""
+        """合并默认值后的生效配置（DEFAULT + config.json + IMAGEGEN_*）。"""
         return load_config(self.config_path)
 
     def load_raw(self) -> dict[str, Any]:
@@ -152,10 +165,10 @@ class ConfigService:
         base = self.load_raw()
         if not isinstance(base, dict):
             base = {}
-        # masked 比较基于“迁移后生效配置”，保证旧式密钥字段也能被正确保护
+        # masked 比较基于 effective config（含环境变量），写入目标始终是 raw config
         effective = self.load()
         normalized = _normalize_patch(patch)
-        protected = _protect_masked_secrets(effective, normalized)
+        protected = _protect_masked_secrets(base, effective, normalized)
         merged = _deep_merge(base, protected)
         self.save(merged)
         return self.masked()

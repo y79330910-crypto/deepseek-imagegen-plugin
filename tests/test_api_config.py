@@ -15,8 +15,8 @@ from .api_test_utils import ApiTestServer
 INITIAL_CONFIG = {
     "save_dir": "/tmp/out",
     "translator": {
-        "engine": "deepseek",
-        "deepseek": {"api_key": "sk-real-secret-123", "model": "deepseek-v4-flash"},
+        "api_key": "sk-real-secret-123",
+        "model": "gemini-3-pro-image",
     },
     "size_check": {"enabled": True, "tolerance": 0.06},
 }
