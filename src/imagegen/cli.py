@@ -43,7 +43,6 @@ def cmd_generate(args: argparse.Namespace) -> dict[str, Any]:
         prompt=args.prompt,
         size=args.size,
         model=args.model,
-        seed=args.seed,
         quality=getattr(args, "quality", ""),
         composition=args.composition,
         translator=args.translator,
@@ -124,7 +123,6 @@ def _print_result(result: dict[str, Any], use_json: bool) -> int:
             print(f"尺寸：请求 {result['requested_size']} → 实际 {actual} {mark}")
         else:
             print(f"尺寸：请求 {result['requested_size']}（无法读取实际尺寸）")
-        print(f"种子：{result['seed']}")
         if result.get("image_model_used"):
             print(f"图像模型：{result['image_model_used']}")
         if result.get("composition_preset") and result["composition_preset"] != "auto":
@@ -175,7 +173,6 @@ def build_parser() -> argparse.ArgumentParser:
     gen.add_argument("prompt", help="提示词")
     gen.add_argument("--out", help="输出文件路径")
     gen.add_argument("--size", default="", help="分辨率，如 1024x1024（图生图省略时自动取原图尺寸）")
-    gen.add_argument("--seed", type=int, default=None, help="随机种子")
     gen.add_argument("--model", default="", help="图像模型（默认使用配置 image.model）")
     gen.add_argument(
         "--image",

@@ -27,7 +27,6 @@ def make_result(generation_id: str = "c" * 32) -> GenerateResult:
     return GenerateResult(
         path="out.png",
         image_model_used="gemini-3-pro-image",
-        seed=1,
         requested_size="16x16",
         actual_size="16x16",
         prompt_used="p",

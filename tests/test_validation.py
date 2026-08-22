@@ -39,13 +39,6 @@ class TestRequestValidation(unittest.TestCase):
             with self.assertRaises(ValidationError):
                 make_request(size=size).validate()
 
-    def test_seed_bool_rejected(self):
-        with self.assertRaises(ValidationError):
-            make_request(seed=True).validate()
-
-    def test_seed_int_accepted(self):
-        make_request(seed=42).validate()
-
     def test_translator_enum_validated(self):
         make_request(translator="auto").validate()
         make_request(translator="off").validate()

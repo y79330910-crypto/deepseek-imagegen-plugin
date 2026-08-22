@@ -28,7 +28,6 @@ def make_result(gid: str) -> GenerateResult:
     return GenerateResult(
         path="out.png",
         image_model_used="m",
-        seed=1,
         requested_size="32x32",
         actual_size="32x32",
         prompt_used="p",

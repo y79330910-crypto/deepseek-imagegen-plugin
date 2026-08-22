@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import random
 from pathlib import Path
 from typing import Any, Optional
 
@@ -219,8 +218,6 @@ def _run_generation(
     width, height = _resolve_size(request, cfg, comp_preset, init_images_data)
     size_str = f"{width}x{height}"
 
-    seed = request.seed if request.seed is not None else random.randint(0, 2**31 - 1)
-
     # ---- 图像上游（image.* 独立 OpenAI-Compatible 连接）
     img_cfg = cfg.get("image") or {}
     if not isinstance(img_cfg, dict):
@@ -276,9 +273,9 @@ def _run_generation(
     if request.out:
         out_path = Path(request.out).expanduser()
         if out_path.suffix.lower() not in (".png", ".jpg", ".jpeg", ".webp"):
-            out_path = out_path / default_output_path(prompt, seed, cfg, ext=out_ext).name
+            out_path = out_path / default_output_path(prompt, cfg, ext=out_ext).name
     else:
-        out_path = default_output_path(prompt, seed, cfg, ext=out_ext)
+        out_path = default_output_path(prompt, cfg, ext=out_ext)
     try:
         out_path.parent.mkdir(parents=True, exist_ok=True)
     except FileExistsError as exc:
@@ -290,7 +287,6 @@ def _run_generation(
     result = GenerateResult(
         path=str(out_path),
         image_model_used=eff_model,
-        seed=seed,
         requested_size=size_str,
         actual_size=f"{actual_size[0]}x{actual_size[1]}" if actual_size else "未知",
         prompt_used=final_prompt,

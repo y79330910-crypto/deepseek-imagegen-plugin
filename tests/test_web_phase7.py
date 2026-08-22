@@ -50,6 +50,6 @@ class TestWebPhase7(unittest.TestCase):
         self.assertIn('data-act="reuse"', self.js)
         self.assertIn("复用参数", self.js)
 
-    def test_reuse_does_not_restore_seed(self):
-        self.assertIn('$("seed").value = ""', self.js)
-        self.assertIn("// Phase 7", self.js)
+    def test_seed_removed_from_webui(self):
+        self.assertNotIn("seed", self.js)
+        self.assertNotIn("seed", self.html)

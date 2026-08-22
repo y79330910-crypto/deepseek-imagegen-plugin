@@ -17,7 +17,6 @@ class FakeResultEngine:
         return GenerateResult(
             path=r"C:\tmp\out.png",
             image_model_used="gemini-3-pro-image",
-            seed=7,
             requested_size="1024x1024",
             actual_size="1024x1024",
             prompt_used="p",
@@ -50,10 +49,8 @@ class TestRequestRoundTripContract(unittest.TestCase):
             "quality": "high",
             "images": ["a.png", "b.png"],
             "reference_roles": ["character", "outfit"],
-            "seed": 42,
         }
         request = GenerateRequest.from_dict(json.loads(json.dumps(data)))
-        self.assertEqual(request.seed, 42)
         self.assertEqual(request.size, "1024x1536")
         restored = GenerateRequest.from_dict(request.to_dict())
         self.assertEqual(restored.to_dict(), request.to_dict())

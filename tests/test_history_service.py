@@ -13,7 +13,6 @@ def make_result(path="out.png", generation_id="a" * 32, prompt_used="p"):
     return GenerateResult(
         path=path,
         image_model_used="gemini-3-pro-image",
-        seed=7,
         requested_size="1024x1024",
         actual_size="1024x1024",
         prompt_used=prompt_used,
@@ -42,13 +41,12 @@ class TestHistoryService(unittest.TestCase):
         self.assertEqual(version, DB_SCHEMA_VERSION)
 
     def test_record_get_round_trip(self):
-        req = GenerateRequest(prompt="hello", size="1024x1024", seed=7)
+        req = GenerateRequest(prompt="hello", size="1024x1024")
         rec = self.svc.record(req, make_result())
         got = self.svc.get(rec.id)
         self.assertIsNotNone(got)
         self.assertEqual(got.id, rec.id)
         self.assertEqual(got.prompt, "hello")
-        self.assertEqual(got.seed, 7)
         self.assertEqual(got.warnings, ["w1"])
         self.assertEqual(got.request["prompt"], "hello")
         self.assertEqual(got.request["size"], "1024x1024")
@@ -119,7 +117,6 @@ class TestHistoryRecord(unittest.TestCase):
             image_model_used="m",
             prompt="p",
             prompt_used="pp",
-            seed=1,
             requested_size="1x1",
             actual_size="1x1",
             warnings=["w"],

@@ -15,7 +15,6 @@ class TestGenerateRoute(unittest.TestCase):
         self.result = GenerateResult(
             path=r"D:\tmp\out.png",
             image_model_used="gemini-3-pro-image",
-            seed=7,
             requested_size="1024x1024",
             actual_size="1024x1024",
             prompt_used="a cat",

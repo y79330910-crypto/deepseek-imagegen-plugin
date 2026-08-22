@@ -9,11 +9,11 @@ import random
 import re
 import shutil
 import time
+import uuid
 import urllib.parse
 from pathlib import Path
 from typing import Any, Optional
 
-from .config import APP_NAME
 from .errors import UpstreamError, ValidationError
 from .http import BROWSER_UA, HEALTH_TIMEOUT, http
 
@@ -38,16 +38,22 @@ def slugify(text: str, max_len: int = 50) -> str:
     return (slug[:max_len] or "image").strip("-") or "image"
 
 
-def default_output_path(prompt: str, seed: int, cfg: dict[str, Any], ext: str = "png") -> Path:
-    """默认输出路径：save_dir 生效（未配置时输出到当前目录）。"""
+def default_output_path(
+    prompt: str, cfg: dict[str, Any], ext: str = "png"
+) -> Path:
+    """默认输出路径：save_dir 生效（未配置时输出到当前目录）。
+
+    文件名不依赖 seed：<prompt-slug>-<时间戳>-<8位随机UUID>。
+    """
     save_dir = (cfg.get("save_dir") or "").strip()
     base = Path(save_dir).expanduser() if save_dir else Path.cwd()
     try:
         base.mkdir(parents=True, exist_ok=True)
     except OSError:
         base = Path.cwd()
-    timestamp = time.strftime("%Y%m%d_%H%M%S")
-    filename = f"{APP_NAME}_{timestamp}_{slugify(prompt)}_{seed}.{ext}"
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    random_suffix = uuid.uuid4().hex[:8]
+    filename = f"{slugify(prompt)}-{timestamp}-{random_suffix}.{ext}"
     return base / filename
 
 

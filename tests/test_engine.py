@@ -102,7 +102,7 @@ class TestImageModelUsed(unittest.TestCase):
                 ),
             ):
                 result = engine.generate(
-                    GenerateRequest(prompt="画一张图", size="1024x1024", seed=1)
+                    GenerateRequest(prompt="画一张图", size="1024x1024")
                 )
             self.assertEqual(result.image_model_used, "gemini-3-pro-image")
             self.assertEqual(result.translator.get("model"), "tr-model")
@@ -121,7 +121,7 @@ class TestSizeAndQualityPassthrough(unittest.TestCase):
                 mock.patch.object(engine, "OpenAIClient", return_value=fake),
             ):
                 result = engine.generate(
-                    GenerateRequest(prompt="海报", size="1920x1080", seed=5, translator="off")
+                    GenerateRequest(prompt="海报", size="1920x1080", translator="off")
                 )
             req = fake.requests[0]
             self.assertEqual(req["size"], "1920x1080")
@@ -139,7 +139,7 @@ class TestSizeAndQualityPassthrough(unittest.TestCase):
             ):
                 engine.generate(
                     GenerateRequest(
-                        prompt="海报", size="1080x1920", seed=5, translator="off", quality="high"
+                        prompt="海报", size="1080x1920", translator="off", quality="high"
                     )
                 )
             req = fake.requests[0]

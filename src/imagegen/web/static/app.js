@@ -413,13 +413,11 @@ function buildGenerateRequest() {
   const refs = state.references
     .filter((r) => r.status === "ready" && r.asset_id)
     .slice(0, MAX_REFS);
-  const seedRaw = $("seed").value.trim();
   const lib = $("library").value;
   return {
     prompt: $("prompt").value.trim(),
     size: $("size").value.trim(),
     model: $("model").value.trim(),
-    seed: seedRaw ? Number(seedRaw) : null,
     quality: $("quality").value,
     composition: $("composition").value,
     translator: $("translator").value,
@@ -438,7 +436,6 @@ function renderResult(res) {
   const warns = res.warnings || [];
   let info =
     "<b>图像模型：</b>" + esc(res.image_model_used || "自动") +
-    "<br><b>种子：</b>" + esc(res.seed) +
     "<br><b>尺寸：</b>请求 " + esc(res.requested_size) + " → 实际 " + esc(res.actual_size) +
     " " + (res.size_match ? "✓" : "✗") + "<br>";
   if (res.composition_preset && res.composition_preset !== "auto") {
@@ -492,7 +489,6 @@ async function handleGenerate() {
     for (let i = 1; i <= count; i++) {
       setStatus("⏳ 正在生成第 " + i + "/" + count + " 张，请耐心等待…");
       const req = buildGenerateRequest();
-      if (i > 1) req.seed = null;
       try {
         const res = await api.generate(req);
         if (i === 1) {
@@ -599,8 +595,7 @@ function renderGallery() {
       'loading="lazy" decoding="async" data-fallback="' + esc(it.output_url) + '" ' +
       'onerror="this.onerror=null;this.src=this.dataset.fallback;this.alt=\'文件已不存在\'">' +
       '<div class="gbody"><div class="gp">' + esc(it.prompt || "") + "</div>" +
-      '<div class="gm">种子 ' + esc(it.seed ?? "-") +
-      " · " + esc(it.requested_size || "") + " → " + esc(it.actual_size || "") + "</div>" +
+      '<div class="gm">' + esc(it.requested_size || "") + " → " + esc(it.actual_size || "") + "</div>" +
       (it.prompt_used
         ? '<details class="gm"><summary style="cursor:pointer">生效提示词（点击展开）</summary>' +
           '<div class="detail-prompt">' + esc(it.prompt_used) +
@@ -676,7 +671,6 @@ async function reuseGeneration(generationId) {
       : req.library_enabled
         ? "on"
         : "off";
-  $("seed").value = ""; // Phase 7：复用参数默认不复用 seed
   state.references = (item.references || []).map((ref) => ({
     asset_id: ref.asset_id,
     content_url: ref.content_url,

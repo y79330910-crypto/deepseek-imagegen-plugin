@@ -209,14 +209,12 @@ class TestGenerateFlow(unittest.TestCase):
                     GenerateRequest(
                         prompt="画一张湖边公园春日场景",
                         size="768x1408",
-                        seed=123,
                         translator="off",
                         composition="full-body",
                     )
                 ).to_dict()
             self.assertTrue(result["ok"])
             self.assertTrue(Path(result["path"]).is_file())
-            self.assertEqual(result["seed"], 123)
             self.assertNotIn("角色设定", result["prompt_used"])
             self.assertTrue(result["size_check"]["match"])
             self.assertTrue((Path(tmp) / "mirror" / Path(result["path"]).name).is_file())
@@ -236,7 +234,6 @@ class TestGenerateFlow(unittest.TestCase):
                     GenerateRequest(
                         prompt="保持参考图中的角色不变；不要耳机；场景改为春日樱花公园",
                         size="1024x1024",
-                        seed=9,
                         translator="off",
                         images=[str(ref)],
                         reference_roles=["character"],
@@ -259,7 +256,7 @@ class TestOutputPaths(unittest.TestCase):
             save_dir = Path(tmp) / "out"
             mirror_dir = Path(tmp) / "mirror"
             cfg = {"save_dir": str(save_dir), "mirror_dir": str(mirror_dir)}
-            path = default_output_path("测试提示词", 42, cfg, ext="png")
+            path = default_output_path("测试提示词", cfg, ext="png")
             self.assertTrue(str(path).startswith(str(save_dir)))
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(make_png_bytes())
@@ -328,7 +325,6 @@ class TestMultiReference(unittest.TestCase):
                     GenerateRequest(
                         prompt="保持角色不变，穿上第二张图的服装，场景全新",
                         size="1024x1024",
-                        seed=7,
                         translator="off",
                         images=[str(ref1), str(ref2)],
                         reference_roles=["character", "outfit"],

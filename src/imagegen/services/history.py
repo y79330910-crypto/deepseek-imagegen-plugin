@@ -50,7 +50,6 @@ class HistoryRecord:
     image_model_used: str = ""
     prompt: str = ""
     prompt_used: str = ""
-    seed: Optional[int] = None
     requested_size: str = ""
     actual_size: str = ""
     warnings: list[str] = field(default_factory=list)
@@ -66,7 +65,7 @@ class HistoryRecord:
             image_model_used=row[3] or "",
             prompt=row[4] or "",
             prompt_used=row[5] or "",
-            seed=row[6],
+            # 兼容列 seed（index 6）保留但不再进入业务对象
             requested_size=row[7] or "",
             actual_size=row[8] or "",
             warnings=_loads(row[9], []),
@@ -82,7 +81,6 @@ class HistoryRecord:
             "image_model_used": self.image_model_used,
             "prompt": self.prompt,
             "prompt_used": self.prompt_used,
-            "seed": self.seed,
             "requested_size": self.requested_size,
             "actual_size": self.actual_size,
             "warnings": list(self.warnings),
@@ -115,7 +113,6 @@ class HistoryService:
             image_model_used=result.image_model_used,
             prompt=(request.prompt or ""),
             prompt_used=result.prompt_used,
-            seed=result.seed,
             requested_size=result.requested_size,
             actual_size=result.actual_size,
             warnings=list(result.warnings),
@@ -136,7 +133,7 @@ class HistoryService:
                     rec.image_model_used,
                     rec.prompt,
                     rec.prompt_used,
-                    rec.seed,
+                    None,
                     rec.requested_size,
                     rec.actual_size,
                     json.dumps(rec.warnings, ensure_ascii=False),

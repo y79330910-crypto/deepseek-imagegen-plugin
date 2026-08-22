@@ -37,7 +37,6 @@ class TestGenerationThumbnail(unittest.TestCase):
             GenerateResult(
                 path=str(self.out_file),
                 image_model_used="m",
-                seed=1,
                 requested_size="96x96",
                 actual_size="96x96",
                 prompt_used="p",

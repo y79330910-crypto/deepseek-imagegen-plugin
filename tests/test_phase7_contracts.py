@@ -27,7 +27,6 @@ def make_result(gid: str, path: str = "out.png") -> GenerateResult:
     return GenerateResult(
         path=path,
         image_model_used="m",
-        seed=7,
         requested_size="16x16",
         actual_size="16x16",
         prompt_used="p",
@@ -132,7 +131,6 @@ class TestHistoryDetailSafety(unittest.TestCase):
             prompt="safe prompt",
             size="1024x1024",
             model="m",
-            seed=42,
             quality="high",
             composition="portrait",
             translator="off",
@@ -162,7 +160,6 @@ class TestHistoryDetailSafety(unittest.TestCase):
         self.assertEqual(status, 200)
         item = data["item"]
         self.assertEqual(item["request"]["prompt"], "safe prompt")
-        self.assertEqual(item["request"]["seed"], 42)
         self.assertEqual(item["request"]["composition"], "portrait")
         self.assertEqual(item["request"]["library_enabled"], True)
         self.assertEqual(
@@ -171,7 +168,6 @@ class TestHistoryDetailSafety(unittest.TestCase):
                 "prompt",
                 "size",
                 "model",
-                "seed",
                 "quality",
                 "composition",
                 "translator",

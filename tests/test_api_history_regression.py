@@ -31,14 +31,13 @@ class TestRestartRegression(unittest.TestCase):
         self.out_file = self.workdir / "result.png"
         self.out_file.write_bytes(make_png_bytes())
 
-    def _seed(self) -> HistoryService:
+    def _populate(self) -> HistoryService:
         svc = HistoryService(self.db)
         svc.record(
             GenerateRequest(prompt="persisted prompt"),
             GenerateResult(
                 path=str(self.out_file),
                 image_model_used="gemini-3-pro-image",
-                seed=3,
                 requested_size="1024x1024",
                 actual_size="1024x1024",
                 prompt_used="rewritten",
@@ -48,7 +47,7 @@ class TestRestartRegression(unittest.TestCase):
         return svc
 
     def test_restart_keeps_history_and_output(self):
-        self._seed()
+        self._populate()
         # 模拟第一次运行：写历史、注册输出
         server1 = ApiTestServer(
             config_path=self.workdir / "config.json",

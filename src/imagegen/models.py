@@ -27,7 +27,6 @@ class GenerateRequest:
     prompt: str
     size: str = ""
     model: str = ""
-    seed: int | None = None
     quality: str = ""
     composition: str = "auto"
     translator: str = "auto"
@@ -59,13 +58,6 @@ class GenerateRequest:
                 raise ValidationError(f"{name} 必须是字符串。")
             return value
 
-        def as_optional_int(value: Any, name: str) -> int | None:
-            if value is None:
-                return None
-            if isinstance(value, bool) or not isinstance(value, int):
-                raise ValidationError(f"{name} 必须是整数或 null。")
-            return value
-
         def as_str_list(value: Any, name: str) -> list[str]:
             if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
                 raise ValidationError(f"{name} 必须是字符串数组。")
@@ -82,7 +74,6 @@ class GenerateRequest:
             prompt=as_str(data.get("prompt", ""), "prompt"),
             size=as_str(data.get("size", ""), "size"),
             model=as_str(data.get("model", ""), "model"),
-            seed=as_optional_int(data.get("seed"), "seed"),
             quality=as_str(data.get("quality", ""), "quality"),
             composition=as_str(data.get("composition", "auto"), "composition"),
             translator=as_str(data.get("translator", "auto"), "translator"),
@@ -98,7 +89,6 @@ class GenerateRequest:
             "prompt": self.prompt,
             "size": self.size,
             "model": self.model,
-            "seed": self.seed,
             "quality": self.quality,
             "composition": self.composition,
             "translator": self.translator,
@@ -120,9 +110,6 @@ class GenerateRequest:
             raise ValidationError(
                 f"translator 只允许 auto / off，当前值：{self.translator!r}。"
             )
-        if self.seed is not None:
-            if isinstance(self.seed, bool) or not isinstance(self.seed, int):
-                raise ValidationError("seed 必须是整数。")
         if len(self.images) > MAX_REF_IMAGES:
             raise ValidationError(
                 f"参考图最多支持 {MAX_REF_IMAGES} 张，当前收到 {len(self.images)} 张。"
@@ -137,7 +124,6 @@ class GenerateResult:
 
     path: str
     image_model_used: str
-    seed: int | None
     requested_size: str
     actual_size: str
     prompt_used: str
@@ -164,7 +150,6 @@ class GenerateResult:
             "image_model_used": self.image_model_used,
             "quality": self.quality,
             "path": self.path,
-            "seed": self.seed,
             "requested_size": self.requested_size,
             "actual_size": self.actual_size,
             "size_match": self.size_match,

@@ -28,7 +28,6 @@ class FakeEngine:
         return GenerateResult(
             path="out.png",
             image_model_used="gemini-3-pro-image",
-            seed=1,
             requested_size="1024x1024",
             actual_size="1024x1024",
             prompt_used="p",
