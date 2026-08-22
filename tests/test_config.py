@@ -80,6 +80,14 @@ class TestEnvPrecedence(unittest.TestCase):
         self.assertEqual(cfg["save_dir"], "/from/file")
         self.assertEqual(cfg["translator"]["model"], "file-model")
 
+    def test_defaults_when_no_file_or_env(self):
+        cfg = load_config()
+        self.assertEqual(cfg["default_size"], "1024x1024")
+        self.assertEqual(cfg["save_dir"], "")
+        self.assertEqual(cfg["size_check"]["enabled"], True)
+        self.assertEqual(cfg["size_check"]["tolerance"], 0.06)
+        self.assertEqual(cfg["translator"]["output_lang"], "zh")
+
     def test_env_overrides_file(self):
         path = self._config_file({"save_dir": "/from/file"})
         os.environ["IMAGEGEN_SAVE_DIR"] = "/from/env"

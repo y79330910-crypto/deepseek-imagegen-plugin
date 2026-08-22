@@ -12,7 +12,7 @@ INDEX_HTML = REPO_ROOT / "src" / "imagegen" / "web" / "static" / "index.html"
 
 
 class TestWebContract(unittest.TestCase):
-    def test_app_js_uses_v1_api_only(self):
+    def test_app_js_uses_v2_api_only(self):
         text = APP_JS.read_text(encoding="utf-8")
         for endpoint in (
             "/api/v2/generate",
@@ -23,6 +23,7 @@ class TestWebContract(unittest.TestCase):
             "/api/v2/assets",
         ):
             self.assertIn(endpoint, text, endpoint)
+        self.assertNotIn("/api/v1/", text)
 
     def test_no_legacy_generation_chain(self):
         text = APP_JS.read_text(encoding="utf-8")
