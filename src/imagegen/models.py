@@ -9,6 +9,7 @@ from typing import Any, Mapping
 from .errors import ValidationError
 from .image_utils import parse_size
 from .reference import MAX_REF_IMAGES
+from .prompt_case import normalize_prompt_mode
 
 
 # ImageGen 2.0 明确删除的旧请求字段：收到时必须报错，不能静默忽略。
@@ -33,6 +34,7 @@ class GenerateRequest:
     images: list[str] = field(default_factory=list)
     reference_roles: list[str] = field(default_factory=list)
     library_enabled: bool | None = None
+    prompt_mode: str = "optimized"
     out: str = ""
 
     @classmethod
@@ -70,6 +72,9 @@ class GenerateRequest:
                 raise ValidationError(f"{name} 必须是布尔值或 null。")
             return value
 
+        prompt_mode = as_str(data.get("prompt_mode", "optimized"), "prompt_mode")
+        normalize_prompt_mode(prompt_mode)
+
         return cls(
             prompt=as_str(data.get("prompt", ""), "prompt"),
             size=as_str(data.get("size", ""), "size"),
@@ -80,6 +85,7 @@ class GenerateRequest:
             images=as_str_list(data.get("images", []), "images"),
             reference_roles=as_str_list(data.get("reference_roles", []), "reference_roles"),
             library_enabled=as_optional_bool(data.get("library_enabled"), "library_enabled"),
+            prompt_mode=prompt_mode,
             out=as_str(data.get("out", ""), "out"),
         )
 
@@ -95,6 +101,7 @@ class GenerateRequest:
             "images": list(self.images),
             "reference_roles": list(self.reference_roles),
             "library_enabled": self.library_enabled,
+            "prompt_mode": self.prompt_mode,
             "out": self.out,
         }
 
@@ -102,6 +109,9 @@ class GenerateRequest:
         """请求基础合法性校验（不依赖具体上游实现）。"""
         if not str(self.prompt or "").strip():
             raise ValidationError("提示词不能为空。")
+        if not isinstance(self.prompt_mode, str):
+            raise ValidationError("prompt_mode 必须是字符串。")
+        normalize_prompt_mode(self.prompt_mode)
         size = str(self.size or "").strip().lower()
         if size and size != "auto":
             parse_size(size)

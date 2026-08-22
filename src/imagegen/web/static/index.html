@@ -78,6 +78,13 @@
           <option value="auto">跟随配置</option><option value="off">关闭（直传原文）</option>
         </select>
       </div>
+      <div class="field"><label>提示词优化强度</label>
+        <select id="promptMode">
+          <option value="conservative">保守：仅完善必要细节</option>
+          <option value="optimized" selected>优化：完善构图、光影和视觉细节</option>
+          <option value="creative">创新：进行更大胆的视觉设计</option>
+        </select>
+      </div>
       <div class="field"><label>提示词词库</label>
         <select id="library">
           <option value="auto">跟随配置</option><option value="on">开启</option><option value="off">关闭</option>
@@ -149,11 +156,12 @@
       <div class="grid">
         <div class="field"><label>启用词库</label><select data-path="prompt_library.enabled"><option value="true">开启</option><option value="false">关闭</option></select></div>
         <div class="field"><label>喂给翻译官</label><select data-path="prompt_library.use_in_translator"><option value="true">开启</option><option value="false">关闭</option></select></div>
-        <div class="field"><label>初选数量</label><input data-path="prompt_library.top_k" type="number" min="1" max="200"></div>
+        <div class="field"><label>启用 Prompt Parser</label><select data-path="prompt_library.parser.enabled"><option value="true">开启</option><option value="false">关闭</option></select></div>
+        <div class="field"><label>Parser 模型（留空=翻译官模型）</label><input data-path="prompt_library.parser.model" placeholder="可选模型名"></div>
+        <div class="field"><label>Intent 初选数量</label><input data-path="prompt_library.intent_top_k" type="number" min="1" max="200"></div>
+        <div class="field"><label>Visual 初选数量</label><input data-path="prompt_library.visual_top_k" type="number" min="1" max="200"></div>
         <div class="field"><label>最终参考条数</label><input data-path="prompt_library.final_k" type="number" min="1" max="20"></div>
         <div class="field"><label>分类过滤（逗号分隔，留空=全部）</label><input data-path="prompt_library.categories" placeholder="插画艺术,表情包贴纸"></div>
-        <div class="field"><label>优先分类（置顶）</label><input data-path="prompt_library.priority_category" placeholder="留空=无"></div>
-        <div class="field"><label>优先条数</label><input data-path="prompt_library.priority_count" type="number" min="0" max="10"></div>
         <div class="field"><label>Embedding 地址</label><input data-path="prompt_library.embedding.base_url" placeholder="https://api.siliconflow.com/v1/embeddings"></div>
         <div class="field"><label>Embedding 密钥</label><input data-path="prompt_library.embedding.api_key" type="password" placeholder="sk-..."></div>
         <div class="field"><label>Rerank 开启</label><select data-path="prompt_library.rerank.enabled"><option value="true">开启</option><option value="false">关闭</option></select></div>

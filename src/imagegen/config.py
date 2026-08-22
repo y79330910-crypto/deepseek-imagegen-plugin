@@ -176,11 +176,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "prompt_library": {
         "enabled": False,
         "use_in_translator": True,
-        "top_k": 30,
-        "final_k": 6,
+        "parser": {
+            "enabled": True,
+            "model": "",
+        },
+        "intent_top_k": 30,
+        "visual_top_k": 20,
+        "final_k": 4,
         "categories": [],
-        "priority_category": "自家精品",
-        "priority_count": 3,
         "embedding": {
             "base_url": "https://api.siliconflow.com/v1/embeddings",
             "api_key": "",

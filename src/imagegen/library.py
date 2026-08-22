@@ -16,6 +16,18 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .config import default_config_path, load_config as load_user_config
+from .prompt_case import (
+    PROMPT_CASE_EMBEDDING_VERSION,
+    PROMPT_CASE_PARSER_VERSION,
+    PromptCase,
+    QueryAnalysis,
+    build_intent_text,
+    build_visual_text,
+    mode_profile,
+    parse_prompt_case,
+    parse_query,
+    select_diverse_cases,
+)
 
 
 class LibError(Exception):
@@ -25,11 +37,11 @@ class LibError(Exception):
 DEFAULTS: dict[str, Any] = {
     "enabled": False,
     "use_in_translator": True,
-    "top_k": 30,
-    "final_k": 6,
+    "parser": {"enabled": True, "model": ""},
+    "intent_top_k": 30,
+    "visual_top_k": 20,
+    "final_k": 4,
     "categories": [],
-    "priority_category": "自家精品",
-    "priority_count": 3,
     "embedding": {
         "base_url": "https://api.siliconflow.com/v1/embeddings",
         "api_key": "",
@@ -66,7 +78,23 @@ def load_config() -> dict[str, Any]:
             merged[k] = item
         else:
             merged[k] = pl.get(k, default)
+    # Parser and Query Parser reuse the project's single Translator upstream;
+    # keeping this small section here avoids introducing a second endpoint.
+    merged["translator"] = cfg.get("translator") if isinstance(cfg.get("translator"), dict) else {}
     return merged
+
+
+def _embedding_model(pl: dict[str, Any]) -> str:
+    """Return the effective embedding model used for new Prompt Case data."""
+    embedding = pl.get("embedding") if isinstance(pl.get("embedding"), dict) else {}
+    return str(embedding.get("model") or DEFAULTS["embedding"]["model"]).strip()
+
+
+def _pack_vec(vector: Optional[list[float]]) -> Optional[bytes]:
+    """Encode one embedding without ever reusing a legacy blob."""
+    if not vector:
+        return None
+    return struct.pack(f"<{len(vector)}f", *vector)
 
 
 def mysql_conn(pl: dict[str, Any]):
@@ -96,7 +124,7 @@ def mysql_conn(pl: dict[str, Any]):
 
 
 def init_db(pl: dict[str, Any]) -> None:
-    """建表（含 archived 列与分类索引）；老库自动补列。"""
+    """建表并以补列方式升级老库，不删除任何旧列或数据。"""
     conn = mysql_conn(pl)
     try:
         with conn.cursor() as cur:
@@ -112,6 +140,20 @@ def init_db(pl: dict[str, Any]) -> None:
                     source VARCHAR(255) DEFAULT '',
                     source_url VARCHAR(512) DEFAULT '',
                     embedding LONGBLOB,
+                    requirement_embedding LONGBLOB NULL,
+                    requirement TEXT NULL,
+                    inferred_requirement TEXT NULL,
+                    requirement_source VARCHAR(16) NOT NULL DEFAULT 'none',
+                    task_type VARCHAR(32) NOT NULL DEFAULT 'text_to_image',
+                    facets_json LONGTEXT NULL,
+                    transferable_lessons_json LONGTEXT NULL,
+                    intent_text LONGTEXT NULL,
+                    visual_text LONGTEXT NULL,
+                    intent_embedding LONGBLOB NULL,
+                    visual_embedding LONGBLOB NULL,
+                    parser_version INT NOT NULL DEFAULT 0,
+                    embedding_model VARCHAR(255) NOT NULL DEFAULT '',
+                    embedding_version INT NOT NULL DEFAULT 0,
                     notes VARCHAR(512) DEFAULT '',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     archived TINYINT NOT NULL DEFAULT 0,
@@ -123,6 +165,19 @@ def init_db(pl: dict[str, Any]) -> None:
             for col, ddl in (
                 ("requirement_embedding", "ALTER TABLE prompts ADD COLUMN requirement_embedding LONGBLOB NULL"),
                 ("archived", "ALTER TABLE prompts ADD COLUMN archived TINYINT NOT NULL DEFAULT 0"),
+                ("requirement", "ALTER TABLE prompts ADD COLUMN requirement TEXT NULL"),
+                ("inferred_requirement", "ALTER TABLE prompts ADD COLUMN inferred_requirement TEXT NULL"),
+                ("requirement_source", "ALTER TABLE prompts ADD COLUMN requirement_source VARCHAR(16) NOT NULL DEFAULT 'none'"),
+                ("task_type", "ALTER TABLE prompts ADD COLUMN task_type VARCHAR(32) NOT NULL DEFAULT 'text_to_image'"),
+                ("facets_json", "ALTER TABLE prompts ADD COLUMN facets_json LONGTEXT NULL"),
+                ("transferable_lessons_json", "ALTER TABLE prompts ADD COLUMN transferable_lessons_json LONGTEXT NULL"),
+                ("intent_text", "ALTER TABLE prompts ADD COLUMN intent_text LONGTEXT NULL"),
+                ("visual_text", "ALTER TABLE prompts ADD COLUMN visual_text LONGTEXT NULL"),
+                ("intent_embedding", "ALTER TABLE prompts ADD COLUMN intent_embedding LONGBLOB NULL"),
+                ("visual_embedding", "ALTER TABLE prompts ADD COLUMN visual_embedding LONGBLOB NULL"),
+                ("parser_version", "ALTER TABLE prompts ADD COLUMN parser_version INT NOT NULL DEFAULT 0"),
+                ("embedding_model", "ALTER TABLE prompts ADD COLUMN embedding_model VARCHAR(255) NOT NULL DEFAULT ''"),
+                ("embedding_version", "ALTER TABLE prompts ADD COLUMN embedding_version INT NOT NULL DEFAULT 0"),
             ):
                 cur.execute(
                     "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() "
@@ -226,14 +281,16 @@ def embed_texts(pl: dict[str, Any], texts: list[str], input_type: str = "") -> l
     return vectors
 
 
-def rerank_docs(pl: dict[str, Any], query: str, documents: list[str], top_n: int) -> list[int]:
-    """SiliconFlow Rerank；未配置/异常时按原顺序返回。"""
+def rerank_scored_docs(
+    pl: dict[str, Any], query: str, documents: list[str], top_n: int
+) -> list[tuple[int, float]]:
+    """Rerank documents while preserving relevance scores for MMR selection."""
     r = pl.get("rerank") or {}
     if not r.get("enabled"):
-        return list(range(len(documents)))
+        return [(index, 0.0) for index in range(len(documents))]
     api_key = str(r.get("api_key") or "").strip()
     if not api_key or not documents:
-        return list(range(len(documents)))
+        return [(index, 0.0) for index in range(len(documents))]
     base_url = str(r.get("base_url") or DEFAULTS["rerank"]["base_url"]).strip().rstrip("/")
     if not base_url.endswith("/rerank"):
         base_url += "/rerank"
@@ -255,7 +312,12 @@ def rerank_docs(pl: dict[str, Any], query: str, documents: list[str], top_n: int
         key=lambda pair: pair[1],
         reverse=True,
     )
-    return [idx for idx, _ in ordered if 0 <= idx < len(documents)]
+    return [(idx, score) for idx, score in ordered if 0 <= idx < len(documents)]
+
+
+def rerank_docs(pl: dict[str, Any], query: str, documents: list[str], top_n: int) -> list[int]:
+    """Compatibility wrapper returning only indices."""
+    return [index for index, _score in rerank_scored_docs(pl, query, documents, top_n)]
 
 
 def _cosine_top_k(query_vec: list[float], vectors: list[list[float]], k: int) -> list[int]:
@@ -275,31 +337,134 @@ def _cosine_top_k(query_vec: list[float], vectors: list[list[float]], k: int) ->
     return [int(i) for i in order]
 
 
+def _pick_intent_vec(
+    intent_blob: Any,
+    requirement_blob: Any,
+    embedding_blob: Any,
+) -> list[float]:
+    """Pick the best available intent vector during a rolling migration.
+
+    The two legacy blobs are intentionally only fallbacks.  In particular,
+    ``embedding`` is never treated as a visual vector.
+    """
+    for blob in (intent_blob, requirement_blob, embedding_blob):
+        vector = _decode_vec(blob)
+        if vector:
+            return vector
+    return []
+
+
 def _pick_vec(embedding_blob: Any, requirement_blob: Any) -> list[float]:
-    """优先使用“原始需求向量”（口语对口语最准），没有则用提示词向量。"""
-    blob = requirement_blob or embedding_blob
+    """Backward-compatible wrapper for callers that only know legacy columns."""
+    return _pick_intent_vec(None, requirement_blob, embedding_blob)
+
+
+def _decode_vec(blob: Any) -> list[float]:
     if not blob:
         return []
-    raw = bytes(blob)
-    n = len(raw) // 4
-    return list(struct.unpack(f"<{n}f", raw))
+    try:
+        raw = bytes(blob)
+        usable = len(raw) - (len(raw) % 4)
+        if usable <= 0:
+            return []
+        return list(struct.unpack(f"<{usable // 4}f", raw[:usable]))
+    except (TypeError, ValueError, struct.error):
+        return []
 
 
-def search(
+def _decode_json(value: Any, default: Any) -> Any:
+    if not value:
+        return default
+    try:
+        return json.loads(value) if isinstance(value, (str, bytes, bytearray)) else value
+    except (TypeError, json.JSONDecodeError):
+        return default
+
+
+def _cosine_scores(query_vec: list[float], vectors: list[list[float]]) -> list[float]:
+    if not query_vec:
+        return [0.0 for _ in vectors]
+    try:
+        import numpy as np
+
+        q = np.asarray(query_vec, dtype=np.float32)
+        if q.size == 0:
+            return [0.0 for _ in vectors]
+        q = q / max(float(np.linalg.norm(q)), 1e-12)
+        result = []
+        for vec in vectors:
+            if not vec or len(vec) != len(query_vec):
+                result.append(0.0)
+                continue
+            v = np.asarray(vec, dtype=np.float32)
+            result.append(float(np.dot(q, v / max(float(np.linalg.norm(v)), 1e-12))))
+        return result
+    except ImportError:
+        def cosine(vec: list[float]) -> float:
+            if not vec or len(vec) != len(query_vec):
+                return 0.0
+            dot = sum(float(x) * float(y) for x, y in zip(query_vec, vec))
+            qn = sum(float(x) * float(x) for x in query_vec) ** 0.5
+            vn = sum(float(x) * float(x) for x in vec) ** 0.5
+            return dot / (qn * vn) if qn and vn else 0.0
+        return [cosine(vec) for vec in vectors]
+
+
+def _case_from_row(row: tuple[Any, ...]) -> PromptCase:
+    return PromptCase.from_dict(
+        {
+            "id": int(row[0]),
+            "content": row[1],
+            "facets": _decode_json(row[12], {}),
+            "requirement": row[8],
+            "inferred_requirement": row[9],
+            "requirement_source": row[10],
+            "task_type": row[11],
+            "intent_text": row[14],
+            "visual_text": row[15],
+            "transferable_lessons": _decode_json(row[13], []),
+            "parser_version": row[18],
+        }
+    )
+
+
+def search_prompt_cases(
     pl: dict[str, Any],
     query: str,
+    *,
+    query_analysis: Optional[QueryAnalysis] = None,
+    prompt_mode: str = "optimized",
     top_k: Optional[int] = None,
+    intent_top_k: Optional[int] = None,
+    visual_top_k: Optional[int] = None,
     final_k: Optional[int] = None,
     categories: Optional[list[str]] = None,
 ) -> list[dict[str, Any]]:
-    """向量检索：只检索 archived=0 的活跃词条，优先分类照旧混入。"""
-    top_k = int(top_k or pl.get("top_k") or 30)
-    final_k = int(final_k or pl.get("final_k") or 6)
+    """Dual-path Intent/Visual retrieval followed by structured rerank + MMR."""
+    profile = mode_profile(prompt_mode)
+    configured_intent = pl.get("intent_top_k")
+    configured_visual = pl.get("visual_top_k")
+    configured_final = pl.get("final_k")
+    intent_top_k = int(
+        intent_top_k
+        or top_k
+        or (configured_intent if configured_intent not in (None, "", 30) else profile["intent_top_k"])
+    )
+    visual_top_k = int(
+        visual_top_k
+        or (configured_visual if configured_visual not in (None, "", 20) else profile["visual_top_k"])
+    )
+    final_k = int(
+        final_k
+        or (configured_final if configured_final not in (None, "", 4) else profile["final_k"])
+    )
     if not str(query or "").strip():
         raise LibError("检索关键词不能为空。")
+    if query_analysis is None:
+        query_analysis = parse_query(query, cfg={"prompt_library": pl, "translator": pl.get("translator", {})})
     cats = [str(c).strip() for c in (categories or pl.get("categories") or []) if str(c).strip()]
-    priority = str(pl.get("priority_category") or "").strip()
-    priority_count = max(0, int(pl.get("priority_count") or 3))
+    intent_text = build_intent_text(query_analysis) or str(query).strip()
+    visual_text = build_visual_text(query_analysis)
     conn = mysql_conn(pl)
     try:
         with conn.cursor() as cur:
@@ -314,59 +479,130 @@ def search(
                 raise LibError(
                     "词库（或所选分类）里没有活跃提示词：请先用 prompt_lib.py import / add 导入。"
                 )
-            query_vec = embed_texts(pl, [query], input_type="query")[0]
             cur.execute(
-                "SELECT id, content, category, tags, source, embedding, requirement_embedding"
+                "SELECT id, content, category, tags, source, source_url, embedding, requirement_embedding,"
+                " requirement, inferred_requirement, requirement_source, task_type, facets_json,"
+                " transferable_lessons_json, intent_text, visual_text, intent_embedding, visual_embedding, parser_version"
                 " FROM prompts" + where,
                 params,
             )
             rows = cur.fetchall()
-            ids = [int(r[0]) for r in rows]
-            vectors = [_pick_vec(r[5], r[6]) for r in rows]
-            order = _cosine_top_k(query_vec, vectors, min(top_k, len(ids)))
-            candidates = [(ids[i], rows[i]) for i in order]
-            seen = set(ids[i] for i in order)
-            prio_cands: list[tuple[int, tuple[Any, ...]]] = []
-            if priority and priority_count > 0:
-                cur.execute(
-                    "SELECT id, content, category, tags, source, embedding, requirement_embedding"
-                    " FROM prompts WHERE archived=0 AND category=%s ORDER BY id DESC LIMIT %s",
-                    (priority, priority_count * 3),
+            query_vectors = embed_texts(
+                pl,
+                [intent_text] + ([visual_text] if visual_text else []),
+                input_type="query",
+            )
+            intent_query_vec = query_vectors[0] if query_vectors else []
+            visual_query_vec = query_vectors[1] if visual_text and len(query_vectors) > 1 else []
+            cases: list[PromptCase] = []
+            intent_vectors: list[list[float]] = []
+            visual_vectors: list[list[float]] = []
+            for row in rows:
+                case = _case_from_row(row)
+                cases.append(case)
+                intent_vectors.append(
+                    _pick_intent_vec(row[16], row[7], row[6])
                 )
-                for prow in cur.fetchall():
-                    pid = int(prow[0])
-                    if pid in seen:
-                        continue
-                    seen.add(pid)
-                    prio_cands.append((pid, prow))
-            pool = candidates + prio_cands
-            prio_ids = {pid for pid, _ in prio_cands}
-            docs = [str(r[1]) for _, r in pool]
-            if pl.get("rerank", {}).get("enabled") and len(docs) > final_k:
-                try:
-                    pool_order = [pool[i] for i in rerank_docs(pl, query, docs, len(docs))]
-                except LibError:
-                    pool_order = pool
-            else:
-                pool_order = pool
-            prio_pool = [(pid, row) for pid, row in pool_order if pid in prio_ids][:priority_count]
-            others = [(pid, row) for pid, row in pool_order if pid not in prio_ids]
-            final_order = (prio_pool + others)[:final_k]
-            results = []
-            for rid, row in final_order:
-                _rid, content, category, tags, source = row[:5]
-                results.append(
+                visual_vectors.append(_decode_vec(row[17]))
+            # Old rows have no new vectors.  Build temporary vectors from the
+            # structured text, while still preserving the original content.
+            missing_intent = [i for i, vec in enumerate(intent_vectors) if not vec]
+            if missing_intent:
+                temp = embed_texts(
+                    pl,
+                    [build_intent_text(case) or case.content for i, case in enumerate(cases) if i in missing_intent],
+                    input_type="document",
+                )
+                for i, vec in zip(missing_intent, temp):
+                    intent_vectors[i] = vec
+            intent_scores = _cosine_scores(intent_query_vec, intent_vectors)
+            visual_scores = _cosine_scores(visual_query_vec, visual_vectors) if visual_text else [0.0] * len(rows)
+            intent_order = sorted(range(len(rows)), key=lambda i: intent_scores[i], reverse=True)[:intent_top_k]
+            visual_order = (
+                sorted(
+                    (i for i in range(len(rows)) if visual_vectors[i]),
+                    key=lambda i: visual_scores[i],
+                    reverse=True,
+                )[:visual_top_k]
+                if visual_text else []
+            )
+            candidate_indices = list(dict.fromkeys(intent_order + visual_order))
+            if not candidate_indices:
+                return []
+            documents = []
+            for i in candidate_indices:
+                case = cases[i]
+                documents.append(
+                    "\n".join(
+                        part for part in (
+                            case.requirement or case.inferred_requirement,
+                            case.intent_text,
+                            "可迁移技巧：" + "；".join(case.transferable_lessons[:5]),
+                        ) if part
+                    )
+                )
+            rerank_query = "\n".join(
+                part for part in (str(query).strip(), f"模式：{prompt_mode}", intent_text, visual_text) if part
+            )
+            ranked: list[tuple[int, float]] = []
+            try:
+                reranked = rerank_scored_docs(pl, rerank_query, documents, len(documents))
+                if reranked and any(score != 0.0 for _idx, score in reranked):
+                    ranked = [(candidate_indices[idx], score) for idx, score in reranked]
+            except LibError:
+                ranked = []
+            if not ranked:
+                ranked = sorted(
+                    (
+                        (i, 0.65 * intent_scores[i] + (0.35 * visual_scores[i] if visual_text else 0.0))
+                        for i in candidate_indices
+                    ),
+                    key=lambda pair: pair[1],
+                    reverse=True,
+                )
+            candidate_dicts: list[dict[str, Any]] = []
+            score_by_index = dict(ranked)
+            for i in candidate_indices:
+                case = cases[i]
+                candidate_dicts.append(
                     {
-                        "id": int(rid),
-                        "content": str(content),
-                        "category": str(category or ""),
-                        "tags": str(tags or ""),
-                        "source": str(source or ""),
+                        "id": int(row_id := rows[i][0]),
+                        "requirement": case.requirement,
+                        "inferred_requirement": case.inferred_requirement,
+                        "requirement_source": case.requirement_source,
+                        "content": case.content,
+                        "category": str(rows[i][2] or ""),
+                        "tags": str(rows[i][3] or ""),
+                        "source": str(rows[i][4] or ""),
+                        "facets": case.facets.to_dict(),
+                        "transferable_lessons": list(case.transferable_lessons),
+                        "intent_score": float(intent_scores[i]),
+                        "visual_score": float(visual_scores[i]),
+                        "rerank_score": float(score_by_index.get(i, 0.0)),
+                        "_visual_vector": visual_vectors[i],
                     }
                 )
-            return results
+            return select_diverse_cases(candidate_dicts, final_k=final_k, prompt_mode=prompt_mode)
     finally:
         conn.close()
+
+
+def search(
+    pl: dict[str, Any],
+    query: str,
+    top_k: Optional[int] = None,
+    final_k: Optional[int] = None,
+    categories: Optional[list[str]] = None,
+) -> list[dict[str, Any]]:
+    """Compatibility wrapper for callers that have not adopted case search."""
+    return search_prompt_cases(
+        pl,
+        query,
+        top_k=top_k,
+        intent_top_k=top_k,
+        final_k=final_k,
+        categories=categories,
+    )
 
 
 def _sha1(text: str) -> str:
@@ -377,54 +613,95 @@ def add_prompt(
     pl: dict[str, Any],
     content: str,
     *,
-    category: str = "自家精品",
+    category: str = "未分类",
     tags: str = "",
     requirement: str = "",
     source: str = "",
     source_url: str = "",
     notes: str = "",
+    task_type: str = "text_to_image",
+    lang: str = "zh",
 ) -> dict[str, Any]:
-    """单条入库：正文 + 可选原始需求（双向量），自动去重。"""
+    """Parse, structure and store one Prompt Case without changing content."""
     content = str(content or "").strip()
     if len(content) < 8:
         raise LibError("提示词内容太短（至少 8 个字）。")
+    check_conn = mysql_conn(pl)
+    try:
+        with check_conn.cursor() as cur:
+            cur.execute("SELECT id FROM prompts WHERE content_hash=%s", (_sha1(content),))
+            if cur.fetchone():
+                return {"added": False, "reason": "已存在相同内容的提示词"}
+    finally:
+        check_conn.close()
     req = str(requirement or "").strip()
+    parser_cfg = {"prompt_library": pl, "translator": pl.get("translator", {})}
+    case = parse_prompt_case(req, content, cfg=parser_cfg)
+    case.task_type = str(task_type or case.task_type or "text_to_image")[:32]
+    intent_text = case.intent_text or req or case.inferred_requirement or content
+    visual_text = case.visual_text
+    new_texts = [intent_text] + ([visual_text] if visual_text else [])
+    vectors = embed_texts(pl, new_texts, input_type="document")
+    intent_vec = vectors[0] if vectors else []
+    visual_offset = 1 if visual_text else None
+    visual_vec = vectors[visual_offset] if visual_offset is not None and len(vectors) > visual_offset else None
+    if not intent_vec or (visual_text and not visual_vec):
+        raise LibError("Embedding 返回的 Prompt Case 向量数量不足。")
+    intent_blob = _pack_vec(intent_vec)
+    visual_blob = _pack_vec(visual_vec)
+    # LEGACY COMPATIBILITY ONLY: new writes do not require the old vectors.
+    # Existing rows keep their legacy blobs for fallback and recovery.
+    legacy_content_blob = None
+    legacy_requirement_blob = None
     conn = mysql_conn(pl)
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT id FROM prompts WHERE content_hash=%s", (_sha1(content),))
             if cur.fetchone():
                 return {"added": False, "reason": "已存在相同内容的提示词"}
-            texts = [content]
-            if req:
-                texts.append(req)
-            vectors = embed_texts(pl, texts, input_type="document")
-            content_vec = vectors[0]
-            req_vec = vectors[1] if len(vectors) > 1 else None
-            blob = struct.pack(f"<{len(content_vec)}f", *content_vec)
-            req_blob = struct.pack(f"<{len(req_vec)}f", *req_vec) if req_vec is not None else None
             cur.execute(
                 """
                 INSERT INTO prompts
                     (content, content_hash, lang, category, tags, source, source_url, embedding,
-                     requirement_embedding, notes)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     requirement_embedding, requirement, inferred_requirement, requirement_source,
+                     task_type, facets_json, transferable_lessons_json, intent_text, visual_text,
+                     intent_embedding, visual_embedding, parser_version, embedding_model,
+                     embedding_version, notes)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     content,
                     _sha1(content),
-                    "zh",
+                    str(lang or "zh").strip()[:16],
                     str(category or "").strip()[:64] or "未分类",
                     str(tags or "").strip()[:512],
                     str(source or "").strip()[:255],
                     str(source_url or "").strip()[:512],
-                    blob,
-                    req_blob,
+                    legacy_content_blob,
+                    legacy_requirement_blob,
+                    case.requirement,
+                    case.inferred_requirement,
+                    case.requirement_source,
+                    case.task_type,
+                    json.dumps(case.facets.to_dict(), ensure_ascii=False),
+                    json.dumps(case.transferable_lessons, ensure_ascii=False),
+                    intent_text,
+                    visual_text,
+                    intent_blob,
+                    visual_blob,
+                    case.parser_version,
+                    _embedding_model(pl),
+                    PROMPT_CASE_EMBEDDING_VERSION,
                     str(notes or "").strip()[:512],
                 ),
             )
             pid = int(cur.lastrowid)
-        return {"added": True, "id": pid, "vectors": 2 if req_vec is not None else 1}
+        return {
+            "added": True,
+            "id": pid,
+            "vectors": 2 if visual_vec is not None else 1,
+            "parser_version": case.parser_version,
+        }
     finally:
         conn.close()
 
@@ -435,7 +712,10 @@ def backup(pl: dict[str, Any], out_path: str = "") -> dict[str, Any]:
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT content, lang, category, tags, source, source_url, notes"
+                "SELECT content, lang, category, tags, source, source_url, notes, requirement,"
+                " inferred_requirement, requirement_source, task_type, facets_json,"
+                " transferable_lessons_json, intent_text, visual_text, parser_version,"
+                " embedding_model, embedding_version"
                 " FROM prompts ORDER BY id"
             )
             rows = cur.fetchall()
@@ -458,6 +738,17 @@ def backup(pl: dict[str, Any], out_path: str = "") -> dict[str, Any]:
                         "source": r[4],
                         "source_url": r[5],
                         "notes": r[6],
+                        "requirement": r[7],
+                        "inferred_requirement": r[8],
+                        "requirement_source": r[9],
+                        "task_type": r[10],
+                        "facets": _decode_json(r[11], {}),
+                        "transferable_lessons": _decode_json(r[12], []),
+                        "intent_text": r[13],
+                        "visual_text": r[14],
+                        "parser_version": r[15],
+                        "embedding_model": r[16],
+                        "embedding_version": r[17],
                     },
                     ensure_ascii=False,
                 )
@@ -470,71 +761,198 @@ def import_prompts(
     pl: dict[str, Any],
     items: list[dict[str, Any]],
     *,
+    default_lang: str = "zh",
     default_category: str = "",
     default_tags: str = "",
     default_source: str = "",
     default_url: str = "",
 ) -> dict[str, int]:
-    """导入提示词：去重后批量向量化并写入 MySQL。"""
+    """Import old or structured records through the Prompt Case pipeline."""
     if not items:
-        return {"total": 0, "inserted": 0, "skipped": 0}
+        return {"total": 0, "inserted": 0, "skipped": 0, "failed": 0}
     cleaned: list[dict[str, Any]] = []
+    skipped = 0
     for it in items:
+        if not isinstance(it, dict):
+            skipped += 1
+            continue
         content = str(it.get("content") or it.get("prompt") or it.get("text") or "").strip()
         if len(content) < 8:
+            skipped += 1
             continue
         cleaned.append(
             {
                 "content": content,
-                "lang": str(it.get("lang") or "").strip()[:16],
-                "category": str(it.get("category") or default_category).strip()[:64],
+                "lang": str(it.get("lang") or default_lang or "zh").strip()[:16],
+                "category": str(it.get("category") or default_category or "未分类").strip()[:64],
                 "tags": str(it.get("tags") or default_tags).strip()[:512],
                 "source": str(it.get("source") or default_source).strip()[:255],
                 "source_url": str(it.get("source_url") or default_url).strip()[:512],
+                "requirement": str(it.get("requirement") or "").strip(),
+                "task_type": str(it.get("task_type") or "text_to_image").strip()[:32],
+                "notes": str(it.get("notes") or "").strip()[:512],
             }
         )
     if not cleaned:
-        return {"total": len(items), "inserted": 0, "skipped": len(items)}
+        return {"total": len(items), "inserted": 0, "skipped": len(items), "failed": 0}
     conn = mysql_conn(pl)
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT content_hash FROM prompts")
             existing = {str(row[0]) for row in cur.fetchall()}
-        new_items = []
-        seen_local: set[str] = set()
-        for it in cleaned:
-            h = _sha1(it["content"])
-            if h in existing or h in seen_local:
-                continue
-            seen_local.add(h)
-            new_items.append(it)
-        skipped = len(cleaned) - len(new_items)
-        if not new_items:
-            return {"total": len(items), "inserted": 0, "skipped": skipped}
-        vectors = embed_texts(pl, [it["content"] for it in new_items], input_type="document")
-        with conn.cursor() as cur:
-            for it, vec in zip(new_items, vectors):
-                blob = struct.pack(f"<{len(vec)}f", *vec)
-                cur.execute(
-                    """
-                    INSERT INTO prompts
-                        (content, content_hash, lang, category, tags, source, source_url, embedding)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                    """,
-                    (
-                        it["content"],
-                        _sha1(it["content"]),
-                        it["lang"],
-                        it["category"],
-                        it["tags"],
-                        it["source"],
-                        it["source_url"],
-                        blob,
-                    ),
-                )
-        return {"total": len(items), "inserted": len(new_items), "skipped": skipped}
     finally:
         conn.close()
+    inserted = 0
+    failed = 0
+    seen_local: set[str] = set()
+    for it in cleaned:
+        digest = _sha1(it["content"])
+        if digest in existing or digest in seen_local:
+            skipped += 1
+            continue
+        seen_local.add(digest)
+        try:
+            result = add_prompt(
+                pl,
+                it["content"],
+                category=it["category"],
+                tags=it["tags"],
+                requirement=it["requirement"],
+                source=it["source"],
+                source_url=it["source_url"],
+                notes=it["notes"],
+                task_type=it["task_type"],
+                lang=it["lang"],
+            )
+            if result.get("added"):
+                inserted += 1
+            else:
+                skipped += 1
+        except Exception:
+            failed += 1
+    return {"total": len(items), "inserted": inserted, "skipped": skipped, "failed": failed}
+
+
+def rebuild_cases(
+    pl: dict[str, Any], *, force: bool = False, limit: Optional[int] = None
+) -> dict[str, int]:
+    """Rebuild Prompt Case data without touching legacy source columns.
+
+    A row is only updated after parsing and all required new embeddings have
+    completed successfully.  This is deliberately row-at-a-time so one bad
+    parser response or one unavailable embedding request cannot stop a large
+    migration or leave a half-written case.
+    """
+    current_model = _embedding_model(pl)
+    if limit is not None:
+        try:
+            limit_value = int(limit)
+        except (TypeError, ValueError) as exc:
+            raise LibError("--limit 必须是非负整数。") from exc
+        if limit_value < 0:
+            raise LibError("--limit 必须是非负整数。")
+    else:
+        limit_value = None
+    conn = mysql_conn(pl)
+    try:
+        with conn.cursor() as cur:
+            where = ""
+            params: list[Any] = []
+            if not force:
+                where = (
+                    " WHERE COALESCE(parser_version, 0) < %s"
+                    " OR intent_embedding IS NULL"
+                    " OR COALESCE(embedding_version, 0) < %s"
+                    " OR COALESCE(embedding_model, '') <> %s"
+                    " OR (NULLIF(TRIM(visual_text), '') IS NOT NULL"
+                    "     AND visual_embedding IS NULL)"
+                )
+                params = [
+                    PROMPT_CASE_PARSER_VERSION,
+                    PROMPT_CASE_EMBEDDING_VERSION,
+                    current_model,
+                ]
+            sql = (
+                "SELECT id, content, requirement, task_type FROM prompts"
+                + where + " ORDER BY id"
+            )
+            if limit_value is not None:
+                sql += " LIMIT %s"
+                params.append(limit_value)
+            cur.execute(sql, params)
+            rows = list(cur.fetchall())
+    finally:
+        conn.close()
+    result = {"total": len(rows), "success": 0, "failed": 0, "skipped": 0}
+    for row in rows:
+        try:
+            # Keep the database's original requirement untouched.  The
+            # parser receives it as context, while the UPDATE below only
+            # writes the derived inferred value and case fields.
+            original_requirement = str(row[2] or "")
+            case = parse_prompt_case(
+                original_requirement,
+                str(row[1] or ""),
+                cfg={"prompt_library": pl, "translator": pl.get("translator", {})},
+                strict=True,
+            )
+            if int(case.parser_version or 0) != PROMPT_CASE_PARSER_VERSION:
+                raise LibError("Prompt Case Parser 未生成当前版本的结构化结果。")
+            intent_text = case.intent_text or case.requirement or case.inferred_requirement or case.content
+            if not intent_text:
+                raise LibError("无法构造非空 intent_text。")
+            visual_text = case.visual_text or ""
+            texts = [intent_text] + ([visual_text] if visual_text else [])
+            vectors = embed_texts(
+                pl,
+                texts,
+                input_type="document",
+            )
+            if not vectors or not vectors[0]:
+                raise LibError("Embedding 未返回 intent 向量。")
+            if visual_text and (len(vectors) < 2 or not vectors[1]):
+                raise LibError("Embedding 未返回 visual 向量。")
+            intent_blob = _pack_vec(vectors[0])
+            visual_blob = _pack_vec(vectors[1] if visual_text else None)
+            inferred_requirement = "" if original_requirement.strip() else case.inferred_requirement
+            requirement_source = (
+                "user"
+                if original_requirement.strip()
+                else ("inferred" if inferred_requirement else "none")
+            )
+            update_conn = mysql_conn(pl)
+            try:
+                with update_conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        UPDATE prompts SET inferred_requirement=%s,
+                        requirement_source=%s, task_type=%s, facets_json=%s,
+                        transferable_lessons_json=%s, intent_text=%s, visual_text=%s,
+                        intent_embedding=%s, visual_embedding=%s, parser_version=%s,
+                        embedding_model=%s, embedding_version=%s WHERE id=%s
+                        """,
+                        (
+                            inferred_requirement,
+                            requirement_source,
+                            str(row[3] or case.task_type or "text_to_image")[:32],
+                            json.dumps(case.facets.to_dict(), ensure_ascii=False),
+                            json.dumps(case.transferable_lessons, ensure_ascii=False),
+                            intent_text,
+                            visual_text,
+                            intent_blob,
+                            visual_blob,
+                            PROMPT_CASE_PARSER_VERSION,
+                            current_model,
+                            PROMPT_CASE_EMBEDDING_VERSION,
+                            int(row[0]),
+                        ),
+                    )
+            finally:
+                update_conn.close()
+            result["success"] += 1
+        except Exception:
+            result["failed"] += 1
+    return result
 
 
 def read_import_file(path: str) -> list[dict[str, Any]]:
@@ -574,7 +992,8 @@ def read_import_file(path: str) -> list[dict[str, Any]]:
 
 
 def stats(pl: dict[str, Any]) -> dict[str, Any]:
-    """词库统计：总数 / 活跃 / 归档 / 活跃分类分布。"""
+    """词库统计，包括 Prompt Case 迁移就绪度。"""
+    current_model = _embedding_model(pl)
     conn = mysql_conn(pl)
     try:
         with conn.cursor() as cur:
@@ -589,7 +1008,27 @@ def stats(pl: dict[str, Any]) -> dict[str, Any]:
             by_category = [
                 {"category": str(r[0] or "未分类"), "count": int(r[1])} for r in cur.fetchall()
             ]
-        return {"total": total, "active": total - archived, "archived": archived, "by_category": by_category}
+            cur.execute(
+                "SELECT COUNT(*) FROM prompts WHERE intent_embedding IS NOT NULL"
+                " AND parser_version=%s AND embedding_version=%s AND embedding_model=%s",
+                (
+                    PROMPT_CASE_PARSER_VERSION,
+                    PROMPT_CASE_EMBEDDING_VERSION,
+                    current_model,
+                ),
+            )
+            case_ready = int(cur.fetchone()[0])
+        return {
+            "total": total,
+            "active": total - archived,
+            "archived": archived,
+            "by_category": by_category,
+            "case_ready": case_ready,
+            "case_pending": max(0, total - case_ready),
+            "parser_version_current": PROMPT_CASE_PARSER_VERSION,
+            "embedding_model_current": current_model,
+            "embedding_version_current": PROMPT_CASE_EMBEDDING_VERSION,
+        }
     finally:
         conn.close()
 
@@ -609,10 +1048,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--k", type=int, default=None, help="返回条数")
     s.add_argument("--json", action="store_true", help="机器可读输出")
     sub.add_parser("init", help="创建数据表")
-    sub.add_parser("stats", help="词库统计（总数/活跃/归档/分类）")
-    addp = sub.add_parser("add", help="单条入库（自家精品等）")
+    sub.add_parser("stats", help="词库统计（总数/活跃/归档/分类/迁移就绪度）")
+    addp = sub.add_parser("add", help="单条入库为 Prompt Case")
     addp.add_argument("content", help="提示词正文")
-    addp.add_argument("--category", default="自家精品", help="分类（默认：自家精品）")
+    addp.add_argument("--category", default="未分类", help="管理分类（默认：未分类）")
     addp.add_argument("--tags", default="", help="标签，逗号分隔")
     addp.add_argument("--requirement", default="", help="原始用户需求（用于双向量检索）")
     addp.add_argument("--source", default="", help="来源名称")
@@ -620,6 +1059,9 @@ def build_parser() -> argparse.ArgumentParser:
     addp.add_argument("--notes", default="", help="备注")
     bk = sub.add_parser("backup", help="导出全部提示词为 JSONL 备份")
     bk.add_argument("out", nargs="?", default="", help="输出文件（留空=默认备份目录）")
+    rebuild = sub.add_parser("rebuild-cases", help="重建旧提示词的 Prompt Case 字段与双向量")
+    rebuild.add_argument("--force", action="store_true", help="重新解析并重建所有记录的 Prompt Case 数据")
+    rebuild.add_argument("--limit", type=int, default=None, help="最多处理需要迁移的记录数")
     return parser
 
 
@@ -637,6 +1079,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             result = import_prompts(
                 pl,
                 items,
+                default_lang=args.lang,
                 default_category=args.category,
                 default_tags=args.tags,
                 default_source=args.source,
@@ -661,9 +1104,20 @@ def main(argv: Optional[list[str]] = None) -> int:
             print(
                 f"总数 {st['total']}：活跃 {st['active']}，归档 {st['archived']}。"
             )
+            print(f"Prompt Case：就绪 {st['case_ready']}，待迁移 {st['case_pending']}。")
             for item in st["by_category"]:
                 print(f"  {item['category']}: {item['count']}")
             return 0
+        if args.command == "rebuild-cases":
+            # The rebuild command is intentionally self-contained: an old
+            # database receives new nullable columns before rows are read.
+            init_db(pl)
+            result = rebuild_cases(pl, force=bool(args.force), limit=args.limit)
+            print(
+                f"重建完成：总计 {result['total']} 条，成功 {result['success']} 条，"
+                f"失败 {result['failed']} 条，跳过 {result['skipped']} 条。"
+            )
+            return 0 if result["failed"] == 0 else 1
         if args.command == "add":
             result = add_prompt(
                 pl,

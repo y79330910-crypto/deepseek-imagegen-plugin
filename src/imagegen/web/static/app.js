@@ -422,6 +422,7 @@ function buildGenerateRequest() {
     quality: $("quality").value,
     composition: $("composition").value,
     translator: $("translator").value,
+    prompt_mode: $("promptMode").value || "optimized",
     references: refs.map((r) => ({ asset_id: r.asset_id, role: r.role || "auto" })),
     images: [],
     reference_roles: [],
@@ -669,6 +670,7 @@ async function reuseGeneration(generationId) {
   set("quality", req.quality);
   set("composition", req.composition);
   set("translator", req.translator);
+  set("promptMode", req.prompt_mode || "optimized");
   $("library").value =
     req.library_enabled === undefined || req.library_enabled === null
       ? "auto"

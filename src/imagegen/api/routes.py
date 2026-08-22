@@ -316,12 +316,19 @@ HISTORY_REQUEST_ALLOW = (
     "composition",
     "translator",
     "library_enabled",
+    "prompt_mode",
 )
 
 
 def _safe_request_public(request: dict[str, Any]) -> dict[str, Any]:
     """只公开可安全恢复的生成参数，禁止 images / reference_roles / out 等路径字段。"""
-    return {key: request[key] for key in HISTORY_REQUEST_ALLOW if key in request}
+    safe = {key: request[key] for key in HISTORY_REQUEST_ALLOW if key in request}
+    # Keep old history payloads byte-for-byte compact: an omitted mode has the
+    # same meaning as optimized, while non-default modes are explicitly
+    # persisted and restored.
+    if safe.get("prompt_mode") == "optimized":
+        safe.pop("prompt_mode", None)
+    return safe
 
 
 def _history_references(

@@ -49,6 +49,7 @@ def cmd_generate(args: argparse.Namespace) -> dict[str, Any]:
         images=images,
         reference_roles=list(args.ref_role or []),
         library_enabled=getattr(args, "library", None),
+        prompt_mode=getattr(args, "prompt_mode", "optimized"),
         out=args.out,
     )
     return GenerationService().generate(request).to_dict()
@@ -194,6 +195,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="auto",
         choices=["auto", "off"],
         help="提示词处理：auto 跟随配置 / off 强制直传（不调用提示词上游）",
+    )
+    gen.add_argument(
+        "--prompt-mode",
+        default="optimized",
+        choices=["conservative", "optimized", "creative"],
+        help="提示词优化强度：保守 / 优化（默认）/ 创新",
     )
     gen.add_argument(
         "--composition",

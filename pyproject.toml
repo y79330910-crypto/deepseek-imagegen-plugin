@@ -18,6 +18,7 @@ library = ["numpy", "pymysql"]
 
 [project.scripts]
 imagegen = "imagegen.cli:main"
+prompt_lib = "imagegen.library:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

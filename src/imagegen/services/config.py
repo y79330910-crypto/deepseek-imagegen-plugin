@@ -41,12 +41,15 @@ def _normalize_patch(patch: Mapping[str, Any]) -> dict[str, Any]:
     if isinstance(pl, dict):
         if isinstance(pl.get("categories"), str):
             pl["categories"] = _to_list(pl["categories"])
-        for key in ("top_k", "final_k", "priority_count"):
+        for key in ("intent_top_k", "visual_top_k", "final_k", "top_k"):
             if key in pl and pl[key] not in ("", None):
                 pl[key] = _to_int(pl[key])
         for key in ("enabled", "use_in_translator"):
             if key in pl and isinstance(pl[key], str):
                 pl[key] = _to_bool(pl[key])
+        parser_cfg = pl.get("parser")
+        if isinstance(parser_cfg, dict) and isinstance(parser_cfg.get("enabled"), str):
+            parser_cfg["enabled"] = _to_bool(parser_cfg["enabled"])
         rr = pl.get("rerank")
         if isinstance(rr, dict) and isinstance(rr.get("enabled"), str):
             rr["enabled"] = _to_bool(rr["enabled"])

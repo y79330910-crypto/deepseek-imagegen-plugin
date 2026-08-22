@@ -31,7 +31,9 @@ Local HTTP API v2 与完整 WebUI。架构只保留两套独立的 OpenAI-Compat
   锁定画幅与取景规则；生成后读取真实输出尺寸，`size_check` 可开关
 - **参考图**：三段式提示词自动生成（类型识别 + 身份锚点清单）；Reference Asset System
   提供持久化素材库（上传 / 拖放 / 粘贴 / 本机导入 → managed asset → Asset API）
-- **提示词词库**：MySQL + SiliconFlow Embedding / Rerank 向量检索（`prompt_library`）
+- **结构化提示词词库**：MySQL + SiliconFlow Embedding / Rerank 的 Prompt Case
+  解析、Intent / Visual 双路检索、结构化重排与多样性选择；提示词优化支持
+  `conservative` / `optimized`（默认）/ `creative`
 - **Standalone WebUI**：`imagegen serve --open`（默认 http://127.0.0.1:8765），
   生成页 / 设置页（两套独立 OpenAI-Compatible API + 「拉取模型」）/ 诊断页 / 持久化历史画廊
 - **自动副本**：生成成功后按 `mirror_dir` 保留副本
@@ -80,7 +82,7 @@ imagegen serve --open
 命令行方式：
 
 ```bash
-imagegen generate "..." --composition full-body
+imagegen generate "..." --composition full-body --prompt-mode creative
 imagegen translate "..."        # 使用当前 translator 配置
 imagegen config
 imagegen doctor
@@ -136,6 +138,16 @@ curl -X POST http://127.0.0.1:8765/api/v2/generate \
 `GenerateResult` 并附加 `output_url`（`/api/v2/outputs/{generation_id}`），
 不暴露服务器本地文件路径。`GET /api/v2/config` 只返回打码后的 effective config，
 `PATCH` 复用 `ConfigService.update`（env secret 不会被写入 config.json）。
+
+`prompt_mode` 可选 `conservative`、`optimized`、`creative`，默认是 `optimized`，
+会贯穿 Query Parser、词库案例选择和 Translator；旧历史记录没有该字段时按
+`optimized` 复用。
+
+词库升级后可用 `prompt_lib rebuild-cases [--limit N] [--force]`
+（或 `python -m imagegen.library rebuild-cases`）为旧 Prompt 补齐 Facets、
+Intent / Visual 文本与双向量。迁移按当前 Parser / Embedding 版本增量执行，
+单条失败会继续处理其他记录；旧 `embedding` / `requirement_embedding` 字段保留，
+不会被新向量覆盖。
 
 ### 模型拉取（非强依赖）
 
@@ -293,6 +305,7 @@ effective config 整体写回磁盘。环境变量中的 API Key 会影响运行
 
 ```text
 prompt
+prompt_mode
 size
 model
 quality

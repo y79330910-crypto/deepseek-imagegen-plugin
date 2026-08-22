@@ -10,14 +10,24 @@ from typing import Any, Optional
 
 from .config import load_config
 from .openai_client import OpenAIClient
+from .prompt_case import (
+    QueryAnalysis,
+    PromptCase,
+    format_prompt_case,
+    normalize_prompt_mode,
+)
 
 
 def build_translator_system(
     lang: str = "zh",
     examples: Optional[list[str]] = None,
     reference_brief: str = "",
+    prompt_mode: str = "optimized",
+    query_analysis: Optional[QueryAnalysis] = None,
+    cases: Optional[list[PromptCase | dict[str, Any]]] = None,
 ) -> str:
     """生成翻译官系统提示词。"""
+    prompt_mode = normalize_prompt_mode(prompt_mode)
     if lang == "en":
         base = (
             "You are a senior visual prompt engineer. Rewrite the user's image request "
@@ -46,6 +56,39 @@ def build_translator_system(
             "5. 画面中的文字优先使用英文并放进引号。\n"
             "6. 只输出提示词正文：不要解释、不要 Markdown、不要编号列表、不要用引号包裹全文。"
         )
+    mode_rules = {
+        "conservative": (
+            "保守模式：最大程度保持原始需求，只补足必要的视觉描述；尽量不新增环境、剧情、道具或动作。"
+        ),
+        "optimized": (
+            "优化模式（默认）：保持用户需求和主题，主动完善姿势、构图、镜头、空间层次、光影、材质、"
+            "环境互动、色彩与氛围，但不得改变明确内容。"
+        ),
+        "creative": (
+            "创新模式：保持所有 Locked 内容不变，只能在 Open 字段进行更大胆但合理的视觉设计，"
+            "可加强动态姿态、特殊构图、镜头语言、前景遮挡、空间关系、戏剧性光影和配色。"
+        ),
+    }
+    base += "\n\n提示词优化强度：" + mode_rules[prompt_mode]
+    base += (
+        "\n优先级：用户硬约束 / 参考图 preserve > 优化模式策略 > 案例 > 你的自由发挥。"
+        "案例用于学习视觉设计和 Prompt 写法，案例不是当前画面的素材来源。"
+        "禁止迁移案例人物、服装、地点、颜色、道具、文字、事件或其他独有元素；"
+        "当前用户需求永远优先于案例。"
+    )
+    if query_analysis is not None:
+        locked = query_analysis.locked or {}
+        locked_fields = [key for key, value in locked.items() if value]
+        if locked_fields:
+            base += (
+                "\n\n本次 Query Parser 标记为 Locked 的字段（必须原样保持，不得改写）："
+                + "、".join(locked_fields)
+                + "。其余字段为 Open；创新只能发生在 Open 字段。"
+            )
+        if query_analysis.facets.to_dict():
+            base += "\n当前需求结构化字段：\n" + "\n".join(
+                f"{key}：{value}" for key, value in query_analysis.facets.to_dict().items() if value
+            )
     if reference_brief:
         base += (
             "\n\n参考图模式硬性规则（本次有参考图时强制）：\n"
@@ -67,6 +110,18 @@ def build_translator_system(
             "把其中适用的写法自然融入你为用户需求撰写的提示词：\n"
             + "\n".join(f"- {str(ex)[:600]}" for ex in examples if str(ex).strip())
         )
+    if cases:
+        rendered = []
+        for index, case in enumerate(cases, 1):
+            try:
+                rendered.append(format_prompt_case(case, index=index, max_chars=2800))
+            except Exception:
+                continue
+        if rendered:
+            base += (
+                "\n\n结构化 Prompt Case（只学习表达方式，不得搬运案例独有内容）：\n"
+                + "\n\n".join(rendered)
+            )
     return base
 
 
@@ -77,9 +132,13 @@ def translate_prompt(
     max_tokens: int = 4096,
     examples: Optional[list[str]] = None,
     reference_brief: str = "",
+    prompt_mode: str = "optimized",
+    query_analysis: Optional[QueryAnalysis] = None,
+    cases: Optional[list[PromptCase | dict[str, Any]]] = None,
 ) -> dict[str, Any]:
     """翻译官：config.translator.enabled 时调用统一提示词上游，否则直传原文。"""
     cfg = cfg if cfg is not None else load_config()
+    prompt_mode = normalize_prompt_mode(prompt_mode)
     tr = cfg.get("translator") or {}
     if not isinstance(tr, dict):
         tr = {}
@@ -90,10 +149,18 @@ def translate_prompt(
             "model": "",
             "original": user_text,
             "rewritten": user_text,
+            "prompt_mode": prompt_mode,
         }
 
     lang = str(tr.get("output_lang") or "zh").lower()
-    system = build_translator_system(lang, examples, reference_brief)
+    system = build_translator_system(
+        lang,
+        examples,
+        reference_brief,
+        prompt_mode=prompt_mode,
+        query_analysis=query_analysis,
+        cases=cases,
+    )
     user_msg = str(user_text).strip()
     if reference_brief and str(reference_brief).strip():
         user_msg += "\n\n【参考图简报】\n" + str(reference_brief).strip()
@@ -114,4 +181,5 @@ def translate_prompt(
         "model": model,
         "original": user_text,
         "rewritten": text,
+        "prompt_mode": prompt_mode,
     }

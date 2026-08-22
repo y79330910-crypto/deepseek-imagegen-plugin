@@ -22,34 +22,63 @@ from .image_utils import (
 )
 from .models import GenerateRequest, GenerateResult
 from .openai_client import OpenAIClient
+from .prompt_case import QueryAnalysis, parse_query
 from .translator import translate_prompt
 
 
 def _library_search(
-    user_prompt: str, cfg: dict[str, Any]
-) -> tuple[list[dict[str, Any]], list[str], str]:
-    """词库检索：返回 (命中摘要, 示例文本, 警告)。"""
+    user_prompt: str,
+    cfg: dict[str, Any],
+    *,
+    prompt_mode: str = "optimized",
+    composition: str = "",
+    hard_constraints: str = "",
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], QueryAnalysis, str]:
+    """Query Parser → structured Prompt Case retrieval; never exposes examples as the new API."""
     pl = cfg.get("prompt_library") or {}
     if not isinstance(pl, dict):
         pl = {}
     try:
-        from .library import LibError, load_config as lib_load, search as lib_search
+        from .library import load_config as lib_load, search_prompt_cases
 
         lib_cfg = lib_load()
-        hits = lib_search(
+        # Explicit Engine configuration remains authoritative in tests and in
+        # embedded callers, while the library loader retains its old behavior.
+        if isinstance(pl, dict):
+            for key, value in pl.items():
+                if isinstance(value, dict) and isinstance(lib_cfg.get(key), dict):
+                    lib_cfg[key] = {**lib_cfg[key], **value}
+                else:
+                    lib_cfg[key] = value
+        parse_warnings: list[str] = []
+        analysis = parse_query(
+            user_prompt,
+            cfg=cfg,
+            composition=composition,
+            hard_constraints=hard_constraints,
+            warning=parse_warnings.append,
+        )
+        hits = search_prompt_cases(
             lib_cfg,
             user_prompt,
-            top_k=int(pl.get("top_k") or 30),
-            final_k=int(pl.get("final_k") or 6),
+            query_analysis=analysis,
+            prompt_mode=prompt_mode,
             categories=pl.get("categories") or None,
         )
-        examples = [str(h.get("content") or "") for h in hits if h.get("content")]
         summary = [
-            {"id": h.get("id"), "category": h.get("category") or ""} for h in hits
+            {
+                "id": h.get("id"),
+                "category": h.get("category") or "",
+                "requirement_source": h.get("requirement_source") or "none",
+                "intent_score": h.get("intent_score", 0.0),
+                "visual_score": h.get("visual_score", 0.0),
+                "rerank_score": h.get("rerank_score", 0.0),
+            }
+            for h in hits
         ]
-        return summary, examples, ""
+        return summary, hits, analysis, "；".join(parse_warnings)
     except Exception as exc:  # noqa: BLE001
-        return [], [], f"词库检索异常：{exc}"
+        return [], [], QueryAnalysis(query=user_prompt), f"词库检索异常：{exc}"
 
 
 def _resolve_size(
@@ -172,6 +201,8 @@ def _run_generation(
         "rewritten": prompt,
     }
     lib_hits: list[dict[str, Any]] = []
+    cases: list[dict[str, Any]] = []
+    query_analysis = None
     lib_warning = ""
     pl_cfg = cfg.get("prompt_library") or {}
     lib_enabled = (
@@ -180,17 +211,28 @@ def _run_generation(
         else bool(pl_cfg.get("enabled", False))
     )
     if tr_enabled and lib_enabled and bool(pl_cfg.get("use_in_translator", True)):
-        lib_hits, examples, lib_warning = _library_search(user_prompt, cfg)
+        lib_hits, cases, query_analysis, lib_warning = _library_search(
+            prompt,
+            cfg,
+            prompt_mode=request.prompt_mode,
+            composition=comp_suffix,
+            hard_constraints=ref_brief,
+        )
         if lib_warning:
             tr_info["library_warning"] = lib_warning
         tr_info["library_hits"] = lib_hits
-    else:
-        examples: list[str] = []
 
     if tr_enabled:
         tr_info = translate_prompt(
-            user_prompt, cfg=cfg, examples=examples, reference_brief=ref_brief,
+            user_prompt,
+            cfg=cfg,
+            reference_brief=ref_brief,
+            prompt_mode=request.prompt_mode,
+            query_analysis=query_analysis,
+            cases=cases,
         )
+        if lib_warning:
+            tr_info["library_warning"] = lib_warning
         tr_info["library_hits"] = lib_hits
         final_prompt = tr_info.get("rewritten") or prompt
     else:
