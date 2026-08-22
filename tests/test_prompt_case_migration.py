@@ -255,6 +255,7 @@ class TestPromptCaseMigration(unittest.TestCase):
         with patch.object(library, "mysql_conn", return_value=FakeConnection(cursor)):
             library.rebuild_cases(self.pl, limit=7)
         sql, params = cursor.executed[0]
+        self.assertIn("archived=0", sql)
         self.assertIn("parser_version", sql)
         self.assertIn("intent_embedding IS NULL", sql)
         self.assertIn("embedding_version", sql)

@@ -868,16 +868,19 @@ def rebuild_cases(
     conn = mysql_conn(pl)
     try:
         with conn.cursor() as cur:
-            where = ""
+            # Archived rows are intentionally excluded from migration.  They
+            # are not part of retrieval and should never consume parser or
+            # embedding API capacity, even when --force is supplied.
+            where = " WHERE archived=0"
             params: list[Any] = []
             if not force:
-                where = (
-                    " WHERE COALESCE(parser_version, 0) < %s"
+                where += (
+                    " AND (COALESCE(parser_version, 0) < %s"
                     " OR intent_embedding IS NULL"
                     " OR COALESCE(embedding_version, 0) < %s"
                     " OR COALESCE(embedding_model, '') <> %s"
                     " OR (NULLIF(TRIM(visual_text), '') IS NOT NULL"
-                    "     AND visual_embedding IS NULL)"
+                    "     AND visual_embedding IS NULL))"
                 )
                 params = [
                     PROMPT_CASE_PARSER_VERSION,
