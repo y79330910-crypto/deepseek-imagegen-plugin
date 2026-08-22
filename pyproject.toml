@@ -9,10 +9,11 @@ description = "Standalone image generation application with CLI, WebUI and local
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
-dependencies = []
+dependencies = [
+    "Pillow>=10",
+]
 
 [project.optional-dependencies]
-image = ["Pillow"]
 library = ["numpy", "pymysql"]
 
 [project.scripts]

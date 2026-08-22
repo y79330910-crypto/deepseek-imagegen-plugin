@@ -8,6 +8,7 @@ from .diagnostics import DiagnosticService
 from .generation import GenerationService
 from .history import HistoryRecord, HistoryService
 from .models import ModelService
+from .previews import PreviewService
 from .references import ReferenceResolver
 
 __all__ = [
@@ -20,5 +21,6 @@ __all__ = [
     "HistoryRecord",
     "HistoryService",
     "ModelService",
+    "PreviewService",
     "ReferenceResolver",
 ]

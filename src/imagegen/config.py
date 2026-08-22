@@ -112,6 +112,11 @@ def default_asset_dir() -> Path:
     return Path.home() / ".imagegen" / "assets" / "references"
 
 
+def default_preview_cache_dir() -> Path:
+    """ImageGen 默认 preview 缓存目录（derived cache，非用户数据）。"""
+    return Path.home() / ".imagegen" / "cache" / "previews"
+
+
 # 兼容常量（新代码优先使用 default_config_path()）
 CONFIG_DIR = Path.home() / ".imagegen"
 CONFIG_FILE = default_config_path()
