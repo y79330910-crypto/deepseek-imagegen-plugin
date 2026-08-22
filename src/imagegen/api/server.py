@@ -17,6 +17,7 @@ from ..services import (
     GenerationService,
     HistoryService,
     ModelService,
+    PreviewService,
     ReferenceResolver,
 )
 from . import routes
@@ -56,6 +57,7 @@ class ApiContext:
         history_service: HistoryService,
         asset_service: AssetService,
         reference_resolver: ReferenceResolver,
+        preview_service: PreviewService,
     ):
         self.config_service = config_service
         self.generation_service = generation_service
@@ -65,6 +67,7 @@ class ApiContext:
         self.history_service = history_service
         self.asset_service = asset_service
         self.reference_resolver = reference_resolver
+        self.preview_service = preview_service
         self.generation_lock = threading.Lock()
 
 
@@ -154,6 +157,7 @@ def create_server(
     history_db_path: str | Path | None = None,
     asset_service: Optional[AssetService] = None,
     asset_dir: str | Path | None = None,
+    preview_service: Optional[PreviewService] = None,
 ) -> ThreadingHTTPServer:
     """构建 HTTP API v2 server；services 缺省时基于同一 config_path 创建。"""
     cfg_service = config_service or ConfigService(config_path)
@@ -167,6 +171,10 @@ def create_server(
             or (cfg_service.path().parent / "assets" / "references"),
         )
     reference_resolver = ReferenceResolver(asset_service)
+    if preview_service is None:
+        preview_service = PreviewService(
+            cache_root=cfg_service.path().parent / "cache" / "previews"
+        )
     if generation_service is None:
         generation_service = GenerationService(
             config_service=cfg_service, history_service=history_service
@@ -185,6 +193,7 @@ def create_server(
         history_service=history_service,
         asset_service=asset_service,
         reference_resolver=reference_resolver,
+        preview_service=preview_service,
     )
     server = ThreadingHTTPServer((host, port), ApiHandler)
     server.daemon_threads = True

@@ -5,8 +5,9 @@ from __future__ import annotations
 import mimetypes
 import re
 from dataclasses import dataclass, field
+from email.utils import formatdate
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 from urllib.parse import parse_qs, unquote
 
 from ..errors import (
@@ -18,6 +19,7 @@ from ..errors import (
     ValidationError,
 )
 from ..models import GenerateRequest
+from ..services.previews import PreviewError
 from .responses import ApiError, parse_json_payload
 
 HTTP_API_VERSION = 2
@@ -53,6 +55,8 @@ def map_exception(exc: BaseException) -> Response:
         return error_response(404, "not_found", str(exc))
     if isinstance(exc, AssetInUseError):
         return error_response(409, "asset_in_use", str(exc))
+    if isinstance(exc, PreviewError):
+        return error_response(404, "not_found", str(exc))
     if isinstance(exc, ImageGenError):
         return error_response(500, "imagegen_error", str(exc))
     return error_response(500, "internal_error", "internal server error")
@@ -154,28 +158,81 @@ def handle_asset(context: Any, name: str, body: bytes = b"") -> Response:
     return Response(200, data, content_type=asset_content_type(name))
 
 
-def handle_output(context: Any, generation_id: str) -> Response:
-    """只允许读取当前 Server 注册过或历史记录里的合法生成结果，不提供任意文件读取。"""
+def _resolve_output_path(context: Any, generation_id: str) -> Optional[str]:
+    """generation_id → 已知输出路径（registry / history），不提供任意文件读取。"""
     path = context.output_registry.get(generation_id)
     if path is None and context.history_service is not None:
         record = context.history_service.get(generation_id)
         if record is not None:
             path = record.output_path
+    return path
+
+
+def _conditional_file_response(
+    file_path: Path,
+    request_headers: dict[str, str],
+    content_type: str,
+    cache_control: str,
+) -> Response:
+    """ETag / Last-Modified / Cache-Control + If-None-Match → 304 空 body。"""
+    stat = file_path.stat()
+    etag = f'"{stat.st_size}-{stat.st_mtime_ns}"'
+    last_modified = formatdate(stat.st_mtime, usegmt=True)
+    headers = {
+        "ETag": etag,
+        "Last-Modified": last_modified,
+        "Cache-Control": cache_control,
+    }
+    if request_headers.get("If-None-Match") == etag:
+        return Response(304, b"", content_type=content_type, headers=headers)
+    try:
+        data = file_path.read_bytes()
+    except OSError:
+        return error_response(404, "not_found", "file not found")
+    return Response(200, data, content_type=content_type, headers=headers)
+
+
+def handle_output(
+    context: Any, generation_id: str, headers: Optional[dict[str, str]] = None
+) -> Response:
+    """只允许读取当前 Server 注册过或历史记录里的合法生成结果，不提供任意文件读取。"""
+    path = _resolve_output_path(context, generation_id)
     if path is None:
         return error_response(404, "not_found", "unknown generation_id")
     file_path = Path(path)
     if not file_path.is_file():
         return error_response(404, "not_found", "output file not found")
-    try:
-        data = file_path.read_bytes()
-    except OSError:
-        return error_response(404, "not_found", "output file not found")
     content_type = mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
-    return Response(
-        200,
-        data,
+    return _conditional_file_response(
+        file_path,
+        headers or {},
         content_type=content_type,
-        headers={"Cache-Control": "private"},
+        cache_control="private, max-age=3600",
+    )
+
+
+def handle_generation_thumbnail(
+    context: Any, generation_id: str, headers: Optional[dict[str, str]] = None
+) -> Response:
+    """GET /api/v2/outputs/{generation_id}/thumbnail → 懒生成 WebP 缩略图。"""
+    path = _resolve_output_path(context, generation_id)
+    if path is None:
+        return error_response(404, "not_found", "unknown generation_id")
+    file_path = Path(path)
+    if not file_path.is_file():
+        return error_response(404, "not_found", "output file not found")
+    preview_service = getattr(context, "preview_service", None)
+    if preview_service is None:
+        return error_response(500, "imagegen_error", "preview service unavailable")
+    try:
+        thumb = preview_service.generation_thumbnail(generation_id, file_path)
+    except PreviewError as exc:
+        return error_response(404, "not_found", str(exc))
+    return _conditional_file_response(
+        thumb,
+        headers or {},
+        content_type="image/webp",
+        cache_control="private, max-age=31536000, immutable",
     )
 
 
@@ -317,21 +374,42 @@ def handle_assets_get(context: Any, asset_id: str) -> Response:
     return json_response(200, record.to_public_dict())
 
 
-def handle_assets_content(context: Any, asset_id: str) -> Response:
+def handle_assets_content(
+    context: Any, asset_id: str, headers: Optional[dict[str, str]] = None
+) -> Response:
     record = context.asset_service.get(asset_id)
     if record is None:
         return error_response(404, "not_found", "unknown asset_id")
     file_path = Path(context.asset_service.resolve_path(asset_id))
-    try:
-        data = file_path.read_bytes()
-    except OSError:
-        return error_response(404, "not_found", "asset file not found")
     content_type = record.mime_type or "application/octet-stream"
-    return Response(
-        200,
-        data,
+    return _conditional_file_response(
+        file_path,
+        headers or {},
         content_type=content_type,
-        headers={"Cache-Control": "private"},
+        cache_control="private, max-age=31536000, immutable",
+    )
+
+
+def handle_asset_thumbnail(
+    context: Any, asset_id: str, headers: Optional[dict[str, str]] = None
+) -> Response:
+    """GET /api/v2/assets/{asset_id}/thumbnail → 懒生成 WebP 缩略图。"""
+    record = context.asset_service.get(asset_id)
+    if record is None:
+        return error_response(404, "not_found", "unknown asset_id")
+    file_path = Path(context.asset_service.resolve_path(asset_id))
+    preview_service = getattr(context, "preview_service", None)
+    if preview_service is None:
+        return error_response(500, "imagegen_error", "preview service unavailable")
+    try:
+        thumb = preview_service.asset_thumbnail(asset_id, file_path)
+    except PreviewError as exc:
+        return error_response(404, "not_found", str(exc))
+    return _conditional_file_response(
+        thumb,
+        headers or {},
+        content_type="image/webp",
+        cache_control="private, max-age=31536000, immutable",
     )
 
 
@@ -413,11 +491,27 @@ def dispatch(
     if method == "POST" and path_part == "/api/v2/assets/import":
         return _safe_call(handle_assets_import, context, body)
 
+    match = re.fullmatch(r"/api/v2/assets/([^/]+)/thumbnail", path_part)
+    if match:
+        if method != "GET":
+            return _method_not_allowed(["GET"])
+        return _safe_call(
+            handle_asset_thumbnail,
+            context,
+            unquote(match.group(1)),
+            headers,
+        )
+
     match = re.fullmatch(r"/api/v2/assets/([^/]+)/content", path_part)
     if match:
         if method != "GET":
             return _method_not_allowed(["GET"])
-        return _safe_call(handle_assets_content, context, unquote(match.group(1)))
+        return _safe_call(
+            handle_assets_content,
+            context,
+            unquote(match.group(1)),
+            headers,
+        )
 
     match = re.fullmatch(r"/api/v2/assets/([^/]+)", path_part)
     if match:
@@ -432,7 +526,18 @@ def dispatch(
     if match:
         if method != "GET":
             return _method_not_allowed(["GET"])
-        return _safe_call(handle_output, context, unquote(match.group(1)))
+        return _safe_call(handle_output, context, unquote(match.group(1)), headers)
+
+    match = re.fullmatch(r"/api/v2/outputs/([^/]+)/thumbnail", path_part)
+    if match:
+        if method != "GET":
+            return _method_not_allowed(["GET"])
+        return _safe_call(
+            handle_generation_thumbnail,
+            context,
+            unquote(match.group(1)),
+            headers,
+        )
 
     if method == "GET" and path_part == "/":
         return _safe_call(handle_index, context, body)
