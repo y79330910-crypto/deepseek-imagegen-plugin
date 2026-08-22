@@ -77,6 +77,7 @@ const state = {
   history: [],
   historyOffset: 0,
   historyHasMore: false,
+  promptDetail: null,
   references: [],
   libItems: [],
   libOffset: 0,
@@ -601,11 +602,14 @@ function renderGallery() {
           '<div class="detail-prompt">' + esc(it.prompt_used) +
           '</div><button class="btn ghost small" data-act="copy" type="button">复制提示词</button></details>'
         : "") +
-      '<div class="gbtn"><button class="btn ghost small" data-act="fill" type="button">回填提示词</button>' +
+      '<div class="gbtn"><button class="btn ghost small" data-act="prompt" type="button">查看提示词</button>' +
+      '<button class="btn ghost small" data-act="fill" type="button">回填提示词</button>' +
       '<button class="btn ghost small" data-act="reuse" type="button">复用参数</button>' +
       '<button class="btn ghost small" data-act="del" type="button">删除记录</button>' +
       '<a class="btn ghost small" href="' + esc(it.output_url) + '" download="result.png">下载</a></div></div>';
     card.querySelector("img").onclick = () => window.open(it.output_url);
+    card.querySelector('[data-act="prompt"]').onclick = () =>
+      showPromptDetail(it.generation_id);
     card.querySelector('[data-act="fill"]').onclick = () => {
       $("prompt").value = it.prompt || "";
       switchTab("generate");
@@ -682,6 +686,70 @@ async function reuseGeneration(generationId) {
   switchTab("generate");
 }
 
+/* ============ Prompt detail modal ============ */
+
+function renderPromptDetail(item) {
+  const promptUsed = item.prompt_used || "";
+  const hasPromptUsed = !!promptUsed;
+  let usedHtml;
+  if (hasPromptUsed) {
+    usedHtml =
+      '<div class="pd-text' + (promptUsed.length > 200 ? " collapsed" : "") +
+      '" id="pdUsedText">' + esc(promptUsed) + "</div>" +
+      (promptUsed.length > 200
+        ? '<button class="pd-toggle" id="pdToggle" type="button">展开全文</button>'
+        : "");
+  } else {
+    usedHtml = '<div class="pd-text">该历史记录未保存生效提示词</div>';
+  }
+  $("promptDetailBody").innerHTML =
+    '<div class="pd-item"><div class="pd-label">原始提示词</div><div class="pd-text">' +
+    esc(item.prompt || "") + "</div></div>" +
+    '<div class="pd-item"><div class="pd-label">生效提示词</div>' + usedHtml + "</div>" +
+    '<div class="pd-meta">模型：' + esc(item.image_model_used || "-") +
+    " · 请求尺寸：" + esc(item.requested_size || "-") +
+    " · 实际尺寸：" + esc(item.actual_size || "-") + "</div>";
+  const toggle = $("pdToggle");
+  if (toggle) {
+    toggle.onclick = () => {
+      const textEl = $("pdUsedText");
+      const collapsed = textEl.classList.toggle("collapsed");
+      toggle.textContent = collapsed ? "展开全文" : "收起";
+    };
+  }
+  $("promptCopyBtn").disabled = !hasPromptUsed;
+  $("promptCopyBtn").textContent = "复制生效提示词";
+  $("promptStatus").textContent = "";
+}
+
+async function showPromptDetail(generationId) {
+  try {
+    const data = await api.getHistory(generationId);
+    const item = data.item || {};
+    state.promptDetail = {
+      generationId,
+      promptUsed: item.prompt_used || "",
+    };
+    renderPromptDetail(item);
+    $("promptModal").style.display = "flex";
+  } catch (err) {
+    showError("查看提示词失败：" + err.message);
+  }
+}
+
+async function copyPromptUsed() {
+  const detail = state.promptDetail || {};
+  if (!detail.promptUsed) return;
+  try {
+    await navigator.clipboard.writeText(detail.promptUsed);
+    $("promptStatus").textContent = "已复制";
+    $("promptCopyBtn").textContent = "已复制";
+    setTimeout(() => ($("promptCopyBtn").textContent = "复制生效提示词"), 1500);
+  } catch (err) {
+    $("promptStatus").textContent = "复制失败，请手动选择";
+  }
+}
+
 /* ============ Events / Init ============ */
 
 async function init() {
@@ -711,6 +779,19 @@ $("refFile").onchange = (e) => {
   e.target.value = "";
 };
 $("refLibBtn").onclick = openLibrary;
+$("promptClose").onclick = () => ($("promptModal").style.display = "none");
+$("promptCopyBtn").onclick = copyPromptUsed;
+$("promptReuseBtn").onclick = async () => {
+  const detail = state.promptDetail;
+  $("promptModal").style.display = "none";
+  if (detail && detail.generationId) {
+    try {
+      await reuseGeneration(detail.generationId);
+    } catch (err) {
+      showError("复用参数失败：" + err.message);
+    }
+  }
+};
 $("libClose").onclick = () => ($("libModal").style.display = "none");
 $("libAddBtn").onclick = addSelectedFromLibrary;
 $("libSearch").oninput = () => loadLibrary($("libSearch").value.trim(), true);

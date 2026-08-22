@@ -65,5 +65,12 @@ textarea{min-height:96px;resize:vertical}
 .check{display:flex;gap:8px;align-items:baseline;background:rgba(8,16,28,.5);border:1px solid var(--line);border-radius:10px;padding:9px 12px;font-size:13px}
 .check .ok{color:#7dffb0;font-weight:700}
 .check .fail{color:#ff7b9c;font-weight:700}
+.prompt-detail{display:flex;flex-direction:column;gap:10px;margin-top:10px}
+.pd-item{font-size:12px}
+.pd-label{color:#9ff2ff;font-size:11px;margin-bottom:4px}
+.pd-text{background:rgba(8,16,28,.55);border:1px solid var(--line);border-radius:10px;padding:9px 11px;color:#cfe3f2;white-space:pre-wrap;word-break:break-all;font-size:12px}
+.pd-text.collapsed{max-height:120px;overflow:hidden}
+.pd-meta{font-size:12px;color:#6f8aa5}
+.pd-toggle{background:none;border:none;color:#9ff2ff;cursor:pointer;font-size:11px;padding:4px 0}
 .mono{font-family:Consolas,Menlo,monospace;font-size:12px;word-break:break-all}
 @media (max-width:720px){.tabs{margin-left:0}.grid{grid-template-columns:1fr}}
