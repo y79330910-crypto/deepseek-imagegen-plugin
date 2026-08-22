@@ -1,0 +1,54 @@
+{
+  "save_dir": "",
+  "mirror_dir": "",
+  "default_size": "1024x1024",
+  "translator": {
+    "enabled": true,
+    "base_url": "https://api.example.com/v1",
+    "api_key": "",
+    "model": "",
+    "output_lang": "zh"
+  },
+  "image": {
+    "base_url": "https://api.example.com/v1",
+    "api_key": "",
+    "model": "",
+    "quality": ""
+  },
+  "size_check": {
+    "enabled": true,
+    "tolerance": 0.06
+  },
+  "reference": {
+    "auto_classify": true,
+    "vision_script": "",
+    "classify_timeout": 90
+  },
+  "prompt_library": {
+    "enabled": false,
+    "use_in_translator": true,
+    "top_k": 30,
+    "final_k": 6,
+    "categories": [],
+    "priority_category": "自家精品",
+    "priority_count": 3,
+    "embedding": {
+      "base_url": "https://api.siliconflow.com/v1/embeddings",
+      "api_key": "",
+      "model": "Qwen/Qwen3-Embedding-8B"
+    },
+    "rerank": {
+      "enabled": true,
+      "base_url": "https://api.siliconflow.com/v1/rerank",
+      "api_key": "",
+      "model": "Qwen/Qwen3-Reranker-8B"
+    },
+    "mysql": {
+      "host": "127.0.0.1",
+      "port": 3306,
+      "user": "",
+      "password": "",
+      "db": "prompt_library"
+    }
+  }
+}

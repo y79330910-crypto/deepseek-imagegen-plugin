@@ -1,77 +1,76 @@
 # ImageGen
 
-**Standalone local image generation application with CLI, WebUI and Codex integration.**
+Standalone image generation application with WebUI, CLI and local HTTP API.
 
-ImageGen 是一个本地图像生成应用：提供 Python Core / Services、命令行（`imagegen`）、
-Local HTTP API v1 与完整 WebUI。最终架构只保留两套独立的 OpenAI-Compatible API：
-提示词 API（`/v1/chat/completions`，明确不支持时 fallback `/v1/responses`）与
-图像 API（`/v1/images/generations` / `/v1/images/edits`），两者共用统一 OpenAIClient。
+ImageGen 是一个独立的本地图像生成应用：Python Core、命令行（`imagegen`）、
+Local HTTP API v2 与完整 WebUI。架构只保留两套独立的 OpenAI-Compatible 上游：
 
-Codex 集成是可选的 Adapter：DeepSeek 等纯文本模型通过薄 CLI 调用 ImageGen Core 出图。
+- **translator upstream**：提示词上游，独立 `base_url` / `api_key` / `model`
+- **image upstream**：图像上游，独立 `base_url` / `api_key` / `model`
+
+两者共用统一 `OpenAIClient`，配置互不借用、互不 fallback。
 
 ## 功能
 
-- **提示词 OpenAI API**：独立 `base_url` / `api_key` / `model`，默认 `POST /v1/chat/completions`，仅在上游明确不支持（404 / 405 / 501）时 fallback `/v1/responses`；401 / 403 / 429 / 500 / 超时 / 网络错误直接返回原始错误
-- **图像 OpenAI API**：独立 `base_url` / `api_key` / `model`；文生图 `POST /v1/images/generations`、图生图/参考图 `POST /v1/images/edits`（支持多参考图，兼容 `b64_json` / `image` / `url` / `data:image/...` 返回）
-- **尺寸原样透传**：任意合法 `WxH`（如 1920x1080 / 1080x1920 / 3440x1440）原样发送上游，不存在白名单 / 自动归一化 / Canvas fallback / 尺寸失败自动重试；输出尺寸不符只产生 warning
-- **构图预设 + 输出尺寸检查**：`--composition full-body / half-body / portrait / landscape` 锁定画幅与取景规则；生成后读取真实输出尺寸，`size_check` 可开启/关闭（不符时警告）
-- **WebUI 推荐尺寸**：画幅 × 1K/2K/4K 预设（1:1 / 16:9 / 9:16 / 4:3 / 3:4 / 3:2 / 2:3），最终只发送 `WxH`，仍可自由手填自定义尺寸
-- **参考图**：三段式提示词自动生成（类型识别 + 身份锚点清单 + 场景锚点丢弃）；支持最多 4 张多参考图，每张带用途标签，生成角色隔离简报；Reference Asset System 提供持久化素材库（上传 / 拖放 / 粘贴 / 本机导入 → managed asset → Asset API）
-- **提示词词库**：MySQL + SiliconFlow Embedding / Rerank 向量检索（`prompt_library` 库），生成时喂示例给翻译官
-- **Standalone WebUI（洛天依主题）**：`imagegen serve --open` 启动（默认 http://127.0.0.1:8765），
-  与 HTTP API 同源运行；生成页（提示词 / 参考图 / 画幅×档位尺寸 / 构图 / 模型 / 批量出图）、
-设置页（提示词与图像两组 OpenAI API，含「拉取模型」连接测试）、诊断页、持久化历史画廊（最近 50 条）；
-前端只通过 `/api/v2/*` 与 Core 通信
-- **自动副本**：生成成功后自动在 `mirror_dir` 保留副本
-- **诊断**：`doctor`（连通性 + 尺寸探针）、`config`（密钥打码）、`list-models`
+- **提示词上游（text upstream）**：默认 `POST /v1/chat/completions`，仅当 Chat
+  Completions 明确不支持（HTTP 404 / 405 / 501）时 fallback `POST /v1/responses`；
+  401 / 403 / 429 / 其他 5xx / 超时 / 网络错误直接报错，不切换 endpoint。
+
+  > Text upstream uses `/v1/chat/completions` by default and only falls back to
+  > `/v1/responses` when Chat Completions is explicitly unsupported
+  > (HTTP 404/405/501).
+
+- **图像上游（image upstream）**：文生图 `POST /v1/images/generations`；
+  带参考图 `POST /v1/images/edits`（支持最多 4 张，兼容
+  `b64_json` / `image` / `url` / `data:image/...` 返回）；两条路径之间不存在自动 fallback
+- **尺寸原样透传**：任意合法 `WxH`（如 1920x1080 / 1080x1920 / 1536x864）原样发送上游，
+  不做归一化 / 预设匹配 / 尺寸重试 / 能力探测；输出尺寸不符只产生 warning
+- **quality 行为**：请求 `quality` 为空时使用配置 `image.quality`；两者都为空时
+  payload 完全省略 `quality` 字段
+- **构图预设 + 尺寸检查**：`--composition full-body / half-body / portrait / landscape`
+  锁定画幅与取景规则；生成后读取真实输出尺寸，`size_check` 可开关
+- **参考图**：三段式提示词自动生成（类型识别 + 身份锚点清单）；Reference Asset System
+  提供持久化素材库（上传 / 拖放 / 粘贴 / 本机导入 → managed asset → Asset API）
+- **提示词词库**：MySQL + SiliconFlow Embedding / Rerank 向量检索（`prompt_library`）
+- **Standalone WebUI**：`imagegen serve --open`（默认 http://127.0.0.1:8765），
+  生成页 / 设置页（两套独立 OpenAI-Compatible API + 「拉取模型」）/ 诊断页 / 持久化历史画廊
+- **自动副本**：生成成功后按 `mirror_dir` 保留副本
+- **诊断**：`imagegen doctor`（两组上游连通性）、`imagegen config`（密钥打码）、
+  `imagegen list-models`
 
 ## 仓库结构
 
-```
+```text
 .
-├── .agents/plugins/marketplace.json      # Codex marketplace 清单
-├── pyproject.toml                        # 独立包（pip install -e . / imagegen 命令）
-├── src/imagegen/                         # ImageGen Core（独立于 Codex）
-│   ├── __init__.py                       # Public Core API（CORE_API_VERSION=1）
-│   ├── engine.py / models.py / errors.py # 编排、统一数据模型、通用错误
+├── pyproject.toml                    # 独立包（pip install -e . / imagegen 命令）
+├── LICENSE                           # MIT License
+├── src/imagegen/                     # ImageGen Core（独立应用）
+│   ├── __init__.py                   # Public Core API（CORE_API_VERSION=2）
+│   ├── _version.py                   # 唯一版本源（__version__ = "2.0.0"）
+│   ├── engine.py / models.py / errors.py
 │   ├── config.py / http.py / image_utils.py
 │   ├── composition.py / reference.py / translator.py
 │   ├── library.py / doctor.py / cli.py / __main__.py
-│   ├── openai_client.py                 # 统一 OpenAI-Compatible Client（endpoint / 文本 / 图像 / 模型）
-│   ├── api/                               # Local HTTP API v1（纯协议适配器）
+│   ├── openai_client.py              # 统一 OpenAI-Compatible Client
+│   ├── api/                          # Local HTTP API v2（纯协议适配器）
 │   │   ├── server.py / routes.py / responses.py / outputs.py
-│   ├── web/                               # Standalone WebUI 静态资源
+│   ├── web/                          # Standalone WebUI 静态资源
 │   │   └── static/index.html / app.js / style.css
-│   ├── services/                         # Application Service 层
-│   │   ├── db.py                         # SQLite schema v2 迁移（user_version=2）
-│   │   ├── assets.py                     # AssetService（Asset 记录 + managed 文件）
-│   │   ├── references.py                 # ReferenceResolver（asset_id → 本地路径）
-│   │   ├── generation.py                 # GenerationService
-│   │   ├── models.py                     # ModelService
-│   │   ├── config.py                     # ConfigService
-│   │   └── diagnostics.py                # DiagnosticService
-├── plugins/deepseek-imagegen/            # Codex 插件（仅 Adapter）
-│   ├── .codex-plugin/plugin.json         # 插件清单
-│   ├── skills/deepseek-imagegen/         # 技能（触发图像生成桥接）
-│   ├── assets/icon.png                   # 插件图标
-│   └── scripts/
-│       ├── image_gen.py                  # 薄入口：加载 Core 并调用 CLI
-│       ├── prompt_lib.py                 # 词库薄入口
-│       ├── codex_adapter.py              # Codex 环境默认值注入（Core 不依赖）
-│       ├── webui.py                      # 兼容 launcher：启动 standalone WebUI
-│       └── config.example.json           # 配置示例（真实 Key 放本地）
-└── tests/                                # 统一测试（python -m unittest）
-    ├── run_smoke_test.py                 # 统一测试入口
-    └── test_*.py                         # Core / Backend / 回归测试
+│   └── services/                     # Application Service 层
+│       ├── db.py                     # ImageGen 2 SQLite（DB_SCHEMA_VERSION=1）
+│       ├── assets.py / references.py / generation.py
+│       ├── models.py / config.py / diagnostics.py
+└── tests/                            # 统一测试（python -m unittest）
+    └── test_*.py
 ```
 
-## 独立安装（不依赖 Codex 插件）
+## 独立安装与运行
 
 ```bash
 pip install -e .
 ```
 
-启动 Standalone WebUI（同时提供 HTTP API）：
+启动 Standalone WebUI（同时提供本地 HTTP API v2）：
 
 ```bash
 imagegen serve --open
@@ -82,6 +81,7 @@ imagegen serve --open
 
 ```bash
 imagegen generate "..." --composition full-body
+imagegen translate "..."        # 使用当前 translator 配置
 imagegen config
 imagegen doctor
 imagegen list-models
@@ -89,51 +89,38 @@ imagegen list-models
 python -m imagegen ...
 ```
 
-## Codex Integration
-
-Codex 插件目录 `plugins/deepseek-imagegen/` 只是 Adapter：薄 CLI 入口加载独立 Core，
-`webui.py` 是兼容 launcher（启动 standalone ImageGen WebUI），不再包含第二套 WebUI 实现。
-
-```bash
-codex plugin marketplace add "D:\deepseek-imagegen-plugin"
-python plugins/deepseek-imagegen/scripts/image_gen.py generate "..." --json
-python plugins/deepseek-imagegen/scripts/webui.py          # 旧入口，等价 imagegen serve
-```
-
-CLI、WebUI 与 Codex Adapter 统一通过 `src/imagegen` 的 Public API（`imagegen` 根模块）
-与 Service 层（`imagegen.services`）消费 Core；`import imagegen` 提供
-`CORE_API_VERSION`、`ImageGenEngine`、`GenerateRequest`、`GenerateResult`
-与错误类型等稳定公共接口。
-
-## Local HTTP API v1
-
-在 Services 之上提供本地 HTTP 适配器（纯协议层，不包含生图业务规则）：
+## Local HTTP API v2
 
 ```bash
 imagegen serve
-# 默认监听 http://127.0.0.1:8765；或 python -m imagegen serve
 ```
 
-接口全部位于 `/api/v2/`：
+本地接口全部位于 `/api/v2/`：
 
 ```text
-GET   /api/v2/health
-POST  /api/v2/generate
-POST  /api/v2/models                      # 模型拉取 {target: "translator" | "image"}
-GET   /api/v2/config
-PATCH /api/v2/config
-POST  /api/v2/doctor
-GET   /api/v2/outputs/{generation_id}
-GET   /api/v2/history
-GET   /api/v2/history/{generation_id}
+GET    /api/v2/health
+POST   /api/v2/generate
+POST   /api/v2/models                      # {target: "translator" | "image"}
+GET    /api/v2/config
+PATCH  /api/v2/config
+POST   /api/v2/doctor
+GET    /api/v2/outputs/{generation_id}
+GET    /api/v2/history
+GET    /api/v2/history/{generation_id}
 DELETE /api/v2/history/{generation_id}
-POST  /api/v2/assets                       # multipart 文件上传（file + kind=reference）
-POST  /api/v2/assets/import                # 服务器本机路径导入 {path, kind}
-GET   /api/v2/assets                       # ?kind=&q=&limit=&offset=
-GET   /api/v2/assets/{asset_id}
-GET   /api/v2/assets/{asset_id}/content    # 预览 / 缩略图
+POST   /api/v2/assets                      # multipart 上传（file + kind=reference）
+POST   /api/v2/assets/import               # 服务器本机路径导入 {path, kind}
+GET    /api/v2/assets                      # ?kind=&q=&limit=&offset=
+GET    /api/v2/assets/{asset_id}
+GET    /api/v2/assets/{asset_id}/content
 DELETE /api/v2/assets/{asset_id}           # 被历史引用时返回 409 asset_in_use
 ```
+
+旧本地路径 `/api/v1/*` 已删除（直接 404，无 redirect / alias）。
+
+> 注意：这里升级的是 ImageGen **本地** API。上游 OpenAI-Compatible 接口仍然是
+> `/v1/chat/completions`、`/v1/responses`、`/v1/models`、
+> `/v1/images/generations`、`/v1/images/edits`，与本地 `/api/v2` 没有版本关联。
 
 示例：
 
@@ -145,47 +132,37 @@ curl -X POST http://127.0.0.1:8765/api/v2/generate \
   -d '{"prompt":"a cat","size":"1024x1024"}'
 ```
 
-PowerShell 示例：
-
-```powershell
-Invoke-RestMethod http://127.0.0.1:8765/api/v2/health
-Invoke-RestMethod -Method Post http://127.0.0.1:8765/api/v2/generate `
-  -ContentType "application/json" `
-  -Body '{"prompt":"a cat","size":"1024x1024"}'
-```
-
-`POST /api/v2/generate` 的请求体直接使用 `GenerateRequest` JSON contract，响应基于
-`GenerateResult.to_dict()` 并附加 `output_url`；生成结果通过 `generation_id`
-经 `/api/v2/outputs/{generation_id}` 读取（进程内注册表，不提供任意文件读取）。
-`GET /api/v2/config` 只返回打码后的配置，`PATCH` 复用 `ConfigService.update`。
+`POST /api/v2/generate` 请求体直接使用 `GenerateRequest` JSON contract；响应基于
+`GenerateResult` 并附加 `output_url`（`/api/v2/outputs/{generation_id}`），
+不暴露服务器本地文件路径。`GET /api/v2/config` 只返回打码后的 effective config，
+`PATCH` 复用 `ConfigService.update`（env secret 不会被写入 config.json）。
 
 ### 模型拉取（非强依赖）
 
-`POST /api/v2/models` 按 target 分别请求两组上游的 `/v1/models`，各自使用自己的 API Key：
-
-```json
-{"target": "image"}
-```
+`POST /api/v2/models` 按 target 分别请求两组上游的 `/v1/models`，各自使用自己的
+`base_url` / `api_key`：
 
 ```json
 {"target": "translator"}
+{"target": "image"}
 ```
 
-返回 `{"models": ["model-a", "model-b"]}`。`/v1/models` 不可用时不影响实际调用——
-`translator.model` / `image.model` 始终允许手工填写。WebUI 的「拉取模型」同时承担连接测试。
+模型列表只是 UI / CLI 辅助能力；拉取失败不影响手工填写 `translator.model` /
+`image.model`，生成流程不依赖 `/models` 成功。
 
 ### Reference Asset System
 
-参考图走持久化 Asset（浏览器上传 / 拖放 / Ctrl+V 粘贴 / 服务器本机路径导入都会先
-转换为 managed asset），默认位置：
+默认数据目录：
 
 ```text
-~/.deepseek-imagegen/
-├ imagegen.db        # SQLite schema v2（generations / assets / generation_assets）
-└ assets/references/ # <asset_id>.png/.jpg/...（不登记原始路径）
+~/.imagegen/
+├── config.json
+├── imagegen.db          # SQLite（generations / assets / generation_assets）
+└── assets/
+    └── references/      # <asset_id>.png/.jpg/...（不登记原始路径）
 ```
 
-`POST /api/v2/generate` 新增 `references` 协议（与旧 `images` 路径兼容并存）：
+`POST /api/v2/generate` 支持 `references` transport 协议：
 
 ```json
 {
@@ -197,56 +174,135 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8765/api/v2/generate `
 }
 ```
 
-HTTP 层通过 `ReferenceResolver` 把 `asset_id` 解析成 managed 本地路径，再转换成现有
+HTTP 层通过 `ReferenceResolver` 把 `asset_id` 解析成 managed 本地路径，再转换为
 Core 契约 `images` + `reference_roles`；`GenerateRequest` / Engine 不知道 asset_id。
 生成成功后 best-effort 记录 `generation_assets`（generation → asset、role、position），
-写入失败只追加 warning，不影响生成成功。`GET /api/v2/history/{generation_id}` 返回
-`references`（asset_id / role / position / content_url），列表接口不塞完整引用数据；
-HTTP 任何位置都不暴露 managed `file_path`。
-
-### Persistent History
-
-每次成功生成（`GenerateResult` 构造完成）都会 best-effort 写入本地历史数据库：
-
-```text
-默认 ~/.deepseek-imagegen/imagegen.db（可自定义 Path 注入）
-```
-
-HTTP 层通过 `/api/v2/history` 读取/删除；历史记录不暴露 `output_path`，而是返回
-`output_url`。`/api/v2/outputs/{generation_id}` 优先读取进程内注册表，未命中时回退到
-历史记录里的输出文件，因此 Server 重启后旧图片仍可访问。历史写入失败只追加 warning，
-不影响生成成功；持久化历史自 Phase 5A 后开始记录（不导入旧 history.json）。
+写入失败只追加 warning。历史详情返回 `references`，HTTP 任何位置都不暴露
+managed `file_path`。
 
 ### 安全说明
 
 - 默认仅监听 `127.0.0.1`；绑定非 loopback 地址必须显式 `--allow-remote`。
-- `--allow-remote` 无身份验证，只应在可信网络环境使用；当前 API 不适合公开互联网部署。
-- 默认不发送全局 CORS 头，不提供认证系统（后续按需设计）。
-- v1 Local API 的 `images` 仍指向运行 ImageGen Server 的本机可访问路径
-  （same-machine API，CLI / Codex 兼容）；参考图推荐使用 Asset API / `references`。
-- 所有错误统一为 `{"error": {"type": "...", "message": "..."}}`。
+- `--allow-remote` 无身份验证，只应在可信网络环境使用。
+- 错误统一为 `{"error": {"type": "...", "message": "..."}}`；
+  上游失败类型为 `upstream_error`。
 
-## 安装
+## 配置
 
-```bash
-codex plugin marketplace add "D:\deepseek-imagegen-plugin"
+配置位置：`~/.imagegen/config.json`。生效优先级固定为：
+
+```text
+DEFAULT_CONFIG < config.json < IMAGEGEN_*
 ```
 
-然后在 Codex 应用中安装 `DeepSeek ImageGen` 插件，并参考 [插件 README](plugins/deepseek-imagegen/README.md) 使用与配置。
+核心配置结构：
 
-## 配置（双 OpenAI-Compatible API）
+```json
+{
+  "translator": {
+    "enabled": true,
+    "base_url": "",
+    "api_key": "",
+    "model": "",
+    "output_lang": "zh"
+  },
+  "image": {
+    "base_url": "",
+    "api_key": "",
+    "model": "",
+    "quality": ""
+  },
+  "default_size": "1024x1024",
+  "size_check": {
+    "enabled": true,
+    "tolerance": 0.06
+  }
+}
+```
 
-配置位置：`~/.deepseek-imagegen/config.json`，模板见 `scripts/config.example.json`。
+同时保留 `composition` / `reference` / `prompt_library` / `save_dir` /
+`mirror_dir` 等子系统配置。完整模板见仓库根目录 `config.example.json`。
 
-- `translator`：提示词上游 `enabled` / `base_url` / `api_key` / `model` / `output_lang`
-- `image`：图像上游 `base_url` / `api_key` / `model` / `quality`（`quality` 留空则向上游省略该字段）
-- `size_check`：`enabled`（默认 true）+ `tolerance`（默认 0.06）；输出尺寸不符只加 warning
-- `prompt_library`：MySQL 连接、Embedding / Rerank（SiliconFlow）、分类置顶
-- `reference`：参考图自动分类与视觉识别脚本
+### IMAGEGEN_* 环境变量
 
-旧配置迁移（简单、确定）：`translator.deepseek.*` 值明确时自动升级为 `translator.*`；
-`translator.engine=off` 迁移为 `enabled=false`；`vertex` 与 `extra_backends.*` 不猜测，
-`image.*` 保持为空，由用户重新配置；`size_policy.tolerance` 迁移为 `size_check.tolerance`。
+```text
+IMAGEGEN_TRANSLATOR_BASE_URL
+IMAGEGEN_TRANSLATOR_API_KEY
+IMAGEGEN_TRANSLATOR_MODEL
+IMAGEGEN_TRANSLATOR_OUTPUT_LANG
+
+IMAGEGEN_IMAGE_BASE_URL
+IMAGEGEN_IMAGE_API_KEY
+IMAGEGEN_IMAGE_MODEL
+IMAGEGEN_IMAGE_QUALITY
+
+IMAGEGEN_DEFAULT_SIZE
+IMAGEGEN_SAVE_DIR
+IMAGEGEN_MIRROR_DIR
+
+IMAGEGEN_SIZE_CHECK_ENABLED
+IMAGEGEN_SIZE_CHECK_TOLERANCE
+```
+
+规则：
+
+- 字符串变量只要存在就视为显式 override（允许空字符串作为明确覆盖值）。
+- Boolean（`IMAGEGEN_SIZE_CHECK_ENABLED`）接受 `true/false`、`1/0`、`on/off`、
+  `yes/no`，大小写不敏感；非法值（含空值）抛 `ConfigurationError`。
+- Float（`IMAGEGEN_SIZE_CHECK_TOLERANCE`）显式转换并校验；非法值抛
+  `ConfigurationError`，不静默使用默认值。
+
+### raw config 与 effective config
+
+- **raw config**：磁盘上的 `~/.imagegen/config.json`，不包含环境变量。
+- **effective config**：`DEFAULT + config.json + IMAGEGEN_*`，运行时真正生效的配置。
+
+WebUI / Runtime 读取 effective config；配置文件写入只修改 raw config，禁止把
+effective config 整体写回磁盘。环境变量中的 API Key 会影响运行时，但不会被一次
+普通 WebUI 保存操作“物化”到 `config.json`。
+
+## 请求 contract（Core `GenerateRequest`）
+
+```text
+prompt
+size
+model
+seed
+quality
+composition
+translator          # 仅 auto / off
+images
+reference_roles
+library_enabled
+out
+```
+
+已删除的旧字段（`width` / `height` / `ref_type` / `denoise`）收到时**明确报
+validation error，而不是静默忽略**。`translator` 只接受 `auto`（跟随配置）与
+`off`（本次强制直传）。HTTP `references` 是 transport 字段，由 Resolver 消费后
+转换为 Core 的 `images` / `reference_roles`，不受 strict validation 影响。
+
+## 结果 / 错误 contract
+
+- `GenerateResult` 公共字段：`ok` / `generation_id` / `image_model_used` /
+  `quality` / `seed` / `requested_size` / `actual_size` / `size_match` /
+  `size_check` / `prompt_used` / `composition` / `composition_preset` /
+  `translator` / `reference` / `prompt_library` / `warnings` / `bytes` /
+  `init_images` / `mirror_path`；Core / CLI 另有本地 `path`。
+- HTTP generate 响应只使用 `output_url`，不暴露服务器本地 `path` / `mirror_path`。
+- 错误层级：`ImageGenError` → `ConfigurationError` / `ValidationError` /
+  `UpstreamError`（→ `HTTPStatusError` / `EmptyImageError`）/
+  `AssetError` / `IncompatibleDatabaseError`。
+
+## SQLite
+
+ImageGen 2.x 数据库 schema lineage 第一版（`DB_SCHEMA_VERSION = 1`）：
+
+- `generations`：无 `backend` 列
+- `assets` / `generation_assets`：保持现有结构
+
+`initialize_db()` 只创建新库或打开当前 schema；已存在但不兼容的
+`~/.imagegen/imagegen.db` 不会被静默删除或重建，而是明确报 schema incompatibility。
 
 ## 测试
 
@@ -255,12 +311,8 @@ python tests/run_smoke_test.py
 # 等价：python -m unittest
 ```
 
-覆盖：配置合并与密钥打码、尺寸工具、构图预设、翻译官 off、参考图三段式（类型 / 避免项 / 简报）、
-出图编排（模拟 OpenAI 上游）、输出路径与镜像副本、CLI JSON 输出、词库统计、
-SQLite schema v2 迁移、AssetService / Asset API、references → ReferenceResolver 集成、
-OpenAIClient（endpoint 归一化 / Chat→Responses fallback / generations / edits / 模型拉取）、
-尺寸原样透传与不符警告、WebUI 双 API 与参考面板前端契约。
-
-另含：Public API / Service 层（Generation / Model / Config / Diagnostic）测试、
-CLI / WebUI 依赖边界（AST 扫描）、独立打包入口（`python -m imagegen`）与
-无 Codex 插件目录的 Core 独立导入测试。
+覆盖：legacy removal 扫描、GenerateRequest strict contract、配置优先级与 env 解析、
+secret 安全、旧路径忽略、DB 初始化与不兼容保护、HTTP v2 路由、CLI contract、
+Chat-first / Responses fallback（仅 404/405/501）、两组 models 独立、
+generations / edits 选择、尺寸原样透传、quality 省略、response parsing、
+endpoint 归一化、打包与 WebUI 前端契约。
