@@ -35,10 +35,8 @@ jobs:
         run: |
           python -c "from importlib.resources import files; r=files('imagegen.web').joinpath('static'); assert r.joinpath('index.html').is_file(); assert r.joinpath('app.js').is_file(); assert r.joinpath('style.css').is_file()"
 
-      - name: Core import without Codex plugin dirs
+      - name: Core standalone import
         run: |
-          mv plugins/deepseek-imagegen/.codex-plugin /tmp/codex-plugin-disabled
-          mv plugins/deepseek-imagegen/skills /tmp/codex-skills-disabled
           python -c "import imagegen; assert imagegen.CORE_API_VERSION == 1"
           python -m imagegen --help
 

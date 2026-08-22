@@ -269,7 +269,7 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument(
         "--config",
         default="",
-        help="配置文件路径（默认 ~/.deepseek-imagegen/config.json）",
+        help="配置文件路径（默认 ~/.imagegen/config.json）",
     )
     serve.add_argument(
         "--allow-remote",

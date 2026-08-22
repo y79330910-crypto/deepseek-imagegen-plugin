@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 
-APP_NAME = "deepseek-imagegen"
+APP_NAME = "imagegen"
 # 独立程序不内置任何宿主专属路径：
 # - mirror_dir 缺省时可使用环境变量 IMAGEGEN_MIRROR_DIR 指定
 MIRROR_DIR_ENV = "IMAGEGEN_MIRROR_DIR"
@@ -17,21 +17,21 @@ DEFAULT_MIRROR_DIR = ""
 
 def default_config_path() -> Path:
     """ImageGen 默认用户配置路径（单一来源，跨模块复用）。"""
-    return Path.home() / ".deepseek-imagegen" / "config.json"
+    return Path.home() / ".imagegen" / "config.json"
 
 
 def default_history_db_path() -> Path:
     """ImageGen 默认历史数据库路径（单一来源，跨模块复用）。"""
-    return Path.home() / ".deepseek-imagegen" / "imagegen.db"
+    return Path.home() / ".imagegen" / "imagegen.db"
 
 
 def default_asset_dir() -> Path:
     """ImageGen 默认 managed asset 目录（单一来源，跨模块复用）。"""
-    return Path.home() / ".deepseek-imagegen" / "assets" / "references"
+    return Path.home() / ".imagegen" / "assets" / "references"
 
 
 # 兼容常量（新代码优先使用 default_config_path()）
-CONFIG_DIR = Path.home() / ".deepseek-imagegen"
+CONFIG_DIR = Path.home() / ".imagegen"
 CONFIG_FILE = default_config_path()
 
 

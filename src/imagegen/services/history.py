@@ -1,6 +1,6 @@
 """Generation 持久化层：sqlite3 存储 + HistoryService（无 ORM / 连接池 / 异步）。
 
-架构边界：CLI / HTTP / WebUI / Codex 只依赖 HistoryService；Engine 不知道 SQLite；
+架构边界：CLI / HTTP / WebUI 只依赖 HistoryService；Engine 不知道 SQLite；
 HTTP 层不写 SQL；WebUI 不知道 History 实现。
 """
 

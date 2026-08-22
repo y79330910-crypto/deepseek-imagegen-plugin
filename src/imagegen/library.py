@@ -151,7 +151,7 @@ def _http_json(url: str, payload: dict[str, Any], api_key: str, timeout: int = 1
             headers={
                 "Authorization": "Bearer " + api_key,
                 "Content-Type": "application/json",
-                "User-Agent": "deepseek-imagegen/prompt-lib",
+        "User-Agent": "imagegen/prompt-lib",
             },
             method="POST",
         )

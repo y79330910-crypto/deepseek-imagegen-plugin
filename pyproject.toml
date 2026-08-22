@@ -3,11 +3,12 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "imagegen-core"
-version = "1.0.0"
-description = "ImageGen standalone local image generation application with CLI, HTTP API, WebUI and Codex integration"
+name = "imagegen"
+dynamic = ["version"]
+description = "Standalone image generation application with CLI, WebUI and local HTTP API"
 readme = "README.md"
 requires-python = ">=3.10"
+license = {text = "MIT"}
 dependencies = []
 
 [project.optional-dependencies]
@@ -20,6 +21,9 @@ imagegen = "imagegen.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["imagegen*"]
+
+[tool.setuptools.dynamic]
+version = {attr = "imagegen._version.__version__"}
 
 [tool.setuptools.package-data]
 imagegen = [
