@@ -18,6 +18,14 @@ class BackendError(ImageGenError):
     """后端服务错误（连接失败、上游异常、空结果）。"""
 
 
+class HTTPStatusError(ImageGenError):
+    """上游返回非 2xx 状态（含 429 重试后）；携带 status 供 fallback 判断。"""
+
+    def __init__(self, status: int, message: str):
+        super().__init__(message)
+        self.status = status
+
+
 class ValidationError(ImageGenError):
     """输入参数校验失败。"""
 
