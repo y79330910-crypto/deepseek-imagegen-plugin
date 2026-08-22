@@ -14,11 +14,11 @@ class ConfigurationError(ImageGenError):
     """配置 / 依赖环境问题（路径、密钥、依赖缺失）。"""
 
 
-class BackendError(ImageGenError):
-    """后端服务错误（连接失败、上游异常、空结果）。"""
+class UpstreamError(ImageGenError):
+    """OpenAI-Compatible 上游服务错误（连接失败、异常响应、空结果）。"""
 
 
-class HTTPStatusError(ImageGenError):
+class HTTPStatusError(UpstreamError):
     """上游返回非 2xx 状态（含 429 重试后）；携带 status 供 fallback 判断。"""
 
     def __init__(self, status: int, message: str):
@@ -30,11 +30,7 @@ class ValidationError(ImageGenError):
     """输入参数校验失败。"""
 
 
-# 兼容旧名：早期版本统一抛出 GenError
-GenError = ImageGenError
-
-
-class EmptyImageError(BackendError):
+class EmptyImageError(UpstreamError):
     """图像接口返回了空结果（常见于上游限流但代理返回 HTTP 200 + 空 data）。"""
 
 

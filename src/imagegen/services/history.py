@@ -47,7 +47,6 @@ class HistoryRecord:
     id: str
     created_at: str
     output_path: str
-    backend: str = ""
     image_model_used: str = ""
     prompt: str = ""
     prompt_used: str = ""
@@ -64,7 +63,7 @@ class HistoryRecord:
             id=row[0],
             created_at=row[1],
             output_path=row[2],
-            backend=row[3] or "",
+            # 旧 schema 的 backend 列（index 3）在 ImageGen 2 lineage 中删除
             image_model_used=row[4] or "",
             prompt=row[5] or "",
             prompt_used=row[6] or "",
@@ -81,7 +80,6 @@ class HistoryRecord:
             "id": self.id,
             "created_at": self.created_at,
             "output_path": self.output_path,
-            "backend": self.backend,
             "image_model_used": self.image_model_used,
             "prompt": self.prompt,
             "prompt_used": self.prompt_used,
@@ -115,7 +113,6 @@ class HistoryService:
             id=result.generation_id,
             created_at=utc_now_iso(),
             output_path=result.path,
-            backend=result.backend,
             image_model_used=result.image_model_used,
             prompt=(request.prompt or ""),
             prompt_used=result.prompt_used,
@@ -128,6 +125,7 @@ class HistoryService:
         )
         conn = self._connect()
         try:
+            # backend 列将在 ImageGen 2 DB lineage 中删除；新代码统一写入空值。
             conn.execute(
                 "INSERT OR REPLACE INTO generations "
                 "(id, created_at, output_path, backend, image_model_used, prompt, prompt_used, "
@@ -137,7 +135,7 @@ class HistoryService:
                     rec.id,
                     rec.created_at,
                     rec.output_path,
-                    rec.backend,
+                    "",
                     rec.image_model_used,
                     rec.prompt,
                     rec.prompt_used,

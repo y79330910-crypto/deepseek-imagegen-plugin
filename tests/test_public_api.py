@@ -17,10 +17,10 @@ from imagegen import (
     ModelService,
 )
 from imagegen.errors import (
-    BackendError,
     ConfigurationError,
     EmptyImageError,
-    GenError,
+    HTTPStatusError,
+    UpstreamError,
     ValidationError,
 )
 
@@ -47,11 +47,13 @@ class TestPublicApi(unittest.TestCase):
             self.assertTrue(hasattr(imagegen, name), name)
 
     def test_error_hierarchy(self):
-        self.assertIs(GenError, ImageGenError)
         self.assertTrue(issubclass(ConfigurationError, ImageGenError))
-        self.assertTrue(issubclass(BackendError, ImageGenError))
+        self.assertTrue(issubclass(UpstreamError, ImageGenError))
+        self.assertTrue(issubclass(HTTPStatusError, UpstreamError))
+        self.assertTrue(issubclass(EmptyImageError, UpstreamError))
         self.assertTrue(issubclass(ValidationError, ImageGenError))
-        self.assertTrue(issubclass(EmptyImageError, BackendError))
+        http_error = HTTPStatusError(404, "not found")
+        self.assertEqual(http_error.status, 404)
 
     def test_engine_interface(self):
         engine = ImageGenEngine()

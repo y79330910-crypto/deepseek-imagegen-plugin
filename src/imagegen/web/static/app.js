@@ -523,7 +523,7 @@ async function handleDoctor() {
       const ok = !!c.ok;
       html +=
         '<div class="check"><span class="' + (ok ? "ok" : "fail") + '">' +
-        (ok ? "OK" : "FAIL") + "</span> <b>" + esc(c.backend || "") + "</b> " +
+        (ok ? "OK" : "FAIL") + "</span> <b>" + esc(c.target || "") + "</b> " +
         esc(c.message || "") +
         (c.model_count ? "（共 " + esc(c.model_count) + " 个模型）" : "") +
         "</div>";

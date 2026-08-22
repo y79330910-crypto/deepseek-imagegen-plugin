@@ -27,7 +27,6 @@ class FakeEngine:
         self.calls.append(request)
         return GenerateResult(
             path="out.png",
-            backend="openai",
             image_model_used="gemini-3-pro-image",
             seed=1,
             requested_size="1024x1024",
@@ -230,7 +229,6 @@ class TestDiagnosticService(unittest.TestCase):
         ):
             result = DiagnosticService().doctor()
         self.assertTrue(result["ok"])
-        self.assertEqual(result["backend"], "openai")
         self.assertEqual(len(result["checks"]), 2)
         for check in result["checks"]:
             self.assertTrue(check["ok"])

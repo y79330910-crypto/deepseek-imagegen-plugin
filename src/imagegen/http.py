@@ -8,7 +8,7 @@ import urllib.error
 import urllib.request
 from typing import Any, Optional
 
-from .errors import GenError, HTTPStatusError
+from .errors import HTTPStatusError, UpstreamError
 
 
 # 高清图（如 2K/4K）生成耗时较长，默认超时放宽到 600 秒
@@ -62,9 +62,9 @@ def http(
                 exc.code, f"接口返回 HTTP {exc.code}：{detail[:300]}"
             ) from exc
         except urllib.error.URLError as exc:
-            raise GenError(f"无法连接 {url}：{exc.reason}") from exc
+            raise UpstreamError(f"无法连接 {url}：{exc.reason}") from exc
         except TimeoutError as exc:
-            raise GenError(f"请求超时（{timeout} 秒）：{url}") from exc
+            raise UpstreamError(f"请求超时（{timeout} 秒）：{url}") from exc
     raise HTTPStatusError(
         429, f"上游接口持续限流（429），请稍后再试：{last_detail[:200]}"
     )

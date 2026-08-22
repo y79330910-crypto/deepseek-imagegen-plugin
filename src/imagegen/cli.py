@@ -10,7 +10,7 @@ import sys
 import webbrowser
 from typing import Any, Optional
 
-from .errors import GenError
+from .errors import ImageGenError
 from .models import GenerateRequest
 from .services import (
     ConfigService,
@@ -79,7 +79,7 @@ def cmd_list_models(args: argparse.Namespace) -> dict[str, Any]:
     for target in ("translator", "image"):
         try:
             result["models"][target] = svc.list_models(target)
-        except GenError as exc:
+        except ImageGenError as exc:
             result["models"][target] = f"不可用：{exc}"
     return result
 
@@ -116,15 +116,14 @@ def _print_result(result: dict[str, Any], use_json: bool) -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if result.get("ok", True) else 1
     if "path" in result:
-        print(f"后端：{result['backend']}")
         print(f"输出：{result['path']}")
         actual = result.get("actual_size")
         match = result.get("size_match")
         if actual:
             mark = "✓" if match else "✗"
-            print(f"尺寸：请求 {result['size']} → 实际 {actual} {mark}")
+            print(f"尺寸：请求 {result['requested_size']} → 实际 {actual} {mark}")
         else:
-            print(f"尺寸：请求 {result['size']}（无法读取实际尺寸）")
+            print(f"尺寸：请求 {result['requested_size']}（无法读取实际尺寸）")
         print(f"种子：{result['seed']}")
         if result.get("image_model_used"):
             print(f"图像模型：{result['image_model_used']}")
@@ -136,11 +135,8 @@ def _print_result(result: dict[str, Any], use_json: bool) -> int:
                 f"参考图类型：{refinfo.get('label') or refinfo.get('type')}"
                 f"（识别方式：{refinfo.get('method')}）"
             )
-        if result.get("init_image"):
-            print(
-                f"图生图：原图 {result['init_image']}"
-                + (f"  去噪强度：{result.get('denoise')}" if result.get("denoise") else "")
-            )
+        if result.get("init_images"):
+            print(f"图生图：参考图 {len(result['init_images'])} 张")
         if result.get("warnings"):
             for warn in result["warnings"]:
                 print(f"提示：{warn}")
@@ -149,12 +145,11 @@ def _print_result(result: dict[str, Any], use_json: bool) -> int:
             f"配置文件：{result['config_file']}"
             f"（{'存在' if result['config_exists'] else '不存在，使用默认配置'}）"
         )
-        print(f"后端：{result['backend']}")
         for check in result["checks"]:
             extra = ""
             if check.get("best_model"):
                 extra = f"（最佳模型：{check['best_model']}，共 {check.get('model_count')} 个）"
-            print(f"  [{'OK' if check['ok'] else 'FAIL'}] {check['backend']}: {check['message']}{extra}")
+            print(f"  [{'OK' if check['ok'] else 'FAIL'}] {check['target']}: {check['message']}{extra}")
     elif "models" in result:
         for name, models in result["models"].items():
             print(f"[{name}]")
@@ -282,7 +277,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             parser.error(f"未知命令：{args.command}")
             return 2
         return _print_result(result, use_json=args.json)
-    except GenError as exc:
+    except ImageGenError as exc:
         if args.json:
             print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
         else:

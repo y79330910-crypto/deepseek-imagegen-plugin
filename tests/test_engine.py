@@ -9,7 +9,7 @@ from unittest import mock
 
 from imagegen import engine
 from imagegen.config import load_config
-from imagegen.errors import GenError
+from imagegen.errors import ConfigurationError
 from imagegen.models import GenerateRequest
 
 from ._helpers import FakeOpenAIClient, make_png_bytes
@@ -105,10 +105,8 @@ class TestImageModelUsed(unittest.TestCase):
                     GenerateRequest(prompt="画一张图", size="1024x1024", seed=1)
                 )
             self.assertEqual(result.image_model_used, "gemini-3-pro-image")
-            self.assertEqual(result.model, "gemini-3-pro-image")
             self.assertEqual(result.translator.get("model"), "tr-model")
             self.assertNotEqual(result.image_model_used, result.translator.get("model"))
-            self.assertEqual(result.backend, "openai")
             data = result.to_dict()
             self.assertEqual(data["image_model_used"], "gemini-3-pro-image")
 
@@ -183,7 +181,7 @@ class TestMissingImageConfig(unittest.TestCase):
             cfg["image"] = {"base_url": "", "api_key": "", "model": "", "quality": ""}
             with (
                 mock.patch.object(engine, "load_config", return_value=cfg),
-                self.assertRaises(GenError),
+                self.assertRaises(ConfigurationError),
             ):
                 engine.generate(
                     GenerateRequest(prompt="画一张图", size="1024x1024", translator="off")

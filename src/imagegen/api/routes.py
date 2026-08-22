@@ -12,9 +12,9 @@ from urllib.parse import parse_qs, unquote
 from ..errors import (
     AssetInUseError,
     AssetNotFoundError,
-    BackendError,
     ConfigurationError,
     ImageGenError,
+    UpstreamError,
     ValidationError,
 )
 from ..models import GenerateRequest
@@ -47,8 +47,8 @@ def map_exception(exc: BaseException) -> Response:
         return error_response(400, "validation_error", str(exc))
     if isinstance(exc, ConfigurationError):
         return error_response(400, "configuration_error", str(exc))
-    if isinstance(exc, BackendError):
-        return error_response(502, "backend_error", str(exc))
+    if isinstance(exc, UpstreamError):
+        return error_response(502, "upstream_error", str(exc))
     if isinstance(exc, AssetNotFoundError):
         return error_response(404, "not_found", str(exc))
     if isinstance(exc, AssetInUseError):
@@ -182,7 +182,6 @@ def history_public_dict(record: Any) -> dict[str, Any]:
         "generation_id": record.id,
         "created_at": record.created_at,
         "prompt": record.prompt,
-        "backend": record.backend,
         "image_model_used": record.image_model_used,
         "seed": record.seed,
         "requested_size": record.requested_size,

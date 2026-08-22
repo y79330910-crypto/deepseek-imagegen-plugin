@@ -24,7 +24,6 @@ class FakeGenerationService:
     ):
         self.result = result or GenerateResult(
             path=r"D:\tmp\out.png",
-            backend="openai",
             image_model_used="gemini-3-pro-image",
             seed=1,
             requested_size="1024x1024",
@@ -61,7 +60,7 @@ class FakeModelService:
 
 class FakeDiagnosticService:
     def __init__(self, result: Optional[dict] = None, exc: Optional[Exception] = None):
-        self.result = result or {"ok": True, "backend": "openai", "checks": []}
+        self.result = result or {"ok": True, "checks": []}
         self.exc = exc
 
     def doctor(self):

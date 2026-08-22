@@ -37,7 +37,6 @@ class TestRestartRegression(unittest.TestCase):
             GenerateRequest(prompt="persisted prompt"),
             GenerateResult(
                 path=str(self.out_file),
-                backend="vertex",
                 image_model_used="gemini-3-pro-image",
                 seed=3,
                 requested_size="1024x1024",

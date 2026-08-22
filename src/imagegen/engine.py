@@ -1,7 +1,6 @@
 """出图编排：GenerateRequest → 配置 → 参考图 → 构图 → 翻译官/词库 → 图像上游 → 尺寸检查 → 保存。
 
-Phase 6：不再有 Backend / Vertex / extra_backends / size_policy / Canvas fallback。
-提示词与图像使用两套独立 OpenAI-Compatible 连接，尺寸原样透传，输出尺寸不符只加 warning。
+提示词与图像使用两套独立 OpenAI-Compatible 上游，尺寸原样透传，输出尺寸不符只加 warning。
 """
 
 from __future__ import annotations
@@ -13,7 +12,7 @@ from typing import Any, Optional
 from . import reference as ref_mod
 from .composition import composition_prompt_suffix, resolve_composition
 from .config import load_config
-from .errors import BackendError, ConfigurationError, GenError
+from .errors import ConfigurationError
 from .image_utils import (
     default_output_path,
     load_init_image,
@@ -239,18 +238,15 @@ def _run_generation(
         )
     quality = (request.quality or "").strip() or str(img_cfg.get("quality") or "").strip()
     client = OpenAIClient(base_url, api_key)
-    try:
-        if init_images_data:
-            data = client.edit_image(
-                eff_model, final_prompt.strip(), size_str, init_images_data,
-                quality=quality,
-            )
-        else:
-            data = client.generate_image(
-                eff_model, final_prompt.strip(), size_str, quality=quality
-            )
-    except GenError as exc:
-        raise BackendError(str(exc)) from exc
+    if init_images_data:
+        data = client.edit_image(
+            eff_model, final_prompt.strip(), size_str, init_images_data,
+            quality=quality,
+        )
+    else:
+        data = client.generate_image(
+            eff_model, final_prompt.strip(), size_str, quality=quality
+        )
 
     # ---- 尺寸检查：读取真实输出尺寸，不符只加 warning，不自动重试 / 不修改请求
     actual_size = probe_image_size_ext(data, "")
@@ -293,9 +289,7 @@ def _run_generation(
 
     result = GenerateResult(
         path=str(out_path),
-        backend="openai",
         image_model_used=eff_model,
-        model=eff_model,
         seed=seed,
         requested_size=size_str,
         actual_size=f"{actual_size[0]}x{actual_size[1]}" if actual_size else "未知",

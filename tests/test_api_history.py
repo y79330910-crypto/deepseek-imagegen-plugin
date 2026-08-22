@@ -26,7 +26,6 @@ def make_png_bytes() -> bytes:
 def make_result(gid="a" * 32, path="out.png"):
     return GenerateResult(
         path=path,
-        backend="vertex",
         image_model_used="gemini-3-pro-image",
         seed=7,
         requested_size="1024x1024",

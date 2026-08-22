@@ -30,7 +30,7 @@ class DiagnosticService:
 
     def _check_target(self, target: str, cfg: dict[str, Any]) -> dict[str, Any]:
         entry: dict[str, Any] = {
-            "backend": target,
+            "target": target,
             "ok": False,
             "message": "未配置 base_url / api_key",
         }
@@ -63,6 +63,5 @@ class DiagnosticService:
             "ok": any(check["ok"] for check in checks),
             "config_file": str(cfg_path),
             "config_exists": cfg_path.exists(),
-            "backend": "openai",
             "checks": checks,
         }

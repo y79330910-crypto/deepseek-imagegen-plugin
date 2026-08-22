@@ -8,10 +8,11 @@ from __future__ import annotations
 
 from .engine import ImageGenEngine
 from .errors import (
-    BackendError,
     ConfigurationError,
-    GenError,
+    EmptyImageError,
+    HTTPStatusError,
     ImageGenError,
+    UpstreamError,
     ValidationError,
 )
 from .models import GenerateRequest, GenerateResult
@@ -32,9 +33,10 @@ __all__ = [
     "GenerateResult",
     "ImageGenError",
     "ConfigurationError",
-    "BackendError",
+    "UpstreamError",
+    "HTTPStatusError",
+    "EmptyImageError",
     "ValidationError",
-    "GenError",
     "GenerationService",
     "ModelService",
     "ConfigService",

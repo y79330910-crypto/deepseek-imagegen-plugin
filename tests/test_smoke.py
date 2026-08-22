@@ -27,7 +27,7 @@ from imagegen import engine as engine_mod  # noqa: E402
 from imagegen.composition import resolve_composition  # noqa: E402
 from imagegen.config import load_config, mask_config  # noqa: E402
 from imagegen.engine import generate  # noqa: E402
-from imagegen.errors import GenError  # noqa: E402
+from imagegen.errors import ValidationError  # noqa: E402
 from imagegen.image_utils import (  # noqa: E402
     aspect_ratio_key,
     default_output_path,
@@ -71,7 +71,7 @@ class TestImageUtils(unittest.TestCase):
     def test_parse_size(self):
         self.assertEqual(parse_size("1024x768"), (1024, 768))
         self.assertEqual(parse_size("768×1408"), (768, 1408))
-        with self.assertRaises(GenError):
+        with self.assertRaises(ValidationError):
             parse_size("abc")
 
     def test_slugify(self):
@@ -97,7 +97,7 @@ class TestComposition(unittest.TestCase):
         cfg = load_config()
         self.assertEqual(resolve_composition("全身", cfg), "full-body")
         self.assertEqual(resolve_composition("auto", cfg), "auto")
-        with self.assertRaises(GenError):
+        with self.assertRaises(ValidationError):
             resolve_composition("不存在的预设", cfg)
 
 
@@ -219,7 +219,6 @@ class TestGenerateFlow(unittest.TestCase):
             self.assertEqual(result["seed"], 123)
             self.assertNotIn("角色设定", result["prompt_used"])
             self.assertTrue(result["size_check"]["match"])
-            self.assertEqual(result["backend"], "openai")
             self.assertTrue((Path(tmp) / "mirror" / Path(result["path"]).name).is_file())
 
     def test_generate_user_reference_three_stage(self):
@@ -350,7 +349,7 @@ class TestMultiReference(unittest.TestCase):
     def test_max_refs_rejected(self):
         cfg = load_config()
         with mock.patch.object(engine_mod, "load_config", return_value=cfg):
-            with self.assertRaises(GenError):
+            with self.assertRaises(ValidationError):
                 generate(
                     GenerateRequest(
                         prompt="测试",

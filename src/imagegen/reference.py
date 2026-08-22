@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 from typing import Any, Optional
 
-from .errors import GenError, ValidationError
+from .errors import ValidationError
 
 
 REF_TYPE_CHOICES = [
@@ -237,7 +237,7 @@ def extract_reference_features(
     if role and role != "auto":
         try:
             role = validate_ref_type(role)
-        except GenError:
+        except ValidationError:
             role = "auto"
     ref_cfg = cfg.get("reference") or {}
     if not isinstance(ref_cfg, dict):

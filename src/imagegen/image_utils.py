@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .config import APP_NAME
-from .errors import GenError, ValidationError
+from .errors import UpstreamError, ValidationError
 from .http import BROWSER_UA, HEALTH_TIMEOUT, http
 
 
@@ -231,7 +231,7 @@ def load_init_image(ref: str) -> tuple[bytes, str, str]:
     """读取参考图，返回 (字节, MIME, 建议文件名)。支持本地路径 / http(s) / data URI。"""
     ref = (ref or "").strip().strip('"')
     if not ref:
-        raise GenError("--image 不能为空。")
+        raise ValidationError("--image 不能为空。")
     name = "reference"
     data: bytes = b""
     mime = ""
@@ -240,7 +240,7 @@ def load_init_image(ref: str) -> tuple[bytes, str, str]:
             ref, headers={"User-Agent": BROWSER_UA}, timeout=HEALTH_TIMEOUT * 3
         )
         if not ctype.lower().startswith("image/"):
-            raise GenError(f"--image 指向的内容不是图片（Content-Type: {ctype}）。")
+            raise ValidationError(f"--image 指向的内容不是图片（Content-Type: {ctype}）。")
         data = body
         parsed_name = urllib.parse.urlparse(ref).path.rsplit("/", 1)[-1]
         if parsed_name:
@@ -251,18 +251,18 @@ def load_init_image(ref: str) -> tuple[bytes, str, str]:
         try:
             data = base64.b64decode(b64)
         except Exception as exc:  # noqa: BLE001
-            raise GenError(f"data URI 图片解码失败：{exc}") from exc
+            raise ValidationError(f"data URI 图片解码失败：{exc}") from exc
         mime = header[5:].split(";")[0].strip()
     else:
         path = Path(ref).expanduser()
         if not path.is_file():
-            raise GenError(f"找不到图片文件：{path}")
+            raise ValidationError(f"找不到图片文件：{path}")
         data = path.read_bytes()
         name = path.name
     if not data:
-        raise GenError("图片内容为空。")
+        raise ValidationError("图片内容为空。")
     if len(data) > MAX_INIT_BYTES:
-        raise GenError(
+        raise ValidationError(
             f"图片过大（{len(data) // 1024} KB），上限 {MAX_INIT_BYTES // (1024 * 1024)} MB。"
         )
     mime = mime or _guess_mime(data, name)

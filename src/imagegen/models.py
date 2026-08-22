@@ -136,7 +136,6 @@ class GenerateResult:
     """一次生图的完整结果。"""
 
     path: str
-    backend: str
     image_model_used: str
     seed: int | None
     requested_size: str
@@ -144,11 +143,8 @@ class GenerateResult:
     prompt_used: str
     generation_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     warnings: list[str] = field(default_factory=list)
-    # 附加字段（CLI / WebUI 兼容）
     ok: bool = True
-    model: str = ""
     quality: str = ""
-    size_hint: str = ""
     size_match: bool = False
     size_check: dict[str, Any] = field(default_factory=dict)
     composition: str = "auto"
@@ -162,17 +158,14 @@ class GenerateResult:
 
     def to_dict(self) -> dict[str, Any]:
         """转换为 dict 结果格式（JSON 输出兼容）。"""
-        data: dict[str, Any] = {
+        return {
             "ok": self.ok,
-            "backend": self.backend,
-            "model": self.image_model_used,
-            "image_model_used": self.image_model_used,
             "generation_id": self.generation_id,
+            "image_model_used": self.image_model_used,
             "quality": self.quality,
-            "size_hint": self.size_hint,
             "path": self.path,
             "seed": self.seed,
-            "size": self.requested_size,
+            "requested_size": self.requested_size,
             "actual_size": self.actual_size,
             "size_match": self.size_match,
             "size_check": self.size_check,
@@ -184,9 +177,7 @@ class GenerateResult:
             "reference": self.reference,
             "prompt_library": self.prompt_library,
             "warnings": list(self.warnings),
+            "bytes": self.bytes,
+            "init_images": list(self.init_images),
+            "mirror_path": self.mirror_path,
         }
-        if self.init_images:
-            data["init_images"] = list(self.init_images)
-        if self.mirror_path:
-            data["mirror_path"] = self.mirror_path
-        return data

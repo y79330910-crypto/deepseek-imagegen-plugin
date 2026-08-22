@@ -16,7 +16,6 @@ class FakeResultEngine:
     def generate(self, request):
         return GenerateResult(
             path=r"C:\tmp\out.png",
-            backend="vertex",
             image_model_used="gemini-3-pro-image",
             seed=7,
             requested_size="1024x1024",

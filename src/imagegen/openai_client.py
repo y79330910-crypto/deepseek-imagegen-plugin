@@ -12,7 +12,12 @@ import time
 from typing import Any, Optional
 
 from .config import APP_NAME
-from .errors import ConfigurationError, EmptyImageError, GenError, HTTPStatusError
+from .errors import (
+    ConfigurationError,
+    EmptyImageError,
+    HTTPStatusError,
+    UpstreamError,
+)
 from .http import HEALTH_TIMEOUT, http
 from .image_utils import multipart
 
@@ -41,10 +46,10 @@ def extract_image_from_response(body: bytes) -> bytes:
     try:
         data = json.loads(body.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise GenError(f"图像接口返回了无法解析的内容：{body[:300]!r}") from exc
+        raise UpstreamError(f"图像接口返回了无法解析的内容：{body[:300]!r}") from exc
     if isinstance(data, dict) and data.get("error"):
         err = data["error"]
-        raise GenError(f"图像接口返回错误：{err.get('message') or err}")
+        raise UpstreamError(f"图像接口返回错误：{err.get('message') or err}")
     items = (data.get("data") or []) if isinstance(data, dict) else []
     if not items:
         raise EmptyImageError(
@@ -56,7 +61,7 @@ def extract_image_from_response(body: bytes) -> bytes:
         try:
             return base64.b64decode(b64)
         except Exception as exc:  # noqa: BLE001
-            raise GenError(f"图片 base64 解码失败：{exc}") from exc
+            raise UpstreamError(f"图片 base64 解码失败：{exc}") from exc
     url = item.get("url")
     if url:
         if url.startswith("data:image/"):
@@ -64,7 +69,7 @@ def extract_image_from_response(body: bytes) -> bytes:
             return base64.b64decode(b64)
         _status, body, _ctype = http(url)
         return body
-    raise GenError(f"图像接口返回中缺少图片数据：{body[:500]!r}")
+    raise UpstreamError(f"图像接口返回中缺少图片数据：{body[:500]!r}")
 
 
 def _chat_completions_text(body: bytes) -> str:
@@ -72,7 +77,7 @@ def _chat_completions_text(body: bytes) -> str:
     try:
         content = data["choices"][0]["message"].get("content")
     except (KeyError, IndexError) as exc:
-        raise GenError(f"聊天接口返回异常：{str(data)[:300]}") from exc
+        raise UpstreamError(f"聊天接口返回异常：{str(data)[:300]}") from exc
     return str(content or "").strip()
 
 
@@ -85,7 +90,7 @@ def _responses_text(body: bytes) -> str:
                 if chunk.get("type") == "output_text" and chunk.get("text"):
                     parts.append(str(chunk["text"]))
     if not parts:
-        raise GenError(f"Responses 接口返回异常：{str(data)[:300]}")
+        raise UpstreamError(f"Responses 接口返回异常：{str(data)[:300]}")
     return "\n".join(parts).strip()
 
 
@@ -232,7 +237,7 @@ class OpenAIClient:
                     time.sleep(retry_delay_base * (2**attempt))
                     continue
                 raise
-        raise GenError(last_err or "图像接口未返回图片")
+        raise UpstreamError(last_err or "图像接口未返回图片")
 
     def edit_image(
         self,

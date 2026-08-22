@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from imagegen.errors import BackendError, ValidationError
+from imagegen.errors import UpstreamError, ValidationError
 from imagegen.models import GenerateResult
 
 from .api_test_utils import ApiTestServer, FakeGenerationService
@@ -14,7 +14,6 @@ class TestGenerateRoute(unittest.TestCase):
     def setUp(self):
         self.result = GenerateResult(
             path=r"D:\tmp\out.png",
-            backend="openai",
             image_model_used="gemini-3-pro-image",
             seed=7,
             requested_size="1024x1024",
@@ -35,7 +34,6 @@ class TestGenerateRoute(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(data["generation_id"], self.result.generation_id)
         self.assertEqual(data["output_url"], f"/api/v1/outputs/{self.result.generation_id}")
-        self.assertEqual(data["backend"], "openai")
         self.assertEqual(data["image_model_used"], "gemini-3-pro-image")
         self.assertEqual(data["warnings"], ["w1"])
         self.assertEqual(fake.last_request.prompt, "a cat")
@@ -52,15 +50,15 @@ class TestGenerateRoute(unittest.TestCase):
         self.assertEqual(data["error"]["type"], "validation_error")
         self.assertEqual(data["error"]["message"], "prompt must not be empty")
 
-    def test_backend_error_502(self):
-        fake = FakeGenerationService(exc=BackendError("upstream timeout"))
+    def test_upstream_error_502(self):
+        fake = FakeGenerationService(exc=UpstreamError("upstream timeout"))
         server = ApiTestServer(generation_service=fake)
         self.addCleanup(server.close)
         status, _, data = server.json(
             "POST", "/api/v1/generate", {"prompt": "x"}
         )
         self.assertEqual(status, 502)
-        self.assertEqual(data["error"]["type"], "backend_error")
+        self.assertEqual(data["error"]["type"], "upstream_error")
 
     def test_unknown_exception_500_without_leak(self):
         fake = FakeGenerationService(

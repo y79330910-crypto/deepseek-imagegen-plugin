@@ -12,7 +12,6 @@ from imagegen.services.history import HistoryRecord, HistoryService, utc_now_iso
 def make_result(path="out.png", generation_id="a" * 32, prompt_used="p"):
     return GenerateResult(
         path=path,
-        backend="vertex",
         image_model_used="gemini-3-pro-image",
         seed=7,
         requested_size="1024x1024",
@@ -51,7 +50,6 @@ class TestHistoryService(unittest.TestCase):
         self.assertEqual(got.warnings, ["w1"])
         self.assertEqual(got.request["prompt"], "hello")
         self.assertEqual(got.request["size"], "1024x1024")
-        self.assertEqual(got.backend, "vertex")
         self.assertEqual(got.created_at, rec.created_at)
 
     def test_request_json_round_trip(self):
@@ -116,7 +114,6 @@ class TestHistoryRecord(unittest.TestCase):
             id="x" * 32,
             created_at="2026-08-22T03:31:46.123Z",
             output_path=r"D:\out.png",
-            backend="vertex",
             image_model_used="m",
             prompt="p",
             prompt_used="pp",
