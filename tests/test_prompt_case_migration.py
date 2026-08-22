@@ -113,7 +113,12 @@ class TestPromptCaseMigration(unittest.TestCase):
 
     def test_rebuild_preserves_legacy_blobs_and_writes_new_metadata(self):
         select_cursor = FakeCursor(rows=[(1, "content one", "", "text_to_image")])
-        update_cursor = FakeCursor()
+        update_cursor = FakeCursor(
+            fetchone_values=[
+                (1,),
+                (1, "content one", "", "text_to_image", 0, None, 0, "", "", None),
+            ]
+        )
         connections = [FakeConnection(select_cursor), FakeConnection(update_cursor)]
 
         def fake_parser(requirement, content, **_kwargs):  # noqa: ANN001
@@ -127,11 +132,17 @@ class TestPromptCaseMigration(unittest.TestCase):
             result = library.rebuild_cases(self.pl)
 
         self.assertEqual(result, {"total": 1, "success": 1, "failed": 0, "skipped": 0})
-        sql, params = update_cursor.executed[0]
+        sql, params = next(
+            (sql, params)
+            for sql, params in update_cursor.executed
+            if "UPDATE prompts SET" in sql
+        )
         self.assertIn("intent_embedding", sql)
         self.assertNotIn(" embedding=%s", sql)
         self.assertNotIn(" requirement_embedding=%s", sql)
         self.assertEqual(params[-3:], ("test-embedding", PROMPT_CASE_EMBEDDING_VERSION, 1))
+        self.assertIn("GET_LOCK", update_cursor.executed[0][0])
+        self.assertIn("RELEASE_LOCK", update_cursor.executed[-1][0])
 
     def test_one_failed_row_does_not_stop_following_rows(self):
         select_cursor = FakeCursor(
@@ -140,10 +151,22 @@ class TestPromptCaseMigration(unittest.TestCase):
                 (2, "content two", "真实需求", "text_to_image"),
             ]
         )
-        update_cursor = FakeCursor()
+        update_cursor = FakeCursor(
+            fetchone_values=[
+                (1,),
+                (1, "content one", "", "text_to_image", 0, None, 0, "", "", None),
+            ]
+        )
+        update_cursor_two = FakeCursor(
+            fetchone_values=[
+                (1,),
+                (2, "content two", "真实需求", "text_to_image", 0, None, 0, "", "", None),
+            ]
+        )
         connections = [
             FakeConnection(select_cursor),
             FakeConnection(update_cursor),
+            FakeConnection(update_cursor_two),
         ]
         calls = {"count": 0}
 
@@ -161,11 +184,20 @@ class TestPromptCaseMigration(unittest.TestCase):
         self.assertEqual(result["total"], 2)
         self.assertEqual(result["success"], 1)
         self.assertEqual(result["failed"], 1)
-        self.assertEqual(len(update_cursor.executed), 1)
+        self.assertEqual(
+            sum("UPDATE prompts SET" in sql for sql, _params in update_cursor.executed)
+            + sum("UPDATE prompts SET" in sql for sql, _params in update_cursor_two.executed),
+            1,
+        )
 
     def test_empty_visual_text_does_not_request_visual_embedding(self):
         select_cursor = FakeCursor(rows=[(1, "content one", "", "text_to_image")])
-        update_cursor = FakeCursor()
+        update_cursor = FakeCursor(
+            fetchone_values=[
+                (1,),
+                (1, "content one", "", "text_to_image", 0, None, 0, "", "", None),
+            ]
+        )
         calls = []
 
         def fake_embed(_pl, texts, input_type=""):  # noqa: ANN001
@@ -182,7 +214,12 @@ class TestPromptCaseMigration(unittest.TestCase):
         self.assertEqual(result["success"], 1)
         self.assertEqual(len(calls), 1)
         self.assertEqual(len(calls[0][0]), 1)
-        self.assertIsNone(update_cursor.executed[0][1][8])
+        update_params = next(
+            params
+            for sql, params in update_cursor.executed
+            if "UPDATE prompts SET" in sql
+        )
+        self.assertIsNone(update_params[8])
 
     def test_new_prompt_writes_new_vectors_without_requiring_legacy_vectors(self):
         check_cursor = FakeCursor(fetchone_values=[None])
@@ -225,6 +262,30 @@ class TestPromptCaseMigration(unittest.TestCase):
         self.assertIn("visual_embedding IS NULL", sql)
         self.assertTrue(str(sql).rstrip().endswith("LIMIT %s"))
         self.assertEqual(params[-1], 7)
+
+    def test_rebuild_skips_a_row_when_another_worker_holds_its_lock(self):
+        select_cursor = FakeCursor(rows=[(1, "content one", "", "text_to_image")])
+        worker_cursor = FakeCursor(fetchone_values=[(0,)])
+        with patch.object(
+            library,
+            "mysql_conn",
+            side_effect=[FakeConnection(select_cursor), FakeConnection(worker_cursor)],
+        ), patch.object(library, "parse_prompt_case") as parser:
+            result = library.rebuild_cases(self.pl, workers=4)
+
+        self.assertEqual(result, {"total": 1, "success": 0, "failed": 0, "skipped": 1})
+        parser.assert_not_called()
+        self.assertIn("GET_LOCK", worker_cursor.executed[0][0])
+
+    def test_workers_must_be_between_one_and_thirty_two(self):
+        with self.assertRaises(library.LibError):
+            library.rebuild_cases(self.pl, workers=0)
+        with self.assertRaises(library.LibError):
+            library.rebuild_cases(self.pl, workers=33)
+
+    def test_rebuild_parser_exposes_workers_option(self):
+        args = library.build_parser().parse_args(["rebuild-cases", "--workers", "4"])
+        self.assertEqual(args.workers, 4)
 
     def test_backup_is_text_only_and_contains_case_fields(self):
         row = (

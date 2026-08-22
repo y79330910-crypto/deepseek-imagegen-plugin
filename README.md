@@ -143,11 +143,13 @@ curl -X POST http://127.0.0.1:8765/api/v2/generate \
 会贯穿 Query Parser、词库案例选择和 Translator；旧历史记录没有该字段时按
 `optimized` 复用。
 
-词库升级后可用 `prompt_lib rebuild-cases [--limit N] [--force]`
+词库升级后可用 `prompt_lib rebuild-cases [--limit N] [--workers N] [--force]`
 （或 `python -m imagegen.library rebuild-cases`）为旧 Prompt 补齐 Facets、
 Intent / Visual 文本与双向量。迁移按当前 Parser / Embedding 版本增量执行，
-单条失败会继续处理其他记录；旧 `embedding` / `requirement_embedding` 字段保留，
-不会被新向量覆盖。
+单条失败会继续处理其他记录；`--workers` 使用 MySQL 连接级命名锁安全认领记录，
+多个 worker 或多个迁移进程不会同时处理同一条记录。默认单 worker，建议先从
+`--workers 2` 或 `--workers 4` 开始，并根据上游接口限流调整；旧
+`embedding` / `requirement_embedding` 字段保留，不会被新向量覆盖。
 
 ### 模型拉取（非强依赖）
 

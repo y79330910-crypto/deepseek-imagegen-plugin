@@ -12,6 +12,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Optional
 
@@ -834,14 +835,19 @@ def import_prompts(
 
 
 def rebuild_cases(
-    pl: dict[str, Any], *, force: bool = False, limit: Optional[int] = None
+    pl: dict[str, Any],
+    *,
+    force: bool = False,
+    limit: Optional[int] = None,
+    workers: int = 1,
 ) -> dict[str, int]:
     """Rebuild Prompt Case data without touching legacy source columns.
 
     A row is only updated after parsing and all required new embeddings have
-    completed successfully.  This is deliberately row-at-a-time so one bad
-    parser response or one unavailable embedding request cannot stop a large
-    migration or leave a half-written case.
+    completed successfully.  Workers use MySQL connection-level advisory
+    locks and re-read the row after claiming it, so concurrent commands cannot
+    process the same pending row at the same time.  One bad parser response or
+    unavailable embedding request still cannot stop the other workers.
     """
     current_model = _embedding_model(pl)
     if limit is not None:
@@ -853,6 +859,12 @@ def rebuild_cases(
             raise LibError("--limit 必须是非负整数。")
     else:
         limit_value = None
+    try:
+        workers_value = int(workers)
+    except (TypeError, ValueError) as exc:
+        raise LibError("--workers 必须是正整数。") from exc
+    if workers_value < 1 or workers_value > 32:
+        raise LibError("--workers 必须是 1 到 32 之间的整数。")
     conn = mysql_conn(pl)
     try:
         with conn.cursor() as cur:
@@ -884,75 +896,155 @@ def rebuild_cases(
     finally:
         conn.close()
     result = {"total": len(rows), "success": 0, "failed": 0, "skipped": 0}
-    for row in rows:
-        try:
-            # Keep the database's original requirement untouched.  The
-            # parser receives it as context, while the UPDATE below only
-            # writes the derived inferred value and case fields.
-            original_requirement = str(row[2] or "")
-            case = parse_prompt_case(
-                original_requirement,
-                str(row[1] or ""),
-                cfg={"prompt_library": pl, "translator": pl.get("translator", {})},
-                strict=True,
-            )
-            if int(case.parser_version or 0) != PROMPT_CASE_PARSER_VERSION:
-                raise LibError("Prompt Case Parser 未生成当前版本的结构化结果。")
-            intent_text = case.intent_text or case.requirement or case.inferred_requirement or case.content
-            if not intent_text:
-                raise LibError("无法构造非空 intent_text。")
-            visual_text = case.visual_text or ""
-            texts = [intent_text] + ([visual_text] if visual_text else [])
-            vectors = embed_texts(
-                pl,
-                texts,
-                input_type="document",
-            )
-            if not vectors or not vectors[0]:
-                raise LibError("Embedding 未返回 intent 向量。")
-            if visual_text and (len(vectors) < 2 or not vectors[1]):
-                raise LibError("Embedding 未返回 visual 向量。")
-            intent_blob = _pack_vec(vectors[0])
-            visual_blob = _pack_vec(vectors[1] if visual_text else None)
-            inferred_requirement = "" if original_requirement.strip() else case.inferred_requirement
-            requirement_source = (
-                "user"
-                if original_requirement.strip()
-                else ("inferred" if inferred_requirement else "none")
-            )
-            update_conn = mysql_conn(pl)
-            try:
-                with update_conn.cursor() as cur:
-                    cur.execute(
-                        """
-                        UPDATE prompts SET inferred_requirement=%s,
-                        requirement_source=%s, task_type=%s, facets_json=%s,
-                        transferable_lessons_json=%s, intent_text=%s, visual_text=%s,
-                        intent_embedding=%s, visual_embedding=%s, parser_version=%s,
-                        embedding_model=%s, embedding_version=%s WHERE id=%s
-                        """,
-                        (
-                            inferred_requirement,
-                            requirement_source,
-                            str(row[3] or case.task_type or "text_to_image")[:32],
-                            json.dumps(case.facets.to_dict(), ensure_ascii=False),
-                            json.dumps(case.transferable_lessons, ensure_ascii=False),
-                            intent_text,
-                            visual_text,
-                            intent_blob,
-                            visual_blob,
-                            PROMPT_CASE_PARSER_VERSION,
-                            current_model,
-                            PROMPT_CASE_EMBEDDING_VERSION,
-                            int(row[0]),
-                        ),
-                    )
-            finally:
-                update_conn.close()
+    def record_status(status: str) -> None:
+        if status == "success":
             result["success"] += 1
-        except Exception:
+        elif status == "skipped":
+            result["skipped"] += 1
+        else:
             result["failed"] += 1
+
+    if workers_value == 1:
+        for row in rows:
+            record_status(_rebuild_case_row(pl, row, current_model, force=force))
+    else:
+        with ThreadPoolExecutor(
+            max_workers=workers_value,
+            thread_name_prefix="prompt-case-migration",
+        ) as executor:
+            futures = [
+                executor.submit(_rebuild_case_row, pl, row, current_model, force)
+                for row in rows
+            ]
+            for future in as_completed(futures):
+                try:
+                    record_status(future.result())
+                except Exception:
+                    # A worker-level failure must not prevent other workers
+                    # from completing their already claimed rows.
+                    record_status("failed")
     return result
+
+
+def _case_row_needs_rebuild(row: tuple[Any, ...], current_model: str) -> bool:
+    """Check a freshly read row against the current Prompt Case versions."""
+    parser_version = int(row[4] or 0)
+    embedding_version = int(row[6] or 0)
+    embedding_model = str(row[7] or "")
+    visual_text = str(row[8] or "").strip()
+    return bool(
+        parser_version < PROMPT_CASE_PARSER_VERSION
+        or row[5] is None
+        or embedding_version < PROMPT_CASE_EMBEDDING_VERSION
+        or embedding_model != current_model
+        or (visual_text and row[9] is None)
+    )
+
+
+def _rebuild_case_row(
+    pl: dict[str, Any],
+    row: tuple[Any, ...],
+    current_model: str,
+    force: bool,
+) -> str:
+    """Claim, rebuild and release one row using a MySQL advisory lock."""
+    prompt_id = int(row[0])
+    mysql_cfg = pl.get("mysql") if isinstance(pl.get("mysql"), dict) else {}
+    db_name = str(mysql_cfg.get("db") or "prompt_library")
+    db_scope = hashlib.sha1(db_name.encode("utf-8")).hexdigest()[:12]
+    lock_name = f"imagegen:prompt_case:{db_scope}:{prompt_id}"
+    conn = None
+    lock_held = False
+    try:
+        conn = mysql_conn(pl)
+        with conn.cursor() as cur:
+            cur.execute("SELECT GET_LOCK(%s, 0)", (lock_name,))
+            lock_result = cur.fetchone()
+        if not lock_result or int(lock_result[0] or 0) != 1:
+            return "skipped"
+        lock_held = True
+
+        # The initial candidate list can be stale when another migration
+        # process finishes the row before this worker obtains the lock.
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, content, requirement, task_type, parser_version,"
+                " intent_embedding, embedding_version, embedding_model,"
+                " visual_text, visual_embedding FROM prompts WHERE id=%s",
+                (prompt_id,),
+            )
+            current_row = cur.fetchone()
+        if not current_row or (not force and not _case_row_needs_rebuild(current_row, current_model)):
+            return "skipped"
+
+        # Keep the database's original requirement untouched.  The parser
+        # receives it as context, while the UPDATE below only writes derived
+        # Prompt Case fields and the new vectors.
+        original_requirement = str(current_row[2] or "")
+        case = parse_prompt_case(
+            original_requirement,
+            str(current_row[1] or ""),
+            cfg={"prompt_library": pl, "translator": pl.get("translator", {})},
+            strict=True,
+        )
+        if int(case.parser_version or 0) != PROMPT_CASE_PARSER_VERSION:
+            raise LibError("Prompt Case Parser 未生成当前版本的结构化结果。")
+        intent_text = case.intent_text or case.requirement or case.inferred_requirement or case.content
+        if not intent_text:
+            raise LibError("无法构造非空 intent_text。")
+        visual_text = case.visual_text or ""
+        texts = [intent_text] + ([visual_text] if visual_text else [])
+        vectors = embed_texts(pl, texts, input_type="document")
+        if not vectors or not vectors[0]:
+            raise LibError("Embedding 未返回 intent 向量。")
+        if visual_text and (len(vectors) < 2 or not vectors[1]):
+            raise LibError("Embedding 未返回 visual 向量。")
+        intent_blob = _pack_vec(vectors[0])
+        visual_blob = _pack_vec(vectors[1] if visual_text else None)
+        inferred_requirement = "" if original_requirement.strip() else case.inferred_requirement
+        requirement_source = (
+            "user"
+            if original_requirement.strip()
+            else ("inferred" if inferred_requirement else "none")
+        )
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE prompts SET inferred_requirement=%s,
+                requirement_source=%s, task_type=%s, facets_json=%s,
+                transferable_lessons_json=%s, intent_text=%s, visual_text=%s,
+                intent_embedding=%s, visual_embedding=%s, parser_version=%s,
+                embedding_model=%s, embedding_version=%s WHERE id=%s
+                """,
+                (
+                    inferred_requirement,
+                    requirement_source,
+                    str(current_row[3] or case.task_type or "text_to_image")[:32],
+                    json.dumps(case.facets.to_dict(), ensure_ascii=False),
+                    json.dumps(case.transferable_lessons, ensure_ascii=False),
+                    intent_text,
+                    visual_text,
+                    intent_blob,
+                    visual_blob,
+                    PROMPT_CASE_PARSER_VERSION,
+                    current_model,
+                    PROMPT_CASE_EMBEDDING_VERSION,
+                    prompt_id,
+                ),
+            )
+        return "success"
+    except Exception:
+        return "failed"
+    finally:
+        if conn is not None:
+            if lock_held:
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT RELEASE_LOCK(%s)", (lock_name,))
+                except Exception:
+                    # Closing the connection also releases the advisory lock.
+                    pass
+            conn.close()
 
 
 def read_import_file(path: str) -> list[dict[str, Any]]:
@@ -1062,6 +1154,12 @@ def build_parser() -> argparse.ArgumentParser:
     rebuild = sub.add_parser("rebuild-cases", help="重建旧提示词的 Prompt Case 字段与双向量")
     rebuild.add_argument("--force", action="store_true", help="重新解析并重建所有记录的 Prompt Case 数据")
     rebuild.add_argument("--limit", type=int, default=None, help="最多处理需要迁移的记录数")
+    rebuild.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="并发 worker 数（默认 1，建议根据接口限流设置为 2-8）",
+    )
     return parser
 
 
@@ -1112,7 +1210,12 @@ def main(argv: Optional[list[str]] = None) -> int:
             # The rebuild command is intentionally self-contained: an old
             # database receives new nullable columns before rows are read.
             init_db(pl)
-            result = rebuild_cases(pl, force=bool(args.force), limit=args.limit)
+            result = rebuild_cases(
+                pl,
+                force=bool(args.force),
+                limit=args.limit,
+                workers=args.workers,
+            )
             print(
                 f"重建完成：总计 {result['total']} 条，成功 {result['success']} 条，"
                 f"失败 {result['failed']} 条，跳过 {result['skipped']} 条。"
