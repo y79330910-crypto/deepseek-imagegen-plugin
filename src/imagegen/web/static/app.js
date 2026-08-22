@@ -4,7 +4,9 @@
 
 async function apiRequest(method, path, body) {
   const opts = { method, headers: {} };
-  if (body !== undefined) {
+  if (body instanceof FormData) {
+    opts.body = body; // fetch 自动设置 multipart boundary
+  } else if (body !== undefined) {
     opts.headers["Content-Type"] = "application/json";
     opts.body = JSON.stringify(body);
   }
@@ -34,6 +36,22 @@ async function apiRequest(method, path, body) {
 
 const api = {
   generate: (req) => apiRequest("POST", "/api/v1/generate", req),
+  uploadAsset: (file) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("kind", "reference");
+    return apiRequest("POST", "/api/v1/assets", fd);
+  },
+  importAsset: (path) =>
+    apiRequest("POST", "/api/v1/assets/import", { path, kind: "reference" }),
+  listAssets: (kind, q, limit, offset) => {
+    const params = new URLSearchParams();
+    if (kind) params.set("kind", kind);
+    if (q) params.set("q", q);
+    if (limit) params.set("limit", String(limit));
+    if (offset) params.set("offset", String(offset));
+    return apiRequest("GET", "/api/v1/assets?" + params.toString());
+  },
   getConfig: () => apiRequest("GET", "/api/v1/config"),
   updateConfig: (patch) => apiRequest("PATCH", "/api/v1/config", patch),
   listBackends: () => apiRequest("GET", "/api/v1/backends"),
@@ -60,7 +78,22 @@ const state = {
   models: [],
   config: {},
   history: [],
+  references: [],
+  libItems: [],
 };
+
+const REF_ROLES = ["auto", "character", "outfit", "style", "scene", "composition", "pose", "object"];
+const REF_ROLE_LABELS = {
+  auto: "自动识别",
+  character: "角色人物",
+  outfit: "服装造型",
+  style: "艺术风格",
+  scene: "场景背景",
+  composition: "构图布局",
+  pose: "姿势动作",
+  object: "物品产品",
+};
+const MAX_REFS = 4;
 
 const SIZE_PRESETS = {
   vertex: ["1024x1024", "768x1408", "1408x768", "1536x1024"],
@@ -242,12 +275,158 @@ function collectPatch() {
 
 /* ============ Generate ============ */
 
+function renderRefPanel() {
+  const list = $("refList");
+  list.innerHTML = "";
+  state.references.forEach((ref, idx) => {
+    const card = document.createElement("div");
+    card.className = "refcard" + (ref.status === "failed" ? " failed" : "");
+    const roleOptions = REF_ROLES.map(
+      (r) =>
+        '<option value="' + r + '"' + (ref.role === r ? " selected" : "") + ">" +
+        REF_ROLE_LABELS[r] + "</option>"
+    ).join("");
+    card.innerHTML =
+      '<div class="refthumb"><img src="' + esc(ref.content_url) +
+      '" alt="' + esc(ref.original_name || "") + '"></div>' +
+      '<div class="refbody">' +
+      '<div class="refname">' + esc(ref.original_name || "") + "</div>" +
+      '<div class="row"><select class="refrole">' + roleOptions + "</select>" +
+      '<button class="btn ghost small refdel" type="button">×</button></div>' +
+      (ref.status === "uploading"
+        ? '<div class="refstatus">上传中…</div>'
+        : ref.status === "failed"
+          ? '<div class="refstatus fail">上传失败</div>'
+          : '<div class="refstatus">已就绪</div>') +
+      "</div>";
+    card.querySelector(".refrole").onchange = (e) => {
+      ref.role = e.target.value;
+    };
+    card.querySelector(".refdel").onclick = () => {
+      state.references.splice(idx, 1);
+      renderRefPanel();
+    };
+    list.appendChild(card);
+  });
+  $("refCount").textContent = state.references.length + " / " + MAX_REFS;
+}
+
+async function addFiles(files) {
+  const list = Array.from(files || []);
+  for (const file of list) {
+    if (state.references.length >= MAX_REFS) {
+      showError("参考图最多 " + MAX_REFS + " 张");
+      break;
+    }
+    if (!/^image\/(png|jpeg|jpg|webp|gif)$/.test(file.type || "")) {
+      showError("仅支持 PNG / JPEG / WebP / GIF 图片：" + (file.name || "未知文件"));
+      continue;
+    }
+    const item = {
+      asset_id: "",
+      content_url: "",
+      original_name: file.name || "image",
+      role: "auto",
+      status: "queued",
+    };
+    state.references.push(item);
+    renderRefPanel();
+    item.status = "uploading";
+    renderRefPanel();
+    try {
+      const asset = await api.uploadAsset(file);
+      item.asset_id = asset.asset_id;
+      item.content_url = asset.content_url;
+      item.original_name = asset.original_name || item.original_name;
+      item.status = "ready";
+    } catch (err) {
+      item.status = "failed";
+      showError("上传失败：" + err.message);
+    }
+    renderRefPanel();
+  }
+}
+
+let libSelection = new Set();
+
+async function loadLibrary(q) {
+  try {
+    const data = await api.listAssets("reference", q, 50, 0);
+    state.libItems = data.items || [];
+  } catch (err) {
+    state.libItems = [];
+    showError("素材库加载失败：" + err.message);
+  }
+  renderLibrary();
+}
+
+function renderLibrary() {
+  const grid = $("libGrid");
+  grid.innerHTML = "";
+  const items = state.libItems.filter(
+    (it) => !state.references.some((r) => r.asset_id === it.asset_id)
+  );
+  if (!items.length) {
+    grid.innerHTML = '<div class="hint">素材库为空，先上传或导入图片吧。</div>';
+    return;
+  }
+  items.forEach((it) => {
+    const dims = it.width && it.height ? it.width + "×" + it.height : "";
+    const card = document.createElement("div");
+    card.className = "gcard libcard" + (libSelection.has(it.asset_id) ? " selected" : "");
+    card.innerHTML =
+      '<img src="' + esc(it.content_url) + '" alt="' + esc(it.original_name || "") + '">' +
+      '<div class="gbody"><div class="gp">' + esc(it.original_name || "") +
+      '</div><div class="gm">' + esc(dims) + "</div></div>";
+    card.onclick = () => {
+      if (libSelection.has(it.asset_id)) {
+        libSelection.delete(it.asset_id);
+      } else {
+        if (libSelection.size + state.references.length >= MAX_REFS) {
+          showError("参考图最多 " + MAX_REFS + " 张");
+          return;
+        }
+        libSelection.add(it.asset_id);
+      }
+      renderLibrary();
+    };
+    grid.appendChild(card);
+  });
+}
+
+function openLibrary() {
+  libSelection = new Set();
+  $("libModal").style.display = "flex";
+  $("libSearch").value = "";
+  loadLibrary("");
+}
+
+function addSelectedFromLibrary() {
+  let added = 0;
+  for (const asset of state.libItems) {
+    if (!libSelection.has(asset.asset_id)) continue;
+    if (state.references.length >= MAX_REFS) {
+      showError("参考图最多 " + MAX_REFS + " 张");
+      break;
+    }
+    state.references.push({
+      asset_id: asset.asset_id,
+      content_url: asset.content_url,
+      original_name: asset.original_name || "",
+      role: "auto",
+      status: "ready",
+    });
+    added += 1;
+  }
+  libSelection = new Set();
+  $("libModal").style.display = "none";
+  if (added) renderRefPanel();
+}
+
 function buildGenerateRequest() {
-  const paths = $("refPaths")
-    .value.split(/\r?\n/)
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .slice(0, 4);
+  const refs = state.references
+    .filter((r) => r.status === "ready" && r.asset_id)
+    .slice(0, MAX_REFS);
   const sizePolicyRaw =
     (state.config.size_policy && state.config.size_policy.mode) || "auto";
   const seedRaw = $("seed").value.trim();
@@ -262,9 +441,10 @@ function buildGenerateRequest() {
     composition: $("composition").value,
     translator: $("translator").value,
     size_policy: normalizeSizePolicy(sizePolicyRaw),
-    images: paths,
+    references: refs.map((r) => ({ asset_id: r.asset_id, role: r.role || "auto" })),
+    images: [],
     reference_roles: [],
-    ref_type: $("ref_type").value,
+    ref_type: "auto",
     library_enabled: lib === "auto" ? null : lib === "on",
   };
 }
@@ -532,6 +712,71 @@ $("backend").onchange = () => {
 };
 $("model").onchange = renderSizeChips;
 $("genBtn").onclick = handleGenerate;
+$("refPickBtn").onclick = () => $("refFile").click();
+$("refFile").onchange = (e) => {
+  addFiles(e.target.files);
+  e.target.value = "";
+};
+$("refLibBtn").onclick = openLibrary;
+$("libClose").onclick = () => ($("libModal").style.display = "none");
+$("libAddBtn").onclick = addSelectedFromLibrary;
+$("libSearch").oninput = () => loadLibrary($("libSearch").value.trim());
+$("importBtn").onclick = async () => {
+  const path = $("importPath").value.trim();
+  if (!path) {
+    showError("请输入服务器本机图片路径");
+    return;
+  }
+  if (state.references.length >= MAX_REFS) {
+    showError("参考图最多 " + MAX_REFS + " 张");
+    return;
+  }
+  try {
+    const asset = await api.importAsset(path);
+    state.references.push({
+      asset_id: asset.asset_id,
+      content_url: asset.content_url,
+      original_name: asset.original_name || path,
+      role: "auto",
+      status: "ready",
+    });
+    $("importPath").value = "";
+    renderRefPanel();
+  } catch (err) {
+    showError("导入失败：" + err.message);
+  }
+};
+const refDrop = $("refDrop");
+["dragenter", "dragover"].forEach((evt) => {
+  refDrop.addEventListener(evt, (e) => {
+    e.preventDefault();
+    refDrop.classList.add("drag");
+  });
+});
+refDrop.addEventListener("dragleave", (e) => {
+  e.preventDefault();
+  refDrop.classList.remove("drag");
+});
+refDrop.addEventListener("drop", (e) => {
+  e.preventDefault();
+  refDrop.classList.remove("drag");
+  addFiles(e.dataTransfer && e.dataTransfer.files);
+});
+document.addEventListener("paste", (e) => {
+  const items = e.clipboardData && e.clipboardData.items;
+  if (!items) return;
+  const files = [];
+  for (const item of items) {
+    if (item.kind === "file" && item.type && item.type.startsWith("image/")) {
+      const f = item.getAsFile();
+      if (f) files.push(f);
+    }
+  }
+  if (files.length) {
+    e.preventDefault();
+    addFiles(files);
+  }
+});
 $("saveBtn").onclick = async () => {
   hideError();
   try {

@@ -28,8 +28,27 @@
       <textarea id="prompt" placeholder="例如：洛天依在樱花树下弹着古筝，全身构图，日系插画风格，金色夕阳……"></textarea>
     </div>
     <div class="field">
-      <label>参考图路径（本机路径，每行一张，最多 4 张；单张时参考图类型生效）</label>
-      <textarea id="refPaths" placeholder="例如：D:\Images\ref.png"></textarea>
+      <label>参考图片（最多 4 张，每张可独立设置用途；支持选择 / 拖放 / 粘贴）</label>
+      <div class="refpanel">
+        <div class="row">
+          <button class="btn ghost small" id="refPickBtn" type="button">＋ 选择图片</button>
+          <button class="btn ghost small" id="refLibBtn" type="button">素材库</button>
+          <span class="hint" id="refCount" style="margin-top:0">0 / 4</span>
+        </div>
+        <div id="refDrop" class="refdrop">
+          <div>也可以把图片拖放到这里</div>
+          <div>支持 Ctrl+V 粘贴图片</div>
+        </div>
+        <div id="refList" class="reflist"></div>
+        <details class="refadv">
+          <summary>高级 · 从服务器本机路径导入</summary>
+          <div class="row" style="margin-top:8px">
+            <input id="importPath" placeholder="例如 D:\images\reference.png" style="flex:1">
+            <button class="btn ghost small" id="importBtn" type="button">导入素材</button>
+          </div>
+        </details>
+        <input type="file" id="refFile" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden>
+      </div>
     </div>
     <div class="grid">
       <div class="field"><label>出图后端</label><select id="backend"></select></div>
@@ -41,11 +60,6 @@
       <div class="field"><label>构图预设</label>
         <select id="composition">
           <option value="auto">自动</option><option value="full-body">全身（竖版）</option><option value="half-body">半身</option><option value="portrait">特写</option><option value="landscape">横版广角</option>
-        </select>
-      </div>
-      <div class="field"><label>参考图类型（单图）</label>
-        <select id="ref_type">
-          <option value="auto">自动识别</option><option value="character">角色人物</option><option value="outfit">服装造型</option><option value="style">艺术风格</option><option value="scene">场景背景</option><option value="composition">构图布局</option><option value="pose">姿势动作</option><option value="object">物品产品</option>
         </select>
       </div>
       <div class="field"><label>种子（留空=随机）</label><input id="seed" placeholder="随机"></div>
@@ -190,6 +204,21 @@
     <div class="gal" id="gal" style="margin-top:12px"></div>
     <div class="hint" id="galEmpty" style="display:none">还没有生成记录，先去生成一张吧。</div>
   </section>
+</div>
+<div id="libModal" class="modal" style="display:none">
+  <div class="modal-box glass">
+    <div class="row" style="justify-content:space-between">
+      <h3 style="margin:0">素材库</h3>
+      <button class="btn ghost small" id="libClose" type="button">关闭</button>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <input id="libSearch" placeholder="搜索文件名…">
+    </div>
+    <div id="libGrid" class="gal" style="margin-top:10px"></div>
+    <div class="row" style="justify-content:flex-end;margin-top:10px">
+      <button class="btn main small" id="libAddBtn" type="button">添加选中</button>
+    </div>
+  </div>
 </div>
 <script src="/assets/app.js"></script>
 </body>
