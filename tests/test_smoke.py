@@ -103,9 +103,14 @@ class TestComposition(unittest.TestCase):
 
 class TestTranslator(unittest.TestCase):
     def test_off_passthrough(self):
-        result = translate_prompt("画一只柴犬", engine="off")
-        self.assertEqual(result["engine_used"], "off")
+        result = translate_prompt(
+            "画一只柴犬", cfg={"translator": {"enabled": False, "output_lang": "zh"}}
+        )
+        self.assertEqual(result["model"], "")
         self.assertEqual(result["rewritten"], "画一只柴犬")
+        self.assertNotIn("engine", result)
+        self.assertNotIn("engine_used", result)
+        self.assertNotIn("fallback", result)
 
 
 class TestReferencePrompts(unittest.TestCase):
@@ -203,8 +208,7 @@ class TestGenerateFlow(unittest.TestCase):
                 result = generate(
                     GenerateRequest(
                         prompt="画一张湖边公园春日场景",
-                        width=768,
-                        height=1408,
+                        size="768x1408",
                         seed=123,
                         translator="off",
                         composition="full-body",
@@ -232,8 +236,7 @@ class TestGenerateFlow(unittest.TestCase):
                 result = generate(
                     GenerateRequest(
                         prompt="保持参考图中的角色不变；不要耳机；场景改为春日樱花公园",
-                        width=1024,
-                        height=1024,
+                        size="1024x1024",
                         seed=9,
                         translator="off",
                         images=[str(ref)],
@@ -325,8 +328,7 @@ class TestMultiReference(unittest.TestCase):
                 result = generate(
                     GenerateRequest(
                         prompt="保持角色不变，穿上第二张图的服装，场景全新",
-                        width=1024,
-                        height=1024,
+                        size="1024x1024",
                         seed=7,
                         translator="off",
                         images=[str(ref1), str(ref2)],

@@ -1,7 +1,7 @@
 """提示词翻译官：单一 OpenAI-Compatible 提示词上游（Chat 优先 / Responses fallback）。
 
-内部不再存在具体翻译引擎（DeepSeek / Gemini 均已删除），只保留 enabled / disabled。
-请求层为旧调用兼容暂时接受 translator=auto / off。
+模块本身只负责真正调用 translator upstream；是否启用由 Generation Engine
+根据 request.translator（auto/off）与 config.translator.enabled 决定。
 """
 
 from __future__ import annotations
@@ -10,10 +10,6 @@ from typing import Any, Optional
 
 from .config import load_config
 from .openai_client import OpenAIClient
-
-
-def _is_disabled(engine: str) -> bool:
-    return (engine or "").strip().lower() in ("off", "none", "direct", "直传")
 
 
 def build_translator_system(
@@ -77,29 +73,23 @@ def build_translator_system(
 def translate_prompt(
     user_text: str,
     cfg: Optional[dict[str, Any]] = None,
-    engine: str = "auto",
     feedback: str = "",
     max_tokens: int = 4096,
     examples: Optional[list[str]] = None,
     reference_brief: str = "",
 ) -> dict[str, Any]:
-    """翻译官：enabled 时调用统一提示词上游，disabled / off 时直传原文。"""
+    """翻译官：config.translator.enabled 时调用统一提示词上游，否则直传原文。"""
     cfg = cfg if cfg is not None else load_config()
     tr = cfg.get("translator") or {}
     if not isinstance(tr, dict):
         tr = {}
-    enabled = not _is_disabled(engine)
-    if engine in ("", "auto"):
-        enabled = bool(tr.get("enabled", True))
+    enabled = bool(tr.get("enabled", True))
     if not enabled:
         return {
             "ok": True,
-            "engine": "off",
-            "engine_used": "off",
             "model": "",
             "original": user_text,
             "rewritten": user_text,
-            "fallback": False,
         }
 
     lang = str(tr.get("output_lang") or "zh").lower()
@@ -121,10 +111,7 @@ def translate_prompt(
     text = client.generate_text(messages, model, max_tokens=max_tokens)
     return {
         "ok": True,
-        "engine": "openai",
-        "engine_used": "openai",
         "model": model,
         "original": user_text,
         "rewritten": text,
-        "fallback": False,
     }

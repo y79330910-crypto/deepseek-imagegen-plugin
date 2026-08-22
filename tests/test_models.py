@@ -13,8 +13,7 @@ class TestGenerateRequest(unittest.TestCase):
     def test_defaults(self):
         req = GenerateRequest(prompt="画一张图")
         self.assertEqual(req.prompt, "画一张图")
-        self.assertIsNone(req.width)
-        self.assertIsNone(req.height)
+        self.assertEqual(req.size, "")
         self.assertEqual(req.model, "")
         self.assertIsNone(req.seed)
         self.assertEqual(req.quality, "")
@@ -22,10 +21,8 @@ class TestGenerateRequest(unittest.TestCase):
         self.assertEqual(req.translator, "auto")
         self.assertEqual(req.images, [])
         self.assertEqual(req.reference_roles, [])
-        self.assertEqual(req.ref_type, "auto")
         self.assertIsNone(req.library_enabled)
         self.assertEqual(req.out, "")
-        self.assertIsNone(req.denoise)
         self.assertEqual(req.to_dict()["size"], "")
 
     def test_list_fields_are_independent(self):
@@ -39,7 +36,6 @@ class TestGenerateRequest(unittest.TestCase):
         req = GenerateRequest.from_dict({"prompt": "a girl under cherry blossoms"})
         self.assertEqual(req.prompt, "a girl under cherry blossoms")
         self.assertEqual(req.size, "")
-        self.assertIsNone(req.width)
         self.assertEqual(req.composition, "auto")
         self.assertEqual(req.images, [])
 
@@ -73,7 +69,7 @@ class TestGenerateRequest(unittest.TestCase):
         with self.assertRaises(ValidationError):
             GenerateRequest.from_dict({"prompt": "x", "images": "a.png"})
         with self.assertRaises(ValidationError):
-            GenerateRequest.from_dict({"prompt": "x", "width": "1024"})
+            GenerateRequest.from_dict({"prompt": "x", "seed": "1024"})
 
     def test_request_round_trip_is_normalized(self):
         data = {

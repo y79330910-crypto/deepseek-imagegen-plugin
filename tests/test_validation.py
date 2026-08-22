@@ -39,14 +39,6 @@ class TestRequestValidation(unittest.TestCase):
             with self.assertRaises(ValidationError):
                 make_request(size=size).validate()
 
-    def test_width_without_height_rejected(self):
-        with self.assertRaises(ValidationError):
-            make_request(width=1024).validate()
-
-    def test_out_of_range_dimensions_rejected(self):
-        with self.assertRaises(ValidationError):
-            make_request(width=5, height=5).validate()
-
     def test_seed_bool_rejected(self):
         with self.assertRaises(ValidationError):
             make_request(seed=True).validate()
@@ -54,9 +46,12 @@ class TestRequestValidation(unittest.TestCase):
     def test_seed_int_accepted(self):
         make_request(seed=42).validate()
 
-    def test_denoise_out_of_range_rejected(self):
-        with self.assertRaises(ValidationError):
-            make_request(denoise=1.5).validate()
+    def test_translator_enum_validated(self):
+        make_request(translator="auto").validate()
+        make_request(translator="off").validate()
+        for value in ("deepseek", "gemini", "none", "direct", "直传", "openai"):
+            with self.assertRaises(ValidationError, msg=value):
+                make_request(translator=value).validate()
 
     def test_roles_exceed_images_rejected(self):
         with self.assertRaises(ValidationError):

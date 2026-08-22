@@ -49,10 +49,8 @@ def cmd_generate(args: argparse.Namespace) -> dict[str, Any]:
         translator=args.translator,
         images=images,
         reference_roles=list(args.ref_role or []),
-        ref_type=getattr(args, "ref_type", "auto"),
         library_enabled=getattr(args, "library", None),
         out=args.out,
-        denoise=args.denoise,
     )
     return GenerationService().generate(request).to_dict()
 
@@ -60,7 +58,6 @@ def cmd_generate(args: argparse.Namespace) -> dict[str, Any]:
 def cmd_translate(args: argparse.Namespace) -> dict[str, Any]:
     result = translate_prompt(
         args.prompt,
-        engine=getattr(args, "engine", "auto"),
         feedback=getattr(args, "feedback", ""),
     )
     result["ok"] = True
@@ -192,14 +189,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="参考图片（图生图）：本地路径或 http(s) 链接；可重复指定，最多 4 张",
     )
     gen.add_argument(
-        "--ref-type",
-        dest="ref_type",
-        default="auto",
-        choices=["auto", "character", "outfit", "style", "scene", "composition", "pose", "object"],
-        help="参考图类型（单图）：auto 自动识别（默认）/ character 角色 / outfit 服装 / style 风格 / "
-             "scene 场景 / composition 构图 / pose 姿势 / object 物品",
-    )
-    gen.add_argument(
         "--ref-role",
         dest="ref_role",
         action="append",
@@ -209,16 +198,10 @@ def build_parser() -> argparse.ArgumentParser:
              "scene/composition/object；未指定时第 1 张=角色，其余按 服装→姿势→风格→场景→物品",
     )
     gen.add_argument(
-        "--denoise",
-        type=float,
-        default=None,
-        help="已弃用：当前后端不使用去噪强度，参数将被忽略（保留以兼容旧调用）",
-    )
-    gen.add_argument(
         "--translator",
         default="auto",
-        choices=["auto", "deepseek", "gemini", "off"],
-        help="提示词处理：auto 跟随配置 / off 直传；deepseek、gemini 为旧兼容值，等价开启",
+        choices=["auto", "off"],
+        help="提示词处理：auto 跟随配置 / off 强制直传（不调用提示词上游）",
     )
     gen.add_argument(
         "--composition",
@@ -245,12 +228,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     tr = sub.add_parser("translate", help="把用户需求改写成结构化生图提示词（翻译官）")
     tr.add_argument("prompt", help="用户需求（中文即可）")
-    tr.add_argument(
-        "--engine",
-        default="auto",
-        choices=["auto", "deepseek", "gemini", "off"],
-        help="翻译官引擎：auto(跟随配置) / deepseek / gemini / off",
-    )
     tr.add_argument("--feedback", default="", help="上次生成的问题反馈，用于修正重写")
     tr.add_argument("--json", action="store_true", help="输出 JSON（机器可读）")
 

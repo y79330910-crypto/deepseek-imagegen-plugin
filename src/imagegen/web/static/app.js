@@ -404,7 +404,6 @@ function buildGenerateRequest() {
     references: refs.map((r) => ({ asset_id: r.asset_id, role: r.role || "auto" })),
     images: [],
     reference_roles: [],
-    ref_type: "auto",
     library_enabled: lib === "auto" ? null : lib === "on",
   };
 }
@@ -429,7 +428,7 @@ function renderResult(res) {
       "<b>参考图类型：</b>" + esc(ref.label || ref.type) +
       "（" + esc(ref.method || "") + "）<br>";
   }
-  if (tr.engine_used && tr.engine_used !== "off") {
+  if (tr.model) {
     info += "<b>提示词处理：</b>已开启<br>";
   }
   if (res.mirror_path) info += "<b>镜像副本：</b>" + esc(res.mirror_path) + "<br>";

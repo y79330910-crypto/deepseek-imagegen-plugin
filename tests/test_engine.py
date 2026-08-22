@@ -1,4 +1,4 @@
-"""Engine 回归测试：ref_type 单参考图、image_model_used、denoise 弃用、尺寸/质量透传。"""
+"""Engine 回归测试：参考图角色、image_model_used、尺寸/质量透传。"""
 
 from __future__ import annotations
 
@@ -28,14 +28,14 @@ def make_image_cfg(tmp: str, model: str = "gemini-3-pro-image") -> dict:
     return cfg
 
 
-class TestRefTypeSingleReference(unittest.TestCase):
-    def test_ref_type_takes_effect_without_ref_role(self):
-        """单参考图：没有 --ref-role 且 --ref-type != auto 时必须生效。"""
+class TestReferenceRoles(unittest.TestCase):
+    def test_single_reference_without_role_auto_falls_back(self):
+        """单参考图且未给 role：自动识别失败时按现有降级规则处理。"""
         with tempfile.TemporaryDirectory() as tmp:
             ref = Path(tmp) / "ref.png"
             ref.write_bytes(make_png_bytes(50, 50))
             cfg = make_image_cfg(tmp)
-            # 有自动分类但找不到视觉桥接脚本 → 显式 ref_type 应直接生效
+            # 自动分类开启但没有视觉桥接脚本 → 降级为文字判断
             cfg["reference"] = {"auto_classify": True, "vision_script": "", "classify_timeout": 90}
             fake = FakeOpenAIClient()
             with (
@@ -45,19 +45,16 @@ class TestRefTypeSingleReference(unittest.TestCase):
                 result = engine.generate(
                     GenerateRequest(
                         prompt="给这张图换个场景",
-                        width=1024,
-                        height=1024,
+                        size="1024x1024",
                         translator="off",
                         images=[str(ref)],
-                        ref_type="outfit",
                     )
                 )
-            self.assertEqual(result.reference["type"], "outfit")
-            self.assertEqual(result.reference["method"], "manual")
+            self.assertEqual(result.reference["type"], "character")
             self.assertEqual(fake.requests[0]["kind"], "edit_image")
 
     def test_multi_reference_still_uses_ref_roles(self):
-        """多参考图仍以 --ref-role 为主。"""
+        """多参考图以 reference_roles 顺序对应。"""
         with tempfile.TemporaryDirectory() as tmp:
             ref1 = Path(tmp) / "ref1.png"
             ref1.write_bytes(make_png_bytes(64, 64))
@@ -73,12 +70,10 @@ class TestRefTypeSingleReference(unittest.TestCase):
                 result = engine.generate(
                     GenerateRequest(
                         prompt="保持角色，穿第二张图的服装",
-                        width=1024,
-                        height=1024,
+                        size="1024x1024",
                         translator="off",
                         images=[str(ref1), str(ref2)],
                         reference_roles=["character", "outfit"],
-                        ref_type="style",
                     )
                 )
             self.assertEqual(
@@ -100,53 +95,22 @@ class TestImageModelUsed(unittest.TestCase):
                     "translate_prompt",
                     return_value={
                         "ok": True,
-                        "engine": "openai",
-                        "engine_used": "openai",
-                        "model": "deepseek-v4-flash",
+                        "model": "tr-model",
                         "original": "画一张图",
                         "rewritten": "rewritten prompt",
-                        "fallback": False,
                     },
                 ),
             ):
                 result = engine.generate(
-                    GenerateRequest(prompt="画一张图", width=1024, height=1024, seed=1)
+                    GenerateRequest(prompt="画一张图", size="1024x1024", seed=1)
                 )
             self.assertEqual(result.image_model_used, "gemini-3-pro-image")
             self.assertEqual(result.model, "gemini-3-pro-image")
-            self.assertEqual(result.translator.get("model"), "deepseek-v4-flash")
+            self.assertEqual(result.translator.get("model"), "tr-model")
             self.assertNotEqual(result.image_model_used, result.translator.get("model"))
             self.assertEqual(result.backend, "openai")
             data = result.to_dict()
             self.assertEqual(data["image_model_used"], "gemini-3-pro-image")
-
-
-class TestDenoiseDeprecated(unittest.TestCase):
-    def test_denoise_ignored_with_warning(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            cfg = make_image_cfg(tmp)
-            fake = FakeOpenAIClient()
-            with (
-                mock.patch.object(engine, "load_config", return_value=cfg),
-                mock.patch.object(engine, "OpenAIClient", return_value=fake),
-            ):
-                result = engine.generate(
-                    GenerateRequest(
-                        prompt="画一张图",
-                        width=1024,
-                        height=1024,
-                        seed=2,
-                        translator="off",
-                        denoise=0.6,
-                    )
-                )
-            self.assertTrue(any("denoise" in w and "弃用" in w for w in result.warnings))
-            self.assertNotIn("denoise", result.to_dict())
-
-    def test_denoise_out_of_range_rejected(self):
-        with mock.patch.object(engine, "load_config", return_value=load_config()):
-            with self.assertRaises(GenError):
-                engine.generate(GenerateRequest(prompt="x", denoise=1.5))
 
 
 class TestSizeAndQualityPassthrough(unittest.TestCase):

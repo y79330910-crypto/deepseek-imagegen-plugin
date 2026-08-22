@@ -60,12 +60,10 @@ def _resolve_size(
     comp_preset: str,
     init_images_data: list[tuple[bytes, str, str]],
 ) -> tuple[int, int]:
-    """确定目标尺寸：--size > 显式宽高 > 构图预设画幅 > 参考图原尺寸 > 配置默认。"""
+    """确定目标尺寸：--size > 构图预设画幅 > 参考图原尺寸 > 配置默认。"""
     size_value = str(request.size or "").strip()
     if size_value and size_value.lower() != "auto":
         return parse_size(size_value)
-    if request.width is not None and request.height is not None:
-        return int(request.width), int(request.height)
     if comp_preset != "auto":
         preset_cfg = (cfg.get("composition") or {}).get("presets") or {}
         preset_size = str((preset_cfg.get(comp_preset) or {}).get("size") or "")
@@ -85,8 +83,6 @@ def _run_generation(
     request.validate()
     prompt = (request.prompt or "").strip()
     warnings: list[str] = []
-    if request.denoise is not None:
-        warnings.append("denoise 参数已弃用：当前架构不使用去噪强度，该参数已被忽略。")
     cfg = explicit_config if explicit_config is not None else load_config()
 
     # ---- 构图预设：未指定尺寸时采用预设画幅
@@ -114,8 +110,6 @@ def _run_generation(
             explicit = ""
             if i < len(roles_in):
                 explicit = roles_in[i]
-            elif len(user_refs) == 1 and request.ref_type not in ("", "auto"):
-                explicit = request.ref_type
             feat = ref_mod.extract_reference_features(path, explicit, cfg)
             rtype = str(feat.get("type") or "").strip()
             if not rtype or rtype == "auto":
@@ -169,21 +163,15 @@ def _run_generation(
     tr = cfg.get("translator") or {}
     if not isinstance(tr, dict):
         tr = {}
-    engine_name = str(request.translator or "auto")
-    if engine_name in ("", "auto"):
-        tr_enabled = bool(tr.get("enabled", True))
-    else:
-        tr_enabled = engine_name.strip().lower() not in ("off", "none", "direct", "直传")
+    tr_mode = str(request.translator or "auto").strip().lower()
+    tr_enabled = bool(tr.get("enabled", True)) if tr_mode == "auto" else False
 
     # ---- 词库检索（仅翻译官开启时喂示例）
     tr_info: dict[str, Any] = {
         "ok": True,
-        "engine": "off",
-        "engine_used": "off",
         "model": "",
         "original": prompt,
         "rewritten": prompt,
-        "fallback": False,
     }
     lib_hits: list[dict[str, Any]] = []
     lib_warning = ""
@@ -203,8 +191,7 @@ def _run_generation(
 
     if tr_enabled:
         tr_info = translate_prompt(
-            user_prompt, cfg=cfg, engine="auto", examples=examples,
-            reference_brief=ref_brief,
+            user_prompt, cfg=cfg, examples=examples, reference_brief=ref_brief,
         )
         tr_info["library_hits"] = lib_hits
         final_prompt = tr_info.get("rewritten") or prompt
@@ -314,8 +301,7 @@ def _run_generation(
         actual_size=f"{actual_size[0]}x{actual_size[1]}" if actual_size else "未知",
         prompt_used=final_prompt,
         warnings=warnings,
-        quality=request.quality,
-        size_hint="",
+        quality=quality,
         size_match=match_ok,
         size_check={
             "requested": size_str,

@@ -59,8 +59,8 @@ class TestCoreStandalone(unittest.TestCase):
         env["PYTHONPATH"] = str(SRC_DIR)
         code = (
             "from imagegen.cli import build_parser; "
-            "a = build_parser().parse_args(['generate', 'x', '--denoise', '0.5', '--json']); "
-            "print(a.prompt, a.denoise)"
+            "a = build_parser().parse_args(['generate', 'x', '--translator', 'off', '--json']); "
+            "print(a.prompt, a.translator)"
         )
         with tempfile.TemporaryDirectory() as tmp:
             proc = subprocess.run(
@@ -74,7 +74,7 @@ class TestCoreStandalone(unittest.TestCase):
                 timeout=60,
             )
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(proc.stdout.strip(), "x 0.5")
+        self.assertEqual(proc.stdout.strip(), "x off")
 
     def test_no_codex_coupling_in_core(self):
         """src/imagegen 源码中不得出现 Codex 插件/安装路径等耦合标记。"""

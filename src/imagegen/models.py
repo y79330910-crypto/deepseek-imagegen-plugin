@@ -11,14 +11,21 @@ from .image_utils import parse_size
 from .reference import MAX_REF_IMAGES
 
 
+# ImageGen 2.0 明确删除的旧请求字段：收到时必须报错，不能静默忽略。
+REJECTED_LEGACY_FIELDS: dict[str, str] = {
+    "width": "width 已在 ImageGen 2.0 中删除，请改用 size（例如 \"1920x1080\"）。",
+    "height": "height 已在 ImageGen 2.0 中删除，请改用 size（例如 \"1920x1080\"）。",
+    "ref_type": "ref_type 已在 ImageGen 2.0 中删除，请改用 reference_roles（按 images 顺序对应）。",
+    "denoise": "denoise 已在 ImageGen 2.0 中删除，本架构不使用去噪强度。",
+}
+
+
 @dataclass
 class GenerateRequest:
     """一次生图的完整输入。"""
 
     prompt: str
     size: str = ""
-    width: int | None = None
-    height: int | None = None
     model: str = ""
     seed: int | None = None
     quality: str = ""
@@ -26,22 +33,24 @@ class GenerateRequest:
     translator: str = "auto"
     images: list[str] = field(default_factory=list)
     reference_roles: list[str] = field(default_factory=list)
-    # 兼容字段（保留旧 CLI 参数）
-    ref_type: str = "auto"
     library_enabled: bool | None = None
     out: str = ""
-    denoise: float | None = None  # deprecated：当前后端不使用去噪强度，仅记录并忽略
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "GenerateRequest":
-        """从 JSON-safe dict 构造请求（不依赖 CLI / HTTP / Codex）。
+        """从 JSON-safe dict 构造请求（不依赖 CLI / HTTP）。
 
         未知字段抛 ValidationError；缺失字段使用数据模型默认值。
         """
         if not isinstance(data, Mapping):
             raise ValidationError("GenerateRequest 需要 dict/Mapping 输入。")
         known = set(cls.__dataclass_fields__)
-        unknown = [str(k) for k in data if k not in known]
+        unknown: list[str] = []
+        for key in data:
+            if key in REJECTED_LEGACY_FIELDS:
+                raise ValidationError(REJECTED_LEGACY_FIELDS[key])
+            if key not in known:
+                unknown.append(str(key))
         if unknown:
             raise ValidationError(f"未知字段：{', '.join(sorted(unknown))}")
 
@@ -69,18 +78,9 @@ class GenerateRequest:
                 raise ValidationError(f"{name} 必须是布尔值或 null。")
             return value
 
-        def as_optional_float(value: Any, name: str) -> float | None:
-            if value is None:
-                return None
-            if isinstance(value, bool) or not isinstance(value, (int, float)):
-                raise ValidationError(f"{name} 必须是数字或 null。")
-            return float(value)
-
         return cls(
             prompt=as_str(data.get("prompt", ""), "prompt"),
             size=as_str(data.get("size", ""), "size"),
-            width=as_optional_int(data.get("width"), "width"),
-            height=as_optional_int(data.get("height"), "height"),
             model=as_str(data.get("model", ""), "model"),
             seed=as_optional_int(data.get("seed"), "seed"),
             quality=as_str(data.get("quality", ""), "quality"),
@@ -88,10 +88,8 @@ class GenerateRequest:
             translator=as_str(data.get("translator", "auto"), "translator"),
             images=as_str_list(data.get("images", []), "images"),
             reference_roles=as_str_list(data.get("reference_roles", []), "reference_roles"),
-            ref_type=as_str(data.get("ref_type", "auto"), "ref_type"),
             library_enabled=as_optional_bool(data.get("library_enabled"), "library_enabled"),
             out=as_str(data.get("out", ""), "out"),
-            denoise=as_optional_float(data.get("denoise"), "denoise"),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -99,8 +97,6 @@ class GenerateRequest:
         return {
             "prompt": self.prompt,
             "size": self.size,
-            "width": self.width,
-            "height": self.height,
             "model": self.model,
             "seed": self.seed,
             "quality": self.quality,
@@ -108,31 +104,25 @@ class GenerateRequest:
             "translator": self.translator,
             "images": list(self.images),
             "reference_roles": list(self.reference_roles),
-            "ref_type": self.ref_type,
             "library_enabled": self.library_enabled,
             "out": self.out,
-            "denoise": self.denoise,
         }
 
     def validate(self) -> None:
-        """请求基础合法性校验（不依赖具体 Backend）。"""
+        """请求基础合法性校验（不依赖具体上游实现）。"""
         if not str(self.prompt or "").strip():
             raise ValidationError("提示词不能为空。")
         size = str(self.size or "").strip().lower()
         if size and size != "auto":
             parse_size(size)
-        if (self.width is None) != (self.height is None):
-            raise ValidationError("width 与 height 必须同时提供。")
-        if self.width is not None and self.height is not None:
-            parse_size(f"{int(self.width)}x{int(self.height)}")
+        translator = str(self.translator or "auto").strip().lower()
+        if translator not in ("auto", "off"):
+            raise ValidationError(
+                f"translator 只允许 auto / off，当前值：{self.translator!r}。"
+            )
         if self.seed is not None:
             if isinstance(self.seed, bool) or not isinstance(self.seed, int):
                 raise ValidationError("seed 必须是整数。")
-        if self.denoise is not None:
-            if isinstance(self.denoise, bool) or not isinstance(self.denoise, (int, float)):
-                raise ValidationError("denoise 必须是 0~1 之间的小数。")
-            if not (0 < float(self.denoise) <= 1):
-                raise ValidationError("denoise 必须是 0~1 之间的小数。")
         if len(self.images) > MAX_REF_IMAGES:
             raise ValidationError(
                 f"参考图最多支持 {MAX_REF_IMAGES} 张，当前收到 {len(self.images)} 张。"
@@ -171,7 +161,7 @@ class GenerateResult:
     mirror_path: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        """转换为旧的 dict 结果格式（JSON 输出兼容）。"""
+        """转换为 dict 结果格式（JSON 输出兼容）。"""
         data: dict[str, Any] = {
             "ok": self.ok,
             "backend": self.backend,
