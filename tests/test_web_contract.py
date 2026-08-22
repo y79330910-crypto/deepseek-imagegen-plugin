@@ -1,4 +1,4 @@
-"""新 WebUI 前端契约测试：只用 /api/v1/*，不再出现旧生成链。"""
+"""新 WebUI 前端契约测试：只用 /api/v1/*，Phase 6 双 OpenAI-Compatible UI。"""
 
 from __future__ import annotations
 
@@ -17,9 +17,10 @@ class TestWebContract(unittest.TestCase):
         for endpoint in (
             "/api/v1/generate",
             "/api/v1/config",
-            "/api/v1/backends",
+            "/api/v1/models",
             "/api/v1/doctor",
             "/api/v1/history",
+            "/api/v1/assets",
         ):
             self.assertIn(endpoint, text, endpoint)
 
@@ -27,11 +28,15 @@ class TestWebContract(unittest.TestCase):
         text = APP_JS.read_text(encoding="utf-8")
         for forbidden in (
             "/api/generate",
-            "/api/models",
             "subprocess",
             "image_gen.py",
         ):
             self.assertNotIn(forbidden, text, forbidden)
+
+    def test_no_backend_endpoints_in_js(self):
+        text = APP_JS.read_text(encoding="utf-8")
+        self.assertNotIn("/api/v1/backends", text)
+        self.assertNotIn("listBackends", text)
 
     def test_no_absolute_server_url_in_js(self):
         text = APP_JS.read_text(encoding="utf-8")
@@ -57,9 +62,56 @@ class TestWebContract(unittest.TestCase):
         self.assertNotIn("denoise", html)
         self.assertNotIn("denoise", js)
 
-    def test_size_policy_only_formal_values(self):
+    def test_dual_openai_api_settings(self):
         html = INDEX_HTML.read_text(encoding="utf-8")
-        self.assertIn('value="aspect"', html)
-        self.assertIn('value="exact"', html)
-        self.assertNotIn('value="strict"', html)
-        self.assertNotIn('value="warn"', html)
+        self.assertIn('data-path="translator.base_url"', html)
+        self.assertIn('data-path="translator.api_key"', html)
+        self.assertIn('data-path="translator.model"', html)
+        self.assertIn('data-path="translator.enabled"', html)
+        self.assertIn('data-path="image.base_url"', html)
+        self.assertIn('data-path="image.api_key"', html)
+        self.assertIn('data-path="image.model"', html)
+        self.assertIn('data-path="image.quality"', html)
+        self.assertIn('data-path="size_check.enabled"', html)
+
+    def test_no_legacy_provider_ui(self):
+        html = INDEX_HTML.read_text(encoding="utf-8")
+        js = APP_JS.read_text(encoding="utf-8")
+        for token in ("出图后端", "Vertex", "extra_backends", "备用后端", "DeepSeek", "Gemini"):
+            self.assertNotIn(token, html, token)
+            self.assertNotIn(token, js, token)
+
+    def test_model_pull_and_manual_input(self):
+        html = INDEX_HTML.read_text(encoding="utf-8")
+        js = APP_JS.read_text(encoding="utf-8")
+        self.assertIn("trPullBtn", html)
+        self.assertIn("imgPullBtn", html)
+        self.assertIn("trModelList", html)
+        self.assertIn("imgCfgModelList", html)
+        self.assertIn("imgModelList", html)
+        self.assertIn("pullModels", js)
+        self.assertIn("可手填", html)
+
+    def test_aspect_and_tier_presets(self):
+        html = INDEX_HTML.read_text(encoding="utf-8")
+        js = APP_JS.read_text(encoding="utf-8")
+        self.assertIn("sizeAspect", html)
+        self.assertIn("sizeTier", html)
+        for tier in ("1K", "2K", "4K"):
+            self.assertIn(tier, html, tier)
+        self.assertIn("SIZE_TABLE", js)
+        self.assertIn('"16:9"', js)
+        self.assertIn("applySizePreset", js)
+
+    def test_quality_default_sends_nothing(self):
+        html = INDEX_HTML.read_text(encoding="utf-8")
+        self.assertIn("默认（不发送）", html)
+        self.assertIn('value="low"', html)
+        self.assertIn('value="medium"', html)
+        self.assertIn('value="high"', html)
+
+    def test_generate_page_has_no_backend_or_engine_select(self):
+        html = INDEX_HTML.read_text(encoding="utf-8")
+        self.assertNotIn('id="backend"', html)
+        self.assertNotIn("翻译官引擎", html)
+        self.assertIn("提示词处理", html)

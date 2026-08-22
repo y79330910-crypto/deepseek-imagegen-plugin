@@ -54,10 +54,7 @@ const api = {
   },
   getConfig: () => apiRequest("GET", "/api/v1/config"),
   updateConfig: (patch) => apiRequest("PATCH", "/api/v1/config", patch),
-  listBackends: () => apiRequest("GET", "/api/v1/backends"),
-  getBackend: (id) => apiRequest("GET", "/api/v1/backends/" + encodeURIComponent(id)),
-  listModels: (id) =>
-    apiRequest("GET", "/api/v1/backends/" + encodeURIComponent(id) + "/models"),
+  models: (target) => apiRequest("POST", "/api/v1/models", { target }),
   doctor: () => apiRequest("POST", "/api/v1/doctor"),
   listHistory: (q, limit, offset) => {
     const params = new URLSearchParams();
@@ -73,8 +70,6 @@ const api = {
 /* ============ State ============ */
 
 const state = {
-  backends: [],
-  backend: "vertex",
   models: [],
   config: {},
   history: [],
@@ -95,19 +90,18 @@ const REF_ROLE_LABELS = {
 };
 const MAX_REFS = 4;
 
-const SIZE_PRESETS = {
-  vertex: ["1024x1024", "768x1408", "1408x768", "1536x1024"],
-  openai: ["1254x1254", "1536x1024", "1024x1536"],
-  "4k超分": ["2048x2048", "2560x1440", "3840x2160", "2160x3840", "3696x1584"],
-  "原生4k": ["2048x2048", "3840x2160", "2160x3840"],
+// 推荐尺寸只属于 WebUI：画幅 × 档位 → WxH；最终请求仍只发送 size
+const SIZE_TABLE = {
+  "1:1": { "1K": "1024x1024", "2K": "2048x2048", "4K": "4096x4096" },
+  "16:9": { "1K": "1024x576", "2K": "1920x1080", "4K": "3840x2160" },
+  "9:16": { "1K": "576x1024", "2K": "1080x1920", "4K": "2160x3840" },
+  "4:3": { "1K": "1024x768", "2K": "2048x1536", "4K": "4096x3072" },
+  "3:4": { "1K": "768x1024", "2K": "1536x2048", "4K": "3072x4096" },
+  "3:2": { "1K": "1536x1024", "2K": "3072x2048", "4K": "3840x2560" },
+  "2:3": { "1K": "1024x1536", "2K": "2048x3072", "4K": "2560x3840" },
 };
 
 const $ = (id) => document.getElementById(id);
-
-function backendCapabilities() {
-  const entry = state.backends.find((b) => b.id === state.backend) || {};
-  return entry.capabilities || {};
-}
 
 /* ============ Render ============ */
 
@@ -135,90 +129,24 @@ function switchTab(name) {
   if (name === "gallery") renderGallery();
 }
 
-function renderBackendSelect() {
-  const sel = $("backend");
-  const cur = state.backend;
-  const names = state.backends.map((b) => b.id);
-  sel.innerHTML =
-    '<option value="vertex">本地 Vertex（默认）</option>' +
-    names
-      .filter((n) => n !== "vertex")
-      .map((n) => '<option value="' + esc(n) + '">' + esc(n) + "</option>")
-      .join("");
-  sel.value = names.includes(cur) ? cur : "vertex";
-  state.backend = sel.value;
-  renderBackendFilter();
-}
-
-function renderBackendFilter() {
-  const names = state.backends.map((b) => b.id);
-  const flt = $("galFilter");
-  const fcur = flt.value;
-  flt.innerHTML =
-    '<option value="">全部后端</option>' +
-    names.map((n) => '<option value="' + esc(n) + '">' + esc(n) + "</option>").join("");
-  flt.value = names.includes(fcur) ? fcur : "";
-}
-
-function renderModelSelect() {
-  const sel = $("model");
-  const cur = sel.value;
-  const list = state.models || [];
-  sel.innerHTML =
-    '<option value="">自动（推荐）</option>' +
-    [...new Set(list)]
-      .map((m) => '<option value="' + esc(m) + '">' + esc(m) + "</option>")
-      .join("");
-  if (list.includes(cur)) sel.value = cur;
-  else sel.value = "";
-  renderSizeChips();
-  renderQualityHint();
-}
-
-function renderSizeChips() {
-  const chips = $("sizeChips");
-  const preset = presetFor(state.backend, $("model").value.trim());
-  chips.innerHTML = "";
-  preset.forEach((s) => {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "btn ghost small";
-    b.style.marginRight = "6px";
-    b.style.marginBottom = "6px";
-    b.textContent = s;
-    b.onclick = () => {
-      $("size").value = s;
-    };
-    chips.appendChild(b);
-  });
-}
-
-function presetFor(backend, model) {
-  const m = (model || "").toLowerCase();
-  if (m.includes("原生4k")) return SIZE_PRESETS["原生4k"];
-  if (m.includes("4k超分")) return SIZE_PRESETS["4k超分"];
-  if (backend !== "vertex") return SIZE_PRESETS.openai;
-  return SIZE_PRESETS.vertex;
-}
-
-function renderQualityHint() {
-  const caps = backendCapabilities();
-  const quality = $("quality");
-  const hint = $("qualityHint");
-  if (state.backend !== "vertex" && caps.quality === false) {
-    quality.disabled = true;
-    hint.textContent = "当前后端不支持质量参数";
-  } else {
-    quality.disabled = false;
-    hint.textContent = "";
-  }
-}
-
 function esc(s) {
   return String(s == null ? "" : s)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
+}
+
+function fillDatalist(id, items) {
+  const dl = $(id);
+  if (!dl) return;
+  dl.innerHTML = "";
+  [...new Set(items || [])]
+    .filter(Boolean)
+    .forEach((m) => {
+      const opt = document.createElement("option");
+      opt.value = m;
+      dl.appendChild(opt);
+    });
 }
 
 /* ============ Config form ============ */
@@ -242,21 +170,17 @@ function setPath(obj, path, value) {
   t[keys[keys.length - 1]] = value;
 }
 
-function normalizeSizePolicy(value) {
-  const raw = String(value || "auto");
-  if (raw === "strict") return "aspect";
-  if (raw === "warn") return "auto";
-  return raw;
-}
-
 function renderSettings() {
   document.querySelectorAll("[data-path]").forEach((el) => {
     let v = getPath(state.config, el.dataset.path);
-    if (el.dataset.path === "size_policy.mode") v = normalizeSizePolicy(v);
     if (v === undefined) return;
-    if (el.tagName === "SELECT") el.value = String(v);
-    else if (el.type === "checkbox") el.checked = !!v;
-    else el.value = Array.isArray(v) ? v.join(", ") : String(v);
+    if (el.tagName === "SELECT") {
+      el.value = typeof v === "boolean" ? String(v) : String(v);
+    } else if (el.type === "checkbox") {
+      el.checked = !!v;
+    } else {
+      el.value = Array.isArray(v) ? v.join(", ") : String(v);
+    }
   });
 }
 
@@ -273,7 +197,45 @@ function collectPatch() {
   return patch;
 }
 
-/* ============ Generate ============ */
+/* ============ Model discovery ============ */
+
+async function loadImageModels() {
+  try {
+    const data = await api.models("image");
+    state.models = data.models || [];
+    fillDatalist("imgModelList", state.models);
+  } catch (err) {
+    state.models = [];
+    // /models 不可用时仍可手填模型
+  }
+}
+
+async function pullModels(target) {
+  const statusId = target === "translator" ? "trPullStatus" : "imgPullStatus";
+  const listId = target === "translator" ? "trModelList" : "imgCfgModelList";
+  const statusEl = $(statusId);
+  statusEl.textContent = "拉取中…";
+  try {
+    const data = await api.models(target);
+    fillDatalist(listId, data.models || []);
+    statusEl.textContent = "✓ 已连接，发现 " + (data.models || []).length + " 个模型";
+  } catch (err) {
+    fillDatalist(listId, []);
+    statusEl.textContent = "✗ " + err.message;
+  }
+}
+
+/* ============ Size presets ============ */
+
+function applySizePreset() {
+  const aspect = $("sizeAspect").value;
+  const tier = $("sizeTier").value;
+  if (!aspect || !SIZE_TABLE[aspect]) return;
+  const preset = SIZE_TABLE[aspect][tier];
+  if (preset) $("size").value = preset;
+}
+
+/* ============ Reference panel ============ */
 
 function renderRefPanel() {
   const list = $("refList");
@@ -423,24 +385,22 @@ function addSelectedFromLibrary() {
   if (added) renderRefPanel();
 }
 
+/* ============ Generate ============ */
+
 function buildGenerateRequest() {
   const refs = state.references
     .filter((r) => r.status === "ready" && r.asset_id)
     .slice(0, MAX_REFS);
-  const sizePolicyRaw =
-    (state.config.size_policy && state.config.size_policy.mode) || "auto";
   const seedRaw = $("seed").value.trim();
   const lib = $("library").value;
   return {
     prompt: $("prompt").value.trim(),
     size: $("size").value.trim(),
-    backend: state.backend,
-    model: $("model").value,
+    model: $("model").value.trim(),
     seed: seedRaw ? Number(seedRaw) : null,
     quality: $("quality").value,
     composition: $("composition").value,
     translator: $("translator").value,
-    size_policy: normalizeSizePolicy(sizePolicyRaw),
     references: refs.map((r) => ({ asset_id: r.asset_id, role: r.role || "auto" })),
     images: [],
     reference_roles: [],
@@ -450,15 +410,13 @@ function buildGenerateRequest() {
 }
 
 function renderResult(res) {
-  const enc = encodeURIComponent(res.output_url);
   $("resultImg").src = res.output_url;
   $("dlLink").href = res.output_url;
   const ref = res.reference || {};
   const tr = res.translator || {};
   const warns = res.warnings || [];
   let info =
-    "<b>后端：</b>" + esc(res.backend || "vertex") +
-    " · <b>图像模型：</b>" + esc(res.image_model_used || "自动") +
+    "<b>图像模型：</b>" + esc(res.image_model_used || "自动") +
     " · <b>文件：</b>" + esc(res.path) +
     "<br><b>种子：</b>" + esc(res.seed) +
     "<br><b>尺寸：</b>请求 " + esc(res.size) + " → 实际 " + esc(res.actual_size) +
@@ -472,8 +430,7 @@ function renderResult(res) {
       "（" + esc(ref.method || "") + "）<br>";
   }
   if (tr.engine_used && tr.engine_used !== "off") {
-    info += "<b>翻译官：</b>" + esc(tr.engine_used) +
-      (tr.fallback ? "（已自动降级）" : "") + "<br>";
+    info += "<b>提示词处理：</b>已开启<br>";
   }
   if (res.mirror_path) info += "<b>镜像副本：</b>" + esc(res.mirror_path) + "<br>";
   if (res.prompt_used) {
@@ -494,8 +451,7 @@ function addStripCard(res) {
   card.innerHTML =
     '<img src="' + esc(res.output_url) + '" alt="结果">' +
     '<div class="gbody"><div class="gm">' +
-    esc(res.actual_size || "") + " · " + esc(res.backend || "") +
-    '</div><a class="btn ghost small" href="' + esc(res.output_url) +
+    esc(res.actual_size || "") + "</div><a class=\"btn ghost small\" href=\"" + esc(res.output_url) +
     '" download="result.png">下载</a></div>';
   card.querySelector("img").onclick = () => window.open(res.output_url);
   strip.appendChild(card);
@@ -564,23 +520,13 @@ async function handleDoctor() {
     let html =
       '<div class="hint">配置文件：' + esc(result.config_file || "") +
       "（" + (result.config_exists ? "存在" : "不存在，使用默认配置") + "）</div>";
-    if (result.probes) {
-      html += '<div class="hint">尺寸探针：</div>';
-      for (const p of result.probes || []) {
-        html +=
-          '<div class="check"><span class="mono">' + esc(p.requested || "") + "</span> " +
-          "文生图=" + esc(p.generations || "—") +
-          " 画布优先=" + esc(p.canvas_first || "—") +
-          " → " + esc(p.verdict || "") + "</div>";
-      }
-    }
     for (const c of result.checks || []) {
       const ok = !!c.ok;
       html +=
         '<div class="check"><span class="' + (ok ? "ok" : "fail") + '">' +
         (ok ? "OK" : "FAIL") + "</span> <b>" + esc(c.backend || "") + "</b> " +
         esc(c.message || "") +
-        (c.best_model ? "（最佳模型：" + esc(c.best_model) + "，共 " + esc(c.model_count) + " 个）" : "") +
+        (c.model_count ? "（共 " + esc(c.model_count) + " 个模型）" : "") +
         "</div>";
     }
     box.innerHTML = html;
@@ -606,9 +552,7 @@ async function loadHistory(q) {
 }
 
 function renderGallery() {
-  const fb = $("galFilter").value;
-  let items = state.history;
-  if (fb) items = items.filter((it) => (it.backend || "vertex") === fb);
+  const items = state.history;
   const gal = $("gal");
   gal.innerHTML = "";
   if (!items.length) {
@@ -623,7 +567,7 @@ function renderGallery() {
       '<img src="' + esc(it.output_url) + '" alt="缩略图" ' +
       'onerror="this.onerror=null;this.src=\'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7\';this.alt=\'文件已不存在\'">' +
       '<div class="gbody"><div class="gp">' + esc(it.prompt || "") + "</div>" +
-      '<div class="gm">' + esc(it.backend || "vertex") + " · 种子 " + esc(it.seed ?? "-") +
+      '<div class="gm">种子 ' + esc(it.seed ?? "-") +
       " · " + esc(it.requested_size || "") + " → " + esc(it.actual_size || "") + "</div>" +
       (it.prompt_used
         ? '<details class="gm"><summary style="cursor:pointer">生效提示词（点击展开）</summary>' +
@@ -672,17 +616,6 @@ function renderGallery() {
 
 /* ============ Events / Init ============ */
 
-async function loadModels() {
-  try {
-    const data = await api.listModels(state.backend);
-    state.models = data.models || [];
-  } catch (err) {
-    state.models = [];
-    showError("模型列表加载失败：" + err.message);
-  }
-  renderModelSelect();
-}
-
 async function init() {
   try {
     const cfg = await api.getConfig();
@@ -690,14 +623,7 @@ async function init() {
   } catch (err) {
     showError("配置加载失败：" + err.message);
   }
-  try {
-    const data = await api.listBackends();
-    state.backends = data.backends || [];
-  } catch (err) {
-    showError("后端列表加载失败：" + err.message);
-  }
-  renderBackendSelect();
-  await loadModels();
+  await loadImageModels();
   renderSettings();
   await loadHistory();
 }
@@ -706,12 +632,11 @@ document.querySelectorAll(".tab").forEach((t) => {
   t.onclick = () => switchTab(t.dataset.tab);
 });
 
-$("backend").onchange = () => {
-  state.backend = $("backend").value;
-  loadModels();
-};
-$("model").onchange = renderSizeChips;
 $("genBtn").onclick = handleGenerate;
+$("sizeAspect").onchange = applySizePreset;
+$("sizeTier").onchange = applySizePreset;
+$("trPullBtn").onclick = () => pullModels("translator");
+$("imgPullBtn").onclick = () => pullModels("image");
 $("refPickBtn").onclick = () => $("refFile").click();
 $("refFile").onchange = (e) => {
   addFiles(e.target.files);
@@ -791,7 +716,6 @@ $("saveBtn").onclick = async () => {
 };
 $("doctorBtn").onclick = handleDoctor;
 $("galSearch").oninput = () => loadHistory($("galSearch").value.trim());
-$("galFilter").onchange = renderGallery;
 $("galClear").onclick = () => loadHistory($("galSearch").value.trim());
 
 init().catch((err) => showError("初始化失败：" + err.message));
