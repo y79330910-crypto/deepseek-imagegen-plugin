@@ -14,7 +14,7 @@ Codex 集成是可选的 Adapter：DeepSeek 等纯文本模型通过薄 CLI 调�
 - **备用后端（extra_backends）**：默认 Vertex 不变，可附加备用后端（如 DragToken `gpt-image-2`）；方向优先尺寸映射（竖版 1024x1536 / 横版 1536x1024 / 方图 1254x1254）、尺寸白名单（2K / 4K 超分 / 原生 4K）、`quality` 参数，出图时自动把尺寸写进提示词
 - **提示词翻译官**：中文需求自动改写为结构化生图提示词（DeepSeek 默认，通道异常时本地 Gemini 自动兜底，`off` 直传）；兼容 `/v1` 端点（支持 opencode-go 等上游）
 - **构图预设 + 真实尺寸校验**：`--composition full-body / half-body / portrait / landscape`，锁定画幅 + 取景规则；生成后实测尺寸，代理不守尺寸时自动画布优先兜底
-- **参考图**：三段式提示词自动生成（类型识别 + 身份锚点清单 + 场景锚点丢弃）；支持最多 4 张多参考图，每张带用途标签，生成角色隔离简报；角色外观一致性以用户提供的参考图为准（角色卡功能已移除）
+- **参考图**：三段式提示词自动生成（类型识别 + 身份锚点清单 + 场景锚点丢弃）；支持最多 4 张多参考图，每张带用途标签，生成角色隔离简报；Reference Asset System 提供持久化素材库（上传 / 拖放 / 粘贴 / 本机导入 → managed asset → Asset API）
 - **提示词词库**：MySQL + SiliconFlow Embedding / Rerank 向量检索（`prompt_library` 库），生成时喂示例给翻译官
 - **Standalone WebUI（洛天依主题）**：`imagegen serve --open` 启动（默认 http://127.0.0.1:8765），
   与 HTTP API 同源运行；生成页（提示词 / 参考图路径 / 尺寸 / 构图 / 模型 / 批量出图）、
@@ -39,6 +39,9 @@ Codex 集成是可选的 Adapter：DeepSeek 等纯文本模型通过薄 CLI 调�
 │   ├── web/                               # Standalone WebUI 静态资源
 │   │   └── static/index.html / app.js / style.css
 │   ├── services/                         # Application Service 层
+│   │   ├── db.py                         # SQLite schema v2 迁移（user_version=2）
+│   │   ├── assets.py                     # AssetService（Asset 记录 + managed 文件）
+│   │   ├── references.py                 # ReferenceResolver（asset_id → 本地路径）
 │   │   ├── generation.py                 # GenerationService
 │   │   ├── models.py                     # ModelService
 │   │   ├── config.py                     # ConfigService
@@ -126,6 +129,12 @@ GET   /api/v1/outputs/{generation_id}
 GET   /api/v1/history
 GET   /api/v1/history/{generation_id}
 DELETE /api/v1/history/{generation_id}
+POST  /api/v1/assets                       # multipart 文件上传（file + kind=reference）
+POST  /api/v1/assets/import                # 服务器本机路径导入 {path, kind}
+GET   /api/v1/assets                       # ?kind=&q=&limit=&offset=
+GET   /api/v1/assets/{asset_id}
+GET   /api/v1/assets/{asset_id}/content    # 预览 / 缩略图
+DELETE /api/v1/assets/{asset_id}           # 被历史引用时返回 409 asset_in_use
 ```
 
 示例：
@@ -152,6 +161,36 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8765/api/v1/generate `
 经 `/api/v1/outputs/{generation_id}` 读取（进程内注册表，不提供任意文件读取）。
 `GET /api/v1/config` 只返回打码后的配置，`PATCH` 复用 `ConfigService.update`。
 
+### Reference Asset System
+
+参考图走持久化 Asset（浏览器上传 / 拖放 / Ctrl+V 粘贴 / 服务器本机路径导入都会先
+转换为 managed asset），默认位置：
+
+```text
+~/.deepseek-imagegen/
+├ imagegen.db        # SQLite schema v2（generations / assets / generation_assets）
+└ assets/references/ # <asset_id>.png/.jpg/...（不登记原始路径）
+```
+
+`POST /api/v1/generate` 新增 `references` 协议（与旧 `images` 路径兼容并存）：
+
+```json
+{
+  "prompt": "…",
+  "references": [
+    {"asset_id": "…", "role": "character"},
+    {"asset_id": "…", "role": "style"}
+  ]
+}
+```
+
+HTTP 层通过 `ReferenceResolver` 把 `asset_id` 解析成 managed 本地路径，再转换成现有
+Core 契约 `images` + `reference_roles`；`GenerateRequest` / Engine 不知道 asset_id。
+生成成功后 best-effort 记录 `generation_assets`（generation → asset、role、position），
+写入失败只追加 warning，不影响生成成功。`GET /api/v1/history/{generation_id}` 返回
+`references`（asset_id / role / position / content_url），列表接口不塞完整引用数据；
+HTTP 任何位置都不暴露 managed `file_path`。
+
 ### Persistent History
 
 每次成功生成（`GenerateResult` 构造完成）都会 best-effort 写入本地历史数据库：
@@ -170,8 +209,8 @@ HTTP 层通过 `/api/v1/history` 读取/删除；历史记录不暴露 `output_p
 - 默认仅监听 `127.0.0.1`；绑定非 loopback 地址必须显式 `--allow-remote`。
 - `--allow-remote` 无身份验证，只应在可信网络环境使用；当前 API 不适合公开互联网部署。
 - 默认不发送全局 CORS 头，不提供认证系统（后续按需设计）。
-- v1 Local API 的 `images` 指向运行 ImageGen Server 的本机可访问路径
-  （same-machine API）；文件上传协议留待后续版本。
+- v1 Local API 的 `images` 仍指向运行 ImageGen Server 的本机可访问路径
+  （same-machine API，CLI / Codex 兼容）；参考图推荐使用 Asset API / `references`。
 - 所有错误统一为 `{"error": {"type": "...", "message": "..."}}`。
 
 ## 安装
@@ -200,7 +239,7 @@ python tests/run_smoke_test.py
 # 等价：python -m unittest
 ```
 
-覆盖：配置合并与密钥打码、尺寸工具、模型挑选、构图预设、翻译官 off、参考图三段式（类型 / 避免项 / 简报）、出图编排（模拟后端）、输出路径与镜像副本、CLI JSON 输出、词库统计。
+覆盖：配置合并与密钥打码、尺寸工具、模型挑选、构图预设、翻译官 off、参考图三段式（类型 / 避免项 / 简报）、出图编排（模拟后端）、输出路径与镜像副本、CLI JSON 输出、词库统计、SQLite schema v2 迁移、AssetService（上传 / 导入 / 检索 / 删除 / 引用关系）、Asset API、references → ReferenceResolver 集成与 History references 回归、WebUI Reference Panel 前端契约。
 
 另含：Public API / Service 层（Generation / Model / Config / Diagnostic）测试、
 CLI / WebUI 依赖边界（AST 扫描）、独立打包入口（`python -m imagegen`）与
