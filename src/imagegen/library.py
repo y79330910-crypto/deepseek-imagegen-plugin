@@ -840,6 +840,7 @@ def rebuild_cases(
     force: bool = False,
     limit: Optional[int] = None,
     workers: int = 1,
+    after_id: Optional[int] = None,
 ) -> dict[str, int]:
     """Rebuild Prompt Case data without touching legacy source columns.
 
@@ -859,6 +860,15 @@ def rebuild_cases(
             raise LibError("--limit 必须是非负整数。")
     else:
         limit_value = None
+    if after_id is not None:
+        try:
+            after_id_value = int(after_id)
+        except (TypeError, ValueError) as exc:
+            raise LibError("--after-id 必须是非负整数。") from exc
+        if after_id_value < 0:
+            raise LibError("--after-id 必须是非负整数。")
+    else:
+        after_id_value = None
     try:
         workers_value = int(workers)
     except (TypeError, ValueError) as exc:
@@ -873,6 +883,9 @@ def rebuild_cases(
             # embedding API capacity, even when --force is supplied.
             where = " WHERE archived=0"
             params: list[Any] = []
+            if after_id_value is not None:
+                where += " AND id > %s"
+                params.append(after_id_value)
             if not force:
                 where += (
                     " AND (COALESCE(parser_version, 0) < %s"
@@ -882,11 +895,11 @@ def rebuild_cases(
                     " OR (NULLIF(TRIM(visual_text), '') IS NOT NULL"
                     "     AND visual_embedding IS NULL))"
                 )
-                params = [
+                params.extend([
                     PROMPT_CASE_PARSER_VERSION,
                     PROMPT_CASE_EMBEDDING_VERSION,
                     current_model,
-                ]
+                ])
             sql = (
                 "SELECT id, content, requirement, task_type FROM prompts"
                 + where + " ORDER BY id"
@@ -1163,6 +1176,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=1,
         help="并发 worker 数（默认 1，建议根据接口限流设置为 2-8）",
     )
+    rebuild.add_argument(
+        "--after-id",
+        type=int,
+        default=None,
+        help="只处理 ID 大于此值的待迁移记录（用于断点续跑）",
+    )
     return parser
 
 
@@ -1218,6 +1237,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                 force=bool(args.force),
                 limit=args.limit,
                 workers=args.workers,
+                after_id=args.after_id,
             )
             print(
                 f"重建完成：总计 {result['total']} 条，成功 {result['success']} 条，"

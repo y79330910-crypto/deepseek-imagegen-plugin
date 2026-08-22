@@ -285,8 +285,21 @@ class TestPromptCaseMigration(unittest.TestCase):
             library.rebuild_cases(self.pl, workers=33)
 
     def test_rebuild_parser_exposes_workers_option(self):
-        args = library.build_parser().parse_args(["rebuild-cases", "--workers", "4"])
+        args = library.build_parser().parse_args(
+            ["rebuild-cases", "--workers", "4", "--after-id", "597"]
+        )
         self.assertEqual(args.workers, 4)
+        self.assertEqual(args.after_id, 597)
+
+    def test_rebuild_can_resume_after_a_specific_id(self):
+        cursor = FakeCursor(rows=[])
+        with patch.object(library, "mysql_conn", return_value=FakeConnection(cursor)):
+            library.rebuild_cases(self.pl, limit=292, after_id=597)
+        sql, params = cursor.executed[0]
+        self.assertIn("archived=0", sql)
+        self.assertIn("id > %s", sql)
+        self.assertEqual(params[0], 597)
+        self.assertEqual(params[-1], 292)
 
     def test_backup_is_text_only_and_contains_case_fields(self):
         row = (
