@@ -6,7 +6,6 @@ imagegen.services 消费 Core，而不是直接依赖内部模块布局。
 
 from __future__ import annotations
 
-from .backends.base import BackendCapabilities
 from .engine import ImageGenEngine
 from .errors import (
     BackendError,
@@ -32,7 +31,6 @@ __all__ = [
     "ImageGenEngine",
     "GenerateRequest",
     "GenerateResult",
-    "BackendCapabilities",
     "ImageGenError",
     "ConfigurationError",
     "BackendError",

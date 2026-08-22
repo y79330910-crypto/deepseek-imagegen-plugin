@@ -13,9 +13,6 @@ from pathlib import Path
 
 
 CODEX_CONFIG_TOML = Path.home() / ".codex" / "config.toml"
-LEGACY_VERTEX_PROXY_DIR = (
-    r"C:\Users\yjq\Documents\Codex\2026-07-31\new-chat\outputs\vertex-proxy\dist"
-)
 LEGACY_MIRROR_DIR = r"C:\Users\yjq\Pictures\codex"
 LEGACY_VISION_ROOT = Path.home() / ".codex" / "plugins" / "cache" / "deepseek-vision"
 
@@ -45,7 +42,6 @@ def _load_deepseek_credentials() -> tuple[str, str]:
 
 def prepare_environment() -> None:
     """把 Codex 宿主默认值注入通用环境变量；可重复调用，不覆盖用户已设置的值。"""
-    os.environ.setdefault("VERTEX_PROXY_DIR", LEGACY_VERTEX_PROXY_DIR)
     os.environ.setdefault("IMAGEGEN_MIRROR_DIR", LEGACY_MIRROR_DIR)
     base_url, api_key = _load_deepseek_credentials()
     if base_url:

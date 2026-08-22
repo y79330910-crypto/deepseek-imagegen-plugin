@@ -25,7 +25,6 @@ class TestServerBasics(unittest.TestCase):
         self.assertEqual(data["status"], "ok")
         self.assertEqual(data["api_version"], HTTP_API_VERSION)
         self.assertEqual(data["core_api_version"], 1)
-        self.assertEqual(data["backend_api_version"], 1)
 
     def test_unknown_route_404(self):
         status, _, data = self.server.json("GET", "/api/v1/nope")

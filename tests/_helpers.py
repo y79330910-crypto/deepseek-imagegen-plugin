@@ -1,10 +1,10 @@
-"""测试公共工具：假图片字节与测试用后端替身。"""
+"""测试公共工具：假图片字节与 OpenAI-Compatible 上游替身。"""
 
 from __future__ import annotations
 
 import io
 
-from imagegen.backends.base import BackendCapabilities
+from imagegen.openai_client import OpenAIClient
 
 
 def make_png_bytes(width: int = 64, height: int = 64) -> bytes:
@@ -15,56 +15,49 @@ def make_png_bytes(width: int = 64, height: int = 64) -> bytes:
     return buf.getvalue()
 
 
-class FakeVertexBackend:
-    """Vertex 后端替身：返回指定尺寸 PNG，不做任何网络请求。"""
+class FakeOpenAIClient(OpenAIClient):
+    """OpenAI-Compatible 上游替身：不发起网络请求，返回指定尺寸 PNG。"""
 
-    id = "vertex"
+    def __init__(
+        self,
+        base_url: str = "https://example.com/v1",
+        api_key: str = "sk-test",
+        size: tuple[int, int] = (1024, 1024),
+        text: str = "rewritten prompt",
+    ):
+        super().__init__(base_url, api_key)
+        self.size = size
+        self.text = text
+        self.requests: list[dict] = []
 
-    def capabilities(self):
-        return BackendCapabilities(
-            text_to_image=True,
-            image_to_image=True,
-            multi_reference=True,
+    def list_models(self) -> list[str]:
+        return ["model-a", "model-b"]
+
+    def generate_text(self, messages, model, max_tokens=4096, temperature=0.8, timeout=120) -> str:
+        self.requests.append({"kind": "generate_text", "model": model, "messages": messages})
+        return self.text
+
+    def generate_image(self, model, prompt, size, quality="", empty_retries=2, retry_delay_base=6.0) -> bytes:
+        self.requests.append(
+            {
+                "kind": "generate_image",
+                "model": model,
+                "prompt": prompt,
+                "size": size,
+                "quality": quality,
+            }
         )
+        return make_png_bytes(*self.size)
 
-    def resolve_model(self, cfg, requested=""):
-        return (requested or "").strip() or "gemini-3-pro-image"
-
-    def generate(self, cfg, prompt, width, height, model="", **kwargs):
-        return make_png_bytes(width, height)
-
-    def generate_fallback_size(self, cfg, prompt, width, height, model="", **kwargs):
-        return make_png_bytes(width, height)
-
-    def edit(self, cfg, prompt, width, height, model, images, **kwargs):
-        return make_png_bytes(width, height)
-
-
-class FakeOpenAIBackend:
-    """OpenAI 兼容后端替身（用于验证 Engine 的备用后端编排）。"""
-
-    id = "openai-compatible"
-
-    def __init__(self, name: str = "dragtokens"):
-        self.name = name
-
-    def capabilities(self):
-        return BackendCapabilities(
-            text_to_image=True,
-            image_to_image=True,
-            multi_reference=True,
-            quality=True,
+    def edit_image(self, model, prompt, size, images, quality="") -> bytes:
+        self.requests.append(
+            {
+                "kind": "edit_image",
+                "model": model,
+                "prompt": prompt,
+                "size": size,
+                "quality": quality,
+                "images": list(images),
+            }
         )
-
-    def resolve_model(self, cfg, requested=""):
-        requested = (requested or "").strip()
-        if requested:
-            return requested
-        info = (cfg.get("extra_backends") or {}).get(self.name) or {}
-        return str(info.get("model") or "gpt-image-2")
-
-    def generate(self, cfg, prompt, width, height, model="", **kwargs):
-        return make_png_bytes(width, height)
-
-    def edit(self, cfg, prompt, width, height, model, images, **kwargs):
-        return make_png_bytes(width, height)
+        return make_png_bytes(*self.size)

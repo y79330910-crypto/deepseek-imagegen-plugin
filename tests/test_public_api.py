@@ -6,7 +6,6 @@ import unittest
 
 import imagegen
 from imagegen import (
-    BackendCapabilities,
     CORE_API_VERSION,
     ConfigService,
     DiagnosticService,
@@ -35,7 +34,6 @@ class TestPublicApi(unittest.TestCase):
             ImageGenEngine,
             GenerateRequest,
             GenerateResult,
-            BackendCapabilities,
             ImageGenError,
             GenerationService,
             ModelService,

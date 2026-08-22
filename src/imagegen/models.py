@@ -6,34 +6,9 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
-from .backends.base import BackendCapabilities
 from .errors import ValidationError
 from .image_utils import parse_size
 from .reference import MAX_REF_IMAGES
-
-
-def normalize_size_policy(value: str) -> tuple[str, list[str]]:
-    """规范化 size_policy，返回 (最终策略, deprecation warnings)。
-
-    正式契约：auto / aspect / exact。
-    兼容："" → auto；strict → aspect（弃用）；warn → auto（弃用，保持旧行为）。
-    非法值抛 ValidationError，不静默 fallback。
-    """
-    raw = str(value or "").strip().lower()
-    if raw in ("", "auto"):
-        return "auto", []
-    if raw == "aspect":
-        return "aspect", []
-    if raw == "exact":
-        return "exact", []
-    if raw == "strict":
-        return "aspect", ["size_policy='strict' is deprecated; use 'aspect'"]
-    if raw == "warn":
-        return "auto", ["size_policy='warn' is deprecated; use 'auto'"]
-    raise ValidationError(
-        f"未知 size_policy：{value!r}。可选：auto / aspect / exact"
-        "（strict 已弃用，等价 aspect）。"
-    )
 
 
 @dataclass
@@ -45,12 +20,10 @@ class GenerateRequest:
     width: int | None = None
     height: int | None = None
     model: str = ""
-    backend: str = ""
     seed: int | None = None
     quality: str = ""
     composition: str = "auto"
     translator: str = "auto"
-    size_policy: str = ""
     images: list[str] = field(default_factory=list)
     reference_roles: list[str] = field(default_factory=list)
     # 兼容字段（保留旧 CLI 参数）
@@ -109,12 +82,10 @@ class GenerateRequest:
             width=as_optional_int(data.get("width"), "width"),
             height=as_optional_int(data.get("height"), "height"),
             model=as_str(data.get("model", ""), "model"),
-            backend=as_str(data.get("backend", ""), "backend"),
             seed=as_optional_int(data.get("seed"), "seed"),
             quality=as_str(data.get("quality", ""), "quality"),
             composition=as_str(data.get("composition", "auto"), "composition"),
             translator=as_str(data.get("translator", "auto"), "translator"),
-            size_policy=as_str(data.get("size_policy", ""), "size_policy"),
             images=as_str_list(data.get("images", []), "images"),
             reference_roles=as_str_list(data.get("reference_roles", []), "reference_roles"),
             ref_type=as_str(data.get("ref_type", "auto"), "ref_type"),
@@ -131,12 +102,10 @@ class GenerateRequest:
             "width": self.width,
             "height": self.height,
             "model": self.model,
-            "backend": self.backend,
             "seed": self.seed,
             "quality": self.quality,
             "composition": self.composition,
             "translator": self.translator,
-            "size_policy": self.size_policy,
             "images": list(self.images),
             "reference_roles": list(self.reference_roles),
             "ref_type": self.ref_type,
@@ -149,7 +118,6 @@ class GenerateRequest:
         """请求基础合法性校验（不依赖具体 Backend）。"""
         if not str(self.prompt or "").strip():
             raise ValidationError("提示词不能为空。")
-        normalize_size_policy(self.size_policy)
         size = str(self.size or "").strip().lower()
         if size and size != "auto":
             parse_size(size)
@@ -171,28 +139,6 @@ class GenerateRequest:
             )
         if len(self.reference_roles) > len(self.images):
             raise ValidationError("reference_roles 数量不能超过 images 数量。")
-
-    def normalized_size_policy(self) -> tuple[str, list[str]]:
-        """返回 (规范化后的策略, deprecation warnings)。"""
-        return normalize_size_policy(self.size_policy)
-
-
-def validate_backend_request(
-    request: "GenerateRequest", capabilities: "BackendCapabilities"
-) -> None:
-    """校验请求与选定 Backend 的能力是否匹配。
-
-    规则：请求显式要求的能力后端不支持时抛 ValidationError；
-    用户未指定（空值）时忽略。size 由 Engine 的 size_policy 处理，不在此处强制。
-    """
-    if request.images and not capabilities.image_to_image:
-        raise ValidationError("当前后端不支持图生图（请求包含 images）。")
-    if len(request.images) > 1 and not capabilities.multi_reference:
-        raise ValidationError(
-            f"当前后端不支持多参考图（请求包含 {len(request.images)} 张）。"
-        )
-    if str(request.quality or "").strip() and not capabilities.quality:
-        raise ValidationError("当前后端不支持 quality 参数（请求已显式指定 quality）。")
 
 
 @dataclass

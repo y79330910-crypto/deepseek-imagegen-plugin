@@ -12,6 +12,7 @@ from typing import Any, Optional
 
 from imagegen import ConfigService
 from imagegen.api import create_server
+from imagegen.errors import ValidationError
 from imagegen.models import GenerateResult
 
 
@@ -23,7 +24,7 @@ class FakeGenerationService:
     ):
         self.result = result or GenerateResult(
             path=r"D:\tmp\out.png",
-            backend="vertex",
+            backend="openai",
             image_model_used="gemini-3-pro-image",
             seed=1,
             requested_size="1024x1024",
@@ -44,46 +45,26 @@ class FakeGenerationService:
 class FakeModelService:
     def __init__(
         self,
-        backends: Optional[list[dict]] = None,
         models: Optional[list[str]] = None,
-        info: Optional[dict] = None,
+        exc: Optional[Exception] = None,
     ):
-        self.backends = backends or [
-            {
-                "id": "vertex",
-                "api_version": 1,
-                "capabilities": {"text_to_image": True, "image_to_image": True},
-            }
-        ]
         self.models = models or ["gemini-3-pro-image"]
-        self.info = info or {
-            "id": "vertex",
-            "api_version": 1,
-            "capabilities": {},
-            "models": self.models,
-            "best_model": "gemini-3-pro-image",
-            "base_url": "http://127.0.0.1:2156/v1",
-        }
+        self.exc = exc
 
-    def list_backends(self):
-        return self.backends
-
-    def backend_exists(self, backend_id: str) -> bool:
-        return backend_id in {"vertex", "openai-compatible", "dragtokens"}
-
-    def get_backend_info(self, backend_id: str):
-        return self.info
-
-    def list_models(self, backend_id: str):
+    def list_models(self, target: str):
+        if self.exc is not None:
+            raise self.exc
+        if target not in ("translator", "image"):
+            raise ValidationError(f"unknown target: {target}")
         return self.models
 
 
 class FakeDiagnosticService:
     def __init__(self, result: Optional[dict] = None, exc: Optional[Exception] = None):
-        self.result = result or {"ok": True, "backend": "vertex", "checks": []}
+        self.result = result or {"ok": True, "backend": "openai", "checks": []}
         self.exc = exc
 
-    def doctor(self, size_probe: bool = False, size: str = ""):
+    def doctor(self):
         if self.exc is not None:
             raise self.exc
         return self.result

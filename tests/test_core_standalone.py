@@ -31,8 +31,7 @@ class TestCoreStandalone(unittest.TestCase):
         env["PYTHONPATH"] = str(SRC_DIR)
         code = (
             "import imagegen, imagegen.engine, imagegen.cli, imagegen.doctor; "
-            "import imagegen.backends.registry as r; "
-            "print(imagegen.__file__); print(sorted(r.list_backends()))"
+            "print(imagegen.__file__); print(imagegen.CORE_API_VERSION)"
         )
         with tempfile.TemporaryDirectory() as tmp:
             proc = subprocess.run(
@@ -52,10 +51,7 @@ class TestCoreStandalone(unittest.TestCase):
         self.assertIn(os.sep + "src" + os.sep + "imagegen", core_file)
         self.assertNotIn("plugins" + os.sep + "deepseek-imagegen", core_file)
         self.assertNotIn("codex", core_file.lower())
-        self.assertEqual(
-            sorted(x.strip("[]' ") for x in out_lines[1].strip("[]").split(",")),
-            ["openai-compatible", "vertex"],
-        )
+        self.assertEqual(out_lines[1], "1")
 
     def test_cli_parser_builds_without_plugin_dirs(self):
         """CLI 参数解析不依赖插件目录。"""

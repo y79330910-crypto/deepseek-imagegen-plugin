@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, unquote
 
-from ..backends.base import BACKEND_API_VERSION
 from ..errors import (
     AssetInUseError,
     AssetNotFoundError,
@@ -69,28 +68,16 @@ def handle_health(context: Any, body: bytes = b"") -> Response:
             "status": "ok",
             "api_version": HTTP_API_VERSION,
             "core_api_version": CORE_API_VERSION,
-            "backend_api_version": BACKEND_API_VERSION,
         },
     )
 
 
-def handle_backends(context: Any, body: bytes = b"") -> Response:
-    return json_response(200, {"backends": context.model_service.list_backends()})
-
-
-def handle_backend_info(context: Any, backend_id: str) -> Response:
-    if not context.model_service.backend_exists(backend_id):
-        return error_response(404, "not_found", f"unknown backend: {backend_id}")
-    return json_response(200, context.model_service.get_backend_info(backend_id))
-
-
-def handle_backend_models(context: Any, backend_id: str) -> Response:
-    if not context.model_service.backend_exists(backend_id):
-        return error_response(404, "not_found", f"unknown backend: {backend_id}")
-    return json_response(
-        200,
-        {"backend": backend_id, "models": context.model_service.list_models(backend_id)},
-    )
+def handle_models(context: Any, body: bytes) -> Response:
+    """POST /api/v1/models：按 target 拉取提示词 / 图像上游模型。"""
+    payload = parse_json_payload(body)
+    target = str(payload.get("target") or "").strip()
+    models = context.model_service.list_models(target)
+    return json_response(200, {"models": models})
 
 
 def handle_generate(context: Any, body: bytes) -> Response:
@@ -358,7 +345,7 @@ def handle_assets_delete(context: Any, asset_id: str) -> Response:
 
 _STATIC_ROUTES: dict[tuple[str, str], Callable[..., Response]] = {
     ("GET", "/api/v1/health"): handle_health,
-    ("GET", "/api/v1/backends"): handle_backends,
+    ("POST", "/api/v1/models"): handle_models,
     ("POST", "/api/v1/generate"): handle_generate,
     ("GET", "/api/v1/config"): handle_get_config,
     ("PATCH", "/api/v1/config"): handle_patch_config,
@@ -397,17 +384,6 @@ def dispatch(
     allowed = [m for (m, p) in _STATIC_ROUTES if p == path_part]
     if allowed:
         return _method_not_allowed(allowed)
-
-    match = re.fullmatch(r"/api/v1/backends/([^/]+)/models", path_part)
-    if match:
-        if method != "GET":
-            return _method_not_allowed(["GET"])
-        return _safe_call(handle_backend_models, context, unquote(match.group(1)))
-    match = re.fullmatch(r"/api/v1/backends/([^/]+)", path_part)
-    if match:
-        if method != "GET":
-            return _method_not_allowed(["GET"])
-        return _safe_call(handle_backend_info, context, unquote(match.group(1)))
 
     if method == "GET" and path_part == "/api/v1/history":
         return _safe_call(handle_history_list, context, query)

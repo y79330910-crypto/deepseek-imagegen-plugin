@@ -53,26 +53,16 @@ def _normalize_patch(patch: Mapping[str, Any]) -> dict[str, Any]:
         mysql = pl.get("mysql")
         if isinstance(mysql, dict) and mysql.get("port") not in ("", None):
             mysql["port"] = _to_int(mysql["port"])
-    sp = result.get("size_policy")
-    if isinstance(sp, dict):
-        if sp.get("retries") not in ("", None):
-            sp["retries"] = _to_int(sp["retries"])
-        if sp.get("tolerance") not in ("", None):
-            sp["tolerance"] = _to_float(sp["tolerance"])
     ref = result.get("reference")
     if isinstance(ref, dict) and isinstance(ref.get("auto_classify"), str):
         ref["auto_classify"] = _to_bool(ref["auto_classify"])
-    eb = result.get("extra_backends")
-    if isinstance(eb, dict):
-        for info in eb.values():
-            if not isinstance(info, dict):
-                continue
-            if isinstance(info.get("sizes"), str):
-                info["sizes"] = _to_list(info["sizes"])
-            if isinstance(info.get("models"), str):
-                info["models"] = _to_list(info["models"])
-            if info.get("quality") in ("", None):
-                info.pop("quality", None)
+    sc = result.get("size_check")
+    if isinstance(sc, dict) and sc.get("tolerance") not in ("", None):
+        sc["tolerance"] = _to_float(sc["tolerance"])
+    for node_key in ("translator", "size_check"):
+        node = result.get(node_key)
+        if isinstance(node, dict) and isinstance(node.get("enabled"), str):
+            node["enabled"] = _to_bool(node["enabled"])
     return result
 
 
@@ -162,8 +152,10 @@ class ConfigService:
         base = self.load_raw()
         if not isinstance(base, dict):
             base = {}
+        # masked 比较基于“迁移后生效配置”，保证旧式密钥字段也能被正确保护
+        effective = self.load()
         normalized = _normalize_patch(patch)
-        protected = _protect_masked_secrets(base, normalized)
+        protected = _protect_masked_secrets(effective, normalized)
         merged = _deep_merge(base, protected)
         self.save(merged)
         return self.masked()

@@ -48,7 +48,6 @@ class TestRequestRoundTripContract(unittest.TestCase):
         data = {
             "prompt": "a girl under cherry blossoms",
             "size": "1024x1536",
-            "backend": "vertex",
             "quality": "high",
             "images": ["a.png", "b.png"],
             "reference_roles": ["character", "outfit"],

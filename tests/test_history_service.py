@@ -60,7 +60,6 @@ class TestHistoryService(unittest.TestCase):
             images=["a.png", "b.png"],
             reference_roles=["character", "outfit"],
             quality="high",
-            size_policy="exact",
         )
         rec = self.svc.record(req, make_result())
         restored = GenerateRequest.from_dict(rec.request)
@@ -68,7 +67,6 @@ class TestHistoryService(unittest.TestCase):
         self.assertEqual(restored.images, ["a.png", "b.png"])
         self.assertEqual(restored.reference_roles, ["character", "outfit"])
         self.assertEqual(restored.quality, "high")
-        self.assertEqual(restored.size_policy, "exact")
 
     def test_list_order_and_pagination(self):
         for i in range(3):

@@ -1,161 +1,19 @@
-"""提示词翻译官：DeepSeek 默认 + 本地 Gemini 自动兜底 + off 直传。"""
+"""提示词翻译官：单一 OpenAI-Compatible 提示词上游（Chat 优先 / Responses fallback）。
+
+内部不再存在具体翻译引擎（DeepSeek / Gemini 均已删除），只保留 enabled / disabled。
+请求层为旧调用兼容暂时接受 translator=auto / off。
+"""
 
 from __future__ import annotations
 
-import json
-import os
 from typing import Any, Optional
 
-from .backends.vertex import discover_vertex, pick_best_text_model
-from .config import APP_NAME, load_config
-from .errors import GenError
-from .http import http
+from .config import load_config
+from .openai_client import OpenAIClient
 
 
-def _read_deepseek_credential_from_env() -> tuple[str, str]:
-    """从环境变量读取 DeepSeek 地址与密钥（宿主适配层负责注入）。"""
-    return (
-        os.environ.get("DEEPSEEK_BASE_URL", "").strip(),
-        os.environ.get("DEEPSEEK_API_KEY", "").strip(),
-    )
-
-
-def _chat_text(
-    base_url: str,
-    api_key: str,
-    model: str,
-    messages: list[dict[str, Any]],
-    max_tokens: int = 4096,
-    timeout: int = 120,
-) -> str:
-    """调用 OpenAI 兼容 /chat/completions；推理模型思考过长时加大上限重试。"""
-
-    def call(tokens: int) -> str:
-        payload = {
-            "model": model,
-            "messages": messages,
-            "max_tokens": tokens,
-            "temperature": 0.8,
-            "stream": False,
-        }
-        _status, body, _ctype = http(
-            f"{base_url.rstrip('/')}/chat/completions",
-            method="POST",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-                "User-Agent": f"{APP_NAME}/1.0",
-            },
-            payload=payload,
-            timeout=timeout,
-        )
-        data = json.loads(body.decode("utf-8", errors="replace"))
-        try:
-            content = data["choices"][0]["message"].get("content")
-        except (KeyError, IndexError) as exc:
-            raise GenError(f"聊天接口返回异常：{str(data)[:300]}") from exc
-        return str(content or "").strip()
-
-    text = call(max_tokens)
-    if not text:
-        text = call(max_tokens * 2)
-    return text
-
-
-def _api_endpoint(base_url: str, path: str) -> str:
-    """拼接 OpenAI 兼容端点：base_url 带 /v1 或不带都兼容（避免 /v1/v1）。"""
-    base = base_url.rstrip("/")
-    if base.endswith("/v1"):
-        return base + path
-    return base + "/v1" + path
-
-
-def _deepseek_text(
-    base_url: str,
-    api_key: str,
-    model: str,
-    messages: list[dict[str, Any]],
-    max_tokens: int = 4096,
-) -> str:
-    """调用 DeepSeek（优先 /v1/responses，失败回退 /v1/chat/completions）。"""
-    system = "\n\n".join(
-        str(m.get("content") or "") for m in messages if m.get("role") == "system"
-    )
-    user = "\n\n".join(
-        str(m.get("content") or "") for m in messages if m.get("role") == "user"
-    )
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-        "User-Agent": f"{APP_NAME}/1.0",
-    }
-    payload = {
-        "model": model,
-        "instructions": system,
-        "input": [
-            {
-                "type": "message",
-                "role": "user",
-                "content": [{"type": "input_text", "text": user}],
-            }
-        ],
-        "max_output_tokens": max_tokens,
-    }
-    try:
-        _status, body, _ctype = http(
-            _api_endpoint(base_url, "/responses"),
-            method="POST",
-            headers=headers,
-            payload=payload,
-            timeout=120,
-        )
-        data = json.loads(body.decode("utf-8", errors="replace"))
-        parts: list[str] = []
-        for item in data.get("output", []):
-            if item.get("type") == "message":
-                for chunk in item.get("content", []):
-                    if chunk.get("type") == "output_text" and chunk.get("text"):
-                        parts.append(str(chunk["text"]))
-        if parts:
-            return "\n".join(parts).strip()
-    except GenError:
-        pass
-
-    payload = {
-        "model": model,
-        "messages": messages,
-        "max_tokens": max_tokens,
-        "temperature": 0.8,
-        "stream": False,
-    }
-    _status, body, _ctype = http(
-        _api_endpoint(base_url, "/chat/completions"),
-        method="POST",
-        headers=headers,
-        payload=payload,
-        timeout=120,
-    )
-    data = json.loads(body.decode("utf-8", errors="replace"))
-    try:
-        return str(data["choices"][0]["message"].get("content") or "").strip()
-    except (KeyError, IndexError) as exc:
-        raise GenError(f"DeepSeek 接口返回异常：{str(data)[:300]}") from exc
-
-
-def _looks_broken(text: str, had_cjk: bool) -> bool:
-    """判断翻译结果是否因通道问题变成“问号/没收到消息”之类的废回复。"""
-    if not text or not text.strip():
-        return True
-    if not had_cjk:
-        return False
-    low = text.lower()
-    markers = (
-        "问号", "没有看到", "没看到", "无法理解", "没有收到", "没有显示",
-        "question mark", "question marks", "didn't understand", "did not understand",
-        "didn't come through", "did not come through", "not display", "not come through",
-        "only question", "only got question", "string of question",
-    )
-    return any(m in low for m in markers)
+def _is_disabled(engine: str) -> bool:
+    return (engine or "").strip().lower() in ("off", "none", "direct", "直传")
 
 
 def build_translator_system(
@@ -167,7 +25,7 @@ def build_translator_system(
     if lang == "en":
         base = (
             "You are a senior visual prompt engineer. Rewrite the user's image request "
-            "into a well-structured prompt for modern image models such as gemini-3-pro-image.\n\n"
+            "into a well-structured prompt for modern image models.\n\n"
             "Hard rules:\n"
             "1. Use natural, descriptive full sentences. Never dump isolated keywords.\n"
             "2. Cover, in order: subject -> environment -> lighting -> style/medium -> "
@@ -180,9 +38,9 @@ def build_translator_system(
     else:
         base = (
             "你是一位精通图像生成提示词的资深视觉设计师。请把用户用中文描述的画面需求，"
-            "改写成适合 gemini-3-pro-image 等新一代图像模型的生图提示词。\n\n"
+            "改写成适合新一代图像模型的生图提示词。\n\n"
             "硬性要求：\n"
-            "1. 用自然连贯的完整句子描述，禁止堆砌孤立关键词；Gemini 图像模型喜欢自然描述段落，讨厌关键词清单。\n"
+            "1. 用自然连贯的完整句子描述，禁止堆砌孤立关键词；图像模型喜欢自然描述段落，讨厌关键词清单。\n"
             "2. 按顺序覆盖：主体（身份、外貌、服装、姿态、表情）→ 环境背景（地点、建筑、天气、景深层次）→ "
             "光影（光源、颜色、冷暖对比、轮廓光）→ 风格媒介（日系动漫插画、厚涂、水彩、写实摄影等）→ "
             "构图（画幅比例、机位、居中/三分法、前景中景背景）→ 画面文字（如有，用英文引号标出，"
@@ -225,15 +83,15 @@ def translate_prompt(
     examples: Optional[list[str]] = None,
     reference_brief: str = "",
 ) -> dict[str, Any]:
-    """翻译官：deepseek 默认、gemini 走本地代理、off 直传。"""
+    """翻译官：enabled 时调用统一提示词上游，disabled / off 时直传原文。"""
     cfg = cfg if cfg is not None else load_config()
     tr = cfg.get("translator") or {}
     if not isinstance(tr, dict):
         tr = {}
+    enabled = not _is_disabled(engine)
     if engine in ("", "auto"):
-        engine = str(tr.get("engine") or "deepseek").strip().lower()
-    engine = engine.strip().lower()
-    if engine in ("off", "none", "direct", "直传"):
+        enabled = bool(tr.get("enabled", True))
+    if not enabled:
         return {
             "ok": True,
             "engine": "off",
@@ -243,8 +101,6 @@ def translate_prompt(
             "rewritten": user_text,
             "fallback": False,
         }
-    if engine not in ("deepseek", "gemini"):
-        engine = "deepseek"
 
     lang = str(tr.get("output_lang") or "zh").lower()
     system = build_translator_system(lang, examples, reference_brief)
@@ -257,69 +113,17 @@ def translate_prompt(
         {"role": "system", "content": system},
         {"role": "user", "content": user_msg},
     ]
-    had_cjk = any("\u4e00" <= ch <= "\u9fff" for ch in user_text)
-
-    if engine == "deepseek":
-        ds = tr.get("deepseek") or {}
-        if not isinstance(ds, dict):
-            ds = {}
-        base_url = str(ds.get("base_url") or "").strip().rstrip("/")
-        api_key = str(ds.get("api_key") or "").strip()
-        model = str(ds.get("model") or "deepseek-v4-flash").strip() or "deepseek-v4-flash"
-        if not base_url or not api_key:
-            env_base, env_key = _read_deepseek_credential_from_env()
-            base_url = base_url or env_base
-            api_key = api_key or env_key
-        if not base_url or not api_key:
-            raise GenError(
-                "翻译官(deepseek)未配置地址/密钥：请在 config.json 填写，或改用 gemini 引擎。"
-            )
-        fallback_reason = ""
-        try:
-            text = _deepseek_text(base_url, api_key, model, messages, max_tokens)
-        except GenError as exc:
-            text = ""
-            fallback_reason = str(exc)
-        if _looks_broken(text, had_cjk):
-            info = discover_vertex(cfg)
-            gm_model = str((tr.get("gemini") or {}).get("model") or "").strip()
-            if not gm_model:
-                gm_model = pick_best_text_model(info["models"])
-            if not gm_model:
-                raise GenError("DeepSeek 通道异常且未找到可用的 Gemini 文本模型，请检查配置。")
-            gm_text = _chat_text(info["base_url"], info["api_key"], gm_model, messages, max_tokens)
-            return {
-                "ok": True,
-                "engine": "deepseek",
-                "engine_used": "gemini",
-                "model": gm_model,
-                "original": user_text,
-                "rewritten": gm_text,
-                "fallback": True,
-                "fallback_reason": fallback_reason or "DeepSeek 通道未返回有效中文回复，已自动改用本地 Gemini",
-            }
-        return {
-            "ok": True,
-            "engine": "deepseek",
-            "engine_used": "deepseek",
-            "model": model,
-            "original": user_text,
-            "rewritten": text,
-            "fallback": False,
-        }
-
-    info = discover_vertex(cfg)
-    gm_model = str((tr.get("gemini") or {}).get("model") or "").strip()
-    if not gm_model:
-        gm_model = pick_best_text_model(info["models"])
-    if not gm_model:
-        raise GenError("未找到可用的 Gemini 文本模型，请检查 Vertex Proxy 模型列表。")
-    text = _chat_text(info["base_url"], info["api_key"], gm_model, messages, max_tokens)
+    model = str(tr.get("model") or "").strip()
+    client = OpenAIClient(
+        str(tr.get("base_url") or "").strip(),
+        str(tr.get("api_key") or "").strip(),
+    )
+    text = client.generate_text(messages, model, max_tokens=max_tokens)
     return {
         "ok": True,
-        "engine": "gemini",
-        "engine_used": "gemini",
-        "model": gm_model,
+        "engine": "openai",
+        "engine_used": "openai",
+        "model": model,
         "original": user_text,
         "rewritten": text,
         "fallback": False,

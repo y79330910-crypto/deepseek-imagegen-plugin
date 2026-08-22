@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""DeepSeek ImageGen Core 冒烟测试（迁移自插件内单文件测试）。
+"""ImageGen Core 冒烟测试（迁移自插件内单文件测试，Phase 6 双 OpenAI-Compatible 版）。
 
-覆盖：配置合并与密钥打码、尺寸工具、模型挑选、构图预设、翻译官 off、
-参考图适配与降级、出图编排（模拟后端）、输出路径与镜像副本、
+覆盖：配置合并与密钥打码、尺寸工具、构图预设、翻译官 off、
+参考图适配与降级、出图编排（模拟上游）、输出路径与镜像副本、
 CLI JSON 输出、词库统计（演练库，无网络）。
 """
 
@@ -24,27 +24,13 @@ if str(SRC_DIR) not in sys.path:
 
 from imagegen import reference  # noqa: E402
 from imagegen import engine as engine_mod  # noqa: E402
-from imagegen.backends.openai_images import (  # noqa: E402
-    OPENAI_IMAGE_SIZES,
-    extra_backend_sizes,
-    extra_size_whitelist,
-    normalize_extra_size,
-    pick_extra_model_for_size,
-)
-from imagegen.backends.vertex import (  # noqa: E402
-    parse_models_list,
-    pick_best_image_model,
-    pick_best_text_model,
-)
 from imagegen.composition import resolve_composition  # noqa: E402
 from imagegen.config import load_config, mask_config  # noqa: E402
 from imagegen.engine import generate  # noqa: E402
 from imagegen.errors import GenError  # noqa: E402
 from imagegen.image_utils import (  # noqa: E402
     aspect_ratio_key,
-    canvas_size_for,
     default_output_path,
-    fit_reference_to_canvas,
     mirror_output,
     parse_size,
     probe_image_size,
@@ -54,7 +40,21 @@ from imagegen.image_utils import (  # noqa: E402
 from imagegen.models import GenerateRequest  # noqa: E402
 from imagegen.translator import translate_prompt  # noqa: E402
 
-from ._helpers import FakeVertexBackend, make_png_bytes  # noqa: E402
+from ._helpers import FakeOpenAIClient, make_png_bytes  # noqa: E402
+
+
+def make_image_cfg(tmp: str) -> dict:
+    cfg = load_config()
+    cfg["save_dir"] = str(Path(tmp) / "out")
+    cfg["mirror_dir"] = str(Path(tmp) / "mirror")
+    cfg["image"] = {
+        "base_url": "https://example.com/v1",
+        "api_key": "sk-test",
+        "model": "gemini-3-pro-image",
+        "quality": "",
+    }
+    return cfg
+
 
 class TestConfig(unittest.TestCase):
     def test_merge_and_mask(self):
@@ -63,7 +63,7 @@ class TestConfig(unittest.TestCase):
         self.assertIn("presets", cfg["composition"])
         safe = mask_config(cfg)
         text = json.dumps(safe, ensure_ascii=False)
-        self.assertNotIn(cfg.get("vertex", {}).get("api_key") or "sk-NOT-SET", text)
+        self.assertNotIn(str(cfg.get("image", {}).get("api_key") or "sk-NOT-SET"), text)
         self.assertIn("(未设置)", text)
 
 
@@ -77,10 +77,9 @@ class TestImageUtils(unittest.TestCase):
     def test_slugify(self):
         self.assertEqual(slugify("画一张 洛天依 -- 全身"), "画一张-洛天依-全身")
 
-    def test_aspect_and_canvas(self):
+    def test_aspect_ratio_key(self):
         self.assertEqual(aspect_ratio_key(768, 1408), (9, 16))
-        self.assertEqual(canvas_size_for(768, 1408), (768, 1408))
-        self.assertEqual(canvas_size_for(1024, 1024), (1024, 1024))
+        self.assertEqual(aspect_ratio_key(1920, 1080), (16, 9))
 
     def test_sizes_match(self):
         self.assertTrue(sizes_match((768, 1408), (768, 1408))["ok"])
@@ -88,46 +87,9 @@ class TestImageUtils(unittest.TestCase):
         self.assertFalse(sizes_match((768, 1408), (1408, 768))["ok"])
         self.assertFalse(sizes_match((1024, 1024), (1408, 768))["ok"])
 
-    def test_probe_and_fit(self):
+    def test_probe_image_size(self):
         png = make_png_bytes(32, 64)
         self.assertEqual(probe_image_size(png), (32, 64))
-        fitted, mime, name = fit_reference_to_canvas(png, "image/png", 100, 100)
-        self.assertEqual(mime, "image/png")
-        self.assertEqual(probe_image_size(fitted), (100, 100))
-        self.assertEqual(name, "reference-fit.png")
-
-
-class TestModelPicking(unittest.TestCase):
-    def test_pick_best_image_model(self):
-        models = ["gemini-2.5-flash-image-preview", "gemini-3-pro-image", "imagen-4.0"]
-        self.assertEqual(pick_best_image_model(models), "gemini-3-pro-image")
-
-    def test_pick_best_text_model(self):
-        models = ["gemini-3-pro-image", "gemini-3-pro", "gemini-2.5-flash"]
-        self.assertNotIn("image", pick_best_text_model(models))
-
-    def test_parse_models_list_v1_strings(self):
-        self.assertEqual(
-            parse_models_list(
-                {"models": ["gemini-3-pro-image", "gemini-2.5-flash"], "alias_map": {}}
-            ),
-            ["gemini-3-pro-image", "gemini-2.5-flash"],
-        )
-
-    def test_parse_models_list_v2_objects(self):
-        self.assertEqual(
-            parse_models_list(
-                {
-                    "version": 2,
-                    "models": [
-                        {"id": "gemini-3-pro-image", "enabled": True},
-                        {"id": "gemini-3.1-flash-image", "enabled": False},
-                        {"id": "gemini-2.5-flash", "enabled": True},
-                    ],
-                }
-            ),
-            ["gemini-3-pro-image", "gemini-2.5-flash"],
-        )
 
 
 class TestComposition(unittest.TestCase):
@@ -232,17 +194,11 @@ class TestReferencePrompts(unittest.TestCase):
 class TestGenerateFlow(unittest.TestCase):
     def test_generate_and_save(self):
         with tempfile.TemporaryDirectory() as tmp:
-            save_dir = Path(tmp) / "out"
-            mirror_dir = Path(tmp) / "mirror"
-            cfg = load_config()
-            cfg["save_dir"] = str(save_dir)
-            cfg["mirror_dir"] = str(mirror_dir)
+            cfg = make_image_cfg(tmp)
+            fake = FakeOpenAIClient(size=(768, 1408))
             with (
                 mock.patch.object(engine_mod, "load_config", return_value=cfg),
-                mock.patch.object(
-                    engine_mod, "get_backend",
-                    return_value=FakeVertexBackend(),
-                ),
+                mock.patch.object(engine_mod, "OpenAIClient", return_value=fake),
             ):
                 result = generate(
                     GenerateRequest(
@@ -259,23 +215,19 @@ class TestGenerateFlow(unittest.TestCase):
             self.assertEqual(result["seed"], 123)
             self.assertNotIn("角色设定", result["prompt_used"])
             self.assertTrue(result["size_check"]["match"])
-            self.assertIn("画布优先", " ".join(result.get("warnings") or []))
-            self.assertTrue((mirror_dir / Path(result["path"]).name).is_file())
+            self.assertEqual(result["backend"], "openai")
+            self.assertTrue((Path(tmp) / "mirror" / Path(result["path"]).name).is_file())
 
     def test_generate_user_reference_three_stage(self):
         with tempfile.TemporaryDirectory() as tmp:
-            save_dir = Path(tmp) / "out"
             ref = Path(tmp) / "ref.png"
             ref.write_bytes(make_png_bytes(50, 50))
-            cfg = load_config()
-            cfg["save_dir"] = str(save_dir)
+            cfg = make_image_cfg(tmp)
             cfg["reference"] = {"auto_classify": False, "vision_script": "", "classify_timeout": 90}
+            fake = FakeOpenAIClient()
             with (
                 mock.patch.object(engine_mod, "load_config", return_value=cfg),
-                mock.patch.object(
-                    engine_mod, "get_backend",
-                    return_value=FakeVertexBackend(),
-                ),
+                mock.patch.object(engine_mod, "OpenAIClient", return_value=fake),
             ):
                 result = generate(
                     GenerateRequest(
@@ -296,6 +248,7 @@ class TestGenerateFlow(unittest.TestCase):
             self.assertIn("用户划除（不作为保留项）：耳机", result["prompt_used"])
             self.assertIn("第1段·保持", result["prompt_used"])
             self.assertIn("不保留（场景锚点", result["prompt_used"])
+            self.assertEqual(fake.requests[0]["kind"], "edit_image")
 
 
 class TestOutputPaths(unittest.TestCase):
@@ -358,25 +311,16 @@ class TestMultiReference(unittest.TestCase):
 
     def test_generate_multi_ref_mocked(self):
         with tempfile.TemporaryDirectory() as tmp:
-            save_dir = Path(tmp) / "out"
             ref1 = Path(tmp) / "ref1.png"
             ref1.write_bytes(make_png_bytes(64, 64))
             ref2 = Path(tmp) / "ref2.png"
             ref2.write_bytes(make_png_bytes(64, 64))
-            cfg = load_config()
-            cfg["save_dir"] = str(save_dir)
+            cfg = make_image_cfg(tmp)
             cfg["reference"] = {"auto_classify": False, "vision_script": "", "classify_timeout": 90}
-            captured: dict = {}
-
-            def fake_edit(cfg, prompt, width, height, model, images, **kwargs):
-                captured["images"] = images
-                return make_png_bytes(width, height)
-
-            fake_backend = FakeVertexBackend()
-            fake_backend.edit = fake_edit
+            fake = FakeOpenAIClient()
             with (
                 mock.patch.object(engine_mod, "load_config", return_value=cfg),
-                mock.patch.object(engine_mod, "get_backend", return_value=fake_backend),
+                mock.patch.object(engine_mod, "OpenAIClient", return_value=fake),
             ):
                 result = generate(
                     GenerateRequest(
@@ -396,7 +340,7 @@ class TestMultiReference(unittest.TestCase):
                 [it["type"] for it in result["reference"]["items"]],
                 ["character", "outfit"],
             )
-            self.assertEqual(len(captured["images"]), 2)
+            self.assertEqual(len(fake.requests[0]["images"]), 2)
             self.assertIn("图1（角色人物）", result["prompt_used"])
             self.assertIn("图2（服装造型）", result["prompt_used"])
             self.assertIn("互不借用", result["prompt_used"])
@@ -412,62 +356,6 @@ class TestMultiReference(unittest.TestCase):
                         images=["a.png", "b.png", "c.png", "d.png", "e.png"],
                     )
                 )
-
-
-class TestExtraBackend(unittest.TestCase):
-    def test_whitelist_presets(self):
-        self.assertEqual(
-            extra_size_whitelist({"model": "gpt-image-2-4k超分"}),
-            ["2048x2048", "2560x1440", "3840x2160", "2160x3840", "3696x1584"],
-        )
-        self.assertEqual(
-            extra_size_whitelist({"model": "gpt-image-2-原生4k"}),
-            ["2048x2048", "3840x2160", "2160x3840"],
-        )
-        self.assertEqual(extra_size_whitelist({"model": "gpt-image-2"}), OPENAI_IMAGE_SIZES)
-        self.assertEqual(
-            extra_size_whitelist({"model": "gpt-image-2", "sizes": "1024x1024, 2048x2048"}),
-            ["1024x1024", "2048x2048"],
-        )
-
-    def test_normalize_whitelist(self):
-        self.assertEqual(normalize_extra_size(3840, 2160, ["2048x2048", "3840x2160"]), "3840x2160")
-        self.assertEqual(normalize_extra_size(1024, 1024, ["2048x2048", "3840x2160"]), "2048x2048")
-        self.assertEqual(normalize_extra_size(768, 1408, None), "1024x1536")
-        self.assertEqual(normalize_extra_size(2000, 1000, None), "1536x1024")
-
-    def test_model_override_whitelist(self):
-        cfg = {
-            "extra_backends": {
-                "dragtokens": {
-                    "base_url": "https://x",
-                    "api_key": "sk-test",
-                    "model": "gpt-image-2",
-                }
-            }
-        }
-        self.assertEqual(
-            extra_backend_sizes(cfg, "dragtokens", "gpt-image-2-原生4k"),
-            ["2048x2048", "3840x2160", "2160x3840"],
-        )
-        self.assertEqual(extra_backend_sizes(cfg, "dragtokens", ""), OPENAI_IMAGE_SIZES)
-
-    def test_pick_model_for_size(self):
-        cfg = {
-            "extra_backends": {
-                "dragtokens": {
-                    "base_url": "https://x",
-                    "api_key": "sk-test",
-                    "model": "gpt-image-2",
-                    "sizes": "",
-                    "models": ["gpt-image-2", "gpt-image-2-4k超分", "gpt-image-2-原生4k"],
-                }
-            }
-        }
-        self.assertEqual(pick_extra_model_for_size(cfg, "dragtokens", 2560, 1440), "gpt-image-2-4k超分")
-        self.assertEqual(pick_extra_model_for_size(cfg, "dragtokens", 1536, 1024), "gpt-image-2")
-        self.assertEqual(pick_extra_model_for_size(cfg, "dragtokens", 3840, 2160), "gpt-image-2-4k超分")
-        self.assertEqual(pick_extra_model_for_size(cfg, "dragtokens", 1024, 1536), "gpt-image-2")
 
 
 if __name__ == "__main__":

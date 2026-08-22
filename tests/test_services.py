@@ -15,6 +15,7 @@ from imagegen import (
     ModelService,
 )
 from imagegen.engine import ImageGenEngine
+from imagegen.errors import ConfigurationError, ValidationError
 from imagegen.models import GenerateRequest, GenerateResult
 
 
@@ -26,7 +27,7 @@ class FakeEngine:
         self.calls.append(request)
         return GenerateResult(
             path="out.png",
-            backend="vertex",
+            backend="openai",
             image_model_used="gemini-3-pro-image",
             seed=1,
             requested_size="1024x1024",
@@ -61,36 +62,46 @@ class TestGenerationService(unittest.TestCase):
 
 
 class TestModelService(unittest.TestCase):
-    def test_list_backends_structured(self):
-        items = ModelService().list_backends()
-        ids = [item["id"] for item in items]
-        self.assertIn("vertex", ids)
-        self.assertIn("openai-compatible", ids)
-        for item in items:
-            self.assertIn("api_version", item)
-            self.assertIn("capabilities", item)
-
-    def test_get_backend_info_vertex_mocked(self):
-        vertex_info = {
-            "model": "gemini-3-pro-image",
-            "base_url": "http://127.0.0.1:2156/v1",
-            "image_models": ["gemini-3-pro-image", "gemini-2.5-flash-image"],
-        }
+    def test_list_models_translator_mocked(self):
+        fake_client = mock.Mock()
+        fake_client.list_models.return_value = ["a", "b"]
         with (
-            mock.patch("imagegen.backends.vertex.discover_vertex", return_value=vertex_info),
-            mock.patch("imagegen.services.models.discover_vertex", return_value=vertex_info),
+            mock.patch(
+                "imagegen.services.models.load_config",
+                return_value={"translator": {"base_url": "https://t", "api_key": "sk-t"}},
+            ),
+            mock.patch("imagegen.services.models.OpenAIClient", return_value=fake_client),
         ):
-            info = ModelService().get_backend_info("vertex")
-        self.assertEqual(info["best_model"], "gemini-3-pro-image")
-        self.assertEqual(info["base_url"], "http://127.0.0.1:2156/v1")
-        self.assertEqual(info["models"], vertex_info["image_models"])
+            models = ModelService().list_models("translator")
+        self.assertEqual(models, ["a", "b"])
+        fake_client.list_models.assert_called_once()
 
-    def test_list_models_vertex_mocked(self):
-        with mock.patch(
-            "imagegen.backends.vertex.discover_vertex",
-            return_value={"model": "m", "base_url": "", "image_models": ["a", "b"]},
+    def test_list_models_image_mocked(self):
+        fake_client = mock.Mock()
+        fake_client.list_models.return_value = ["img-a", "img-b"]
+        with (
+            mock.patch(
+                "imagegen.services.models.load_config",
+                return_value={"image": {"base_url": "https://i", "api_key": "sk-i"}},
+            ),
+            mock.patch("imagegen.services.models.OpenAIClient", return_value=fake_client),
         ):
-            self.assertEqual(ModelService().list_models("vertex"), ["a", "b"])
+            models = ModelService().list_models("image")
+        self.assertEqual(models, ["img-a", "img-b"])
+
+    def test_unknown_target_rejected(self):
+        with self.assertRaises(ValidationError):
+            ModelService().list_models("vertex")
+
+    def test_missing_credentials_raise(self):
+        with (
+            mock.patch(
+                "imagegen.services.models.load_config",
+                return_value={"image": {"base_url": "", "api_key": ""}},
+            ),
+            self.assertRaises(ConfigurationError),
+        ):
+            ModelService().list_models("image")
 
 
 class TestConfigService(unittest.TestCase):
@@ -139,11 +150,9 @@ class TestConfigServiceUpdate(unittest.TestCase):
                 "engine": "deepseek",
                 "deepseek": {"api_key": "sk-real-secret-123", "model": "deepseek-v4-flash"},
             },
-            "size_policy": {"mode": "auto", "retries": 2, "tolerance": 0.06},
+            "size_check": {"enabled": True, "tolerance": 0.06},
             "prompt_library": {"enabled": True},
-            "extra_backends": {
-                "dragtokens": {"model": "gpt-image-2", "api_key": "sk-extra-456"}
-            },
+            "image": {"api_key": "sk-image-456"},
         }
         self.config_file.write_text(json.dumps(initial), encoding="utf-8")
 
@@ -155,98 +164,91 @@ class TestConfigServiceUpdate(unittest.TestCase):
         self.assertEqual(self._svc().load()["save_dir"], "/new/out")
 
     def test_update_nested_deep_merge(self):
-        self._svc().update({"translator": {"engine": "gemini"}})
+        self._svc().update({"translator": {"output_lang": "en"}})
         cfg = self._svc().load()
-        self.assertEqual(cfg["translator"]["engine"], "gemini")
-        self.assertEqual(
-            cfg["translator"]["deepseek"]["api_key"], "sk-real-secret-123"
-        )  # 未 patch 的嵌套字段保留
+        self.assertEqual(cfg["translator"]["output_lang"], "en")
+        self.assertEqual(cfg["translator"]["api_key"], "sk-real-secret-123")
 
     def test_bool_int_float_conversion(self):
         self._svc().update(
             {
                 "prompt_library": {"enabled": "false", "top_k": "30"},
-                "size_policy": {"retries": "3", "tolerance": "0.1"},
+                "size_check": {"tolerance": "0.1"},
             }
         )
         cfg = self._svc().load()
         self.assertIs(cfg["prompt_library"]["enabled"], False)
         self.assertEqual(cfg["prompt_library"]["top_k"], 30)
-        self.assertEqual(cfg["size_policy"]["retries"], 3)
-        self.assertAlmostEqual(cfg["size_policy"]["tolerance"], 0.1)
+        self.assertAlmostEqual(cfg["size_check"]["tolerance"], 0.1)
 
     def test_masked_secret_not_overwritten(self):
         masked = self._svc().masked()
-        patch_secret = masked["translator"]["deepseek"]["api_key"]
+        patch_secret = masked["translator"]["api_key"]
         self.assertIn("*", patch_secret)
-        self._svc().update({"translator": {"deepseek": {"api_key": patch_secret}}})
+        self._svc().update({"translator": {"api_key": patch_secret}})
         cfg = self._svc().load()
-        self.assertEqual(cfg["translator"]["deepseek"]["api_key"], "sk-real-secret-123")
+        self.assertEqual(cfg["translator"]["api_key"], "sk-real-secret-123")
 
     def test_new_real_secret_updates(self):
-        self._svc().update(
-            {"translator": {"deepseek": {"api_key": "sk-brand-new-789"}}}
-        )
+        self._svc().update({"translator": {"api_key": "sk-brand-new-789"}})
         cfg = self._svc().load()
-        self.assertEqual(cfg["translator"]["deepseek"]["api_key"], "sk-brand-new-789")
+        self.assertEqual(cfg["translator"]["api_key"], "sk-brand-new-789")
+
+    def test_image_secret_preserved_and_updateable(self):
+        masked = self._svc().masked()
+        self._svc().update({"image": {"api_key": masked["image"]["api_key"]}})
+        cfg = self._svc().load()
+        self.assertEqual(cfg["image"]["api_key"], "sk-image-456")
+        self._svc().update({"image": {"api_key": "sk-image-new"}})
+        self.assertEqual(self._svc().load()["image"]["api_key"], "sk-image-new")
 
     def test_unknown_field_kept(self):
         self._svc().update({"custom_field": {"nested": 1}})
         cfg = self._svc().load()
         self.assertEqual(cfg["custom_field"], {"nested": 1})
 
-    def test_extra_backend_lists_and_secret_preserved(self):
-        self._svc().update(
-            {
-                "extra_backends": {
-                    "dragtokens": {"sizes": "1024x1024, 2048x2048", "models": "a, b"}
-                }
-            }
-        )
-        cfg = self._svc().load()
-        eb = cfg["extra_backends"]["dragtokens"]
-        self.assertEqual(eb["sizes"], ["1024x1024", "2048x2048"])
-        self.assertEqual(eb["models"], ["a", "b"])
-        self.assertEqual(eb["api_key"], "sk-extra-456")
-
     def test_update_returns_masked_config(self):
-        result = self._svc().update(
-            {"translator": {"deepseek": {"api_key": "sk-x1234567890"}}}
-        )
+        result = self._svc().update({"translator": {"api_key": "sk-x1234567890"}})
         self.assertNotIn("sk-x1234567890", json.dumps(result))
 
 
 class TestDiagnosticService(unittest.TestCase):
-    def test_doctor_health_check_mocked(self):
-        fake_http = mock.Mock(
-            return_value=(200, b'{"data":[{"id":"gemini-3-pro-image"}]}', "application/json")
-        )
+    def test_doctor_checks_both_targets_mocked(self):
+        fake_client = mock.Mock()
+        fake_client.list_models.return_value = ["a", "b"]
         with (
-            mock.patch("imagegen.services.diagnostics.load_config", return_value={}),
             mock.patch(
-                "imagegen.services.diagnostics.discover_vertex",
+                "imagegen.services.diagnostics.load_config",
                 return_value={
-                    "model": "gemini-3-pro-image",
-                    "base_url": "http://127.0.0.1:2156/v1",
-                    "api_key": "sk-test",
+                    "translator": {"base_url": "https://t", "api_key": "sk-t"},
+                    "image": {"base_url": "https://i", "api_key": "sk-i"},
                 },
             ),
-            mock.patch("imagegen.services.diagnostics.http", fake_http),
+            mock.patch(
+                "imagegen.services.diagnostics.OpenAIClient", return_value=fake_client
+            ),
         ):
             result = DiagnosticService().doctor()
         self.assertTrue(result["ok"])
-        self.assertEqual(result["backend"], "vertex")
-        self.assertEqual(result["checks"][0]["best_model"], "gemini-3-pro-image")
-        self.assertEqual(result["checks"][0]["model_count"], 1)
+        self.assertEqual(result["backend"], "openai")
+        self.assertEqual(len(result["checks"]), 2)
+        for check in result["checks"]:
+            self.assertTrue(check["ok"])
+            self.assertEqual(check["model_count"], 2)
 
-    def test_size_probe_delegates(self):
-        probe = {"ok": True, "backend": "vertex", "probes": []}
+    def test_doctor_reports_missing_credentials(self):
         with (
-            mock.patch("imagegen.services.diagnostics.load_config", return_value={}),
             mock.patch(
-                "imagegen.services.diagnostics.run_size_probe", return_value=probe
-            ) as run,
+                "imagegen.services.diagnostics.load_config",
+                return_value={
+                    "translator": {"base_url": "", "api_key": ""},
+                    "image": {"base_url": "https://i", "api_key": ""},
+                },
+            ),
+            mock.patch("imagegen.services.diagnostics.OpenAIClient"),
         ):
-            result = DiagnosticService().doctor(size_probe=True, size="1024x1024")
-        run.assert_called_once()
-        self.assertEqual(result["probes"], [])
+            result = DiagnosticService().doctor()
+        self.assertFalse(result["ok"])
+        self.assertEqual(len(result["checks"]), 2)
+        self.assertFalse(result["checks"][0]["ok"])
+        self.assertFalse(result["checks"][1]["ok"])

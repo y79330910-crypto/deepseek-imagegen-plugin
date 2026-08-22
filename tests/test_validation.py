@@ -1,4 +1,4 @@
-"""请求级验证与 Backend capability 验证测试（全部 mock，不调用真实 API）。"""
+"""请求级验证测试（全部 mock，不调用真实 API）。"""
 
 from __future__ import annotations
 
@@ -8,10 +8,9 @@ from pathlib import Path
 from unittest import mock
 
 from imagegen import engine as engine_mod
-from imagegen.backends.base import BackendCapabilities
 from imagegen.config import load_config
 from imagegen.errors import ValidationError
-from imagegen.models import GenerateRequest, validate_backend_request
+from imagegen.models import GenerateRequest
 
 from ._helpers import make_png_bytes
 
@@ -73,98 +72,3 @@ class TestRequestValidation(unittest.TestCase):
             images=["a.png", "b.png"],
             reference_roles=["character", "outfit"],
         ).validate()
-
-
-class TestBackendCapabilityValidation(unittest.TestCase):
-    def test_img2img_unsupported(self):
-        caps = BackendCapabilities(text_to_image=True, image_to_image=False)
-        with self.assertRaises(ValidationError):
-            validate_backend_request(make_request(images=["a.png"]), caps)
-
-    def test_multi_reference_unsupported(self):
-        caps = BackendCapabilities(text_to_image=True, image_to_image=True, multi_reference=False)
-        with self.assertRaises(ValidationError):
-            validate_backend_request(
-                make_request(images=["a.png", "b.png"]), caps
-            )
-
-    def test_quality_explicit_on_unsupported_backend(self):
-        caps = BackendCapabilities(
-            text_to_image=True, image_to_image=True, multi_reference=True, quality=False
-        )
-        with self.assertRaises(ValidationError):
-            validate_backend_request(make_request(quality="high"), caps)
-        # 未显式指定 quality 时忽略
-        validate_backend_request(make_request(quality=""), caps)
-
-    def test_supported_combination_passes(self):
-        caps = BackendCapabilities(
-            text_to_image=True,
-            image_to_image=True,
-            multi_reference=True,
-            quality=True,
-        )
-        validate_backend_request(
-            make_request(
-                images=["a.png", "b.png"],
-                reference_roles=["character", "outfit"],
-                quality="high",
-            ),
-            caps,
-        )
-
-
-class _NoImg2ImgBackend:
-    id = "no-img2img"
-
-    def capabilities(self):
-        return BackendCapabilities(
-            text_to_image=True, image_to_image=False, multi_reference=False
-        )
-
-    def generate(self, cfg, prompt, width, height, model="", **kwargs):
-        return make_png_bytes(width, height)
-
-
-class TestEngineCapabilityIntegration(unittest.TestCase):
-    def test_engine_rejects_img2img_for_unsupported_backend(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            ref = Path(tmp) / "ref.png"
-            ref.write_bytes(make_png_bytes(64, 64))
-            cfg = load_config()
-            cfg["save_dir"] = str(Path(tmp) / "out")
-            cfg["reference"] = {"auto_classify": False, "vision_script": "", "classify_timeout": 90}
-            with (
-                mock.patch.object(engine_mod, "load_config", return_value=cfg),
-                mock.patch.object(engine_mod, "get_backend", return_value=_NoImg2ImgBackend()),
-            ):
-                with self.assertRaises(ValidationError):
-                    engine_mod.generate(
-                        GenerateRequest(
-                            prompt="改图",
-                            width=1024,
-                            height=1024,
-                            translator="off",
-                            images=[str(ref)],
-                        )
-                    )
-
-    def test_engine_rejects_explicit_quality_on_vertex(self):
-        """Vertex 不支持 quality：显式传 quality 必须报错而不是静默忽略。"""
-        with tempfile.TemporaryDirectory() as tmp:
-            cfg = load_config()
-            cfg["save_dir"] = str(Path(tmp) / "out")
-            with (
-                mock.patch.object(engine_mod, "load_config", return_value=cfg),
-                mock.patch.object(engine_mod, "get_backend", return_value=_NoImg2ImgBackend()),
-            ):
-                with self.assertRaises(ValidationError):
-                    engine_mod.generate(
-                        GenerateRequest(
-                            prompt="画一张图",
-                            width=1024,
-                            height=1024,
-                            translator="off",
-                            quality="high",
-                        )
-                    )

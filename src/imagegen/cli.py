@@ -43,12 +43,10 @@ def cmd_generate(args: argparse.Namespace) -> dict[str, Any]:
         prompt=args.prompt,
         size=args.size,
         model=args.model,
-        backend=getattr(args, "backend", ""),
         seed=args.seed,
         quality=getattr(args, "quality", ""),
         composition=args.composition,
         translator=args.translator,
-        size_policy=args.size_policy,
         images=images,
         reference_roles=list(args.ref_role or []),
         ref_type=getattr(args, "ref_type", "auto"),
@@ -81,15 +79,11 @@ def cmd_config(args: argparse.Namespace) -> dict[str, Any]:
 def cmd_list_models(args: argparse.Namespace) -> dict[str, Any]:
     svc = ModelService()
     result: dict[str, Any] = {"ok": True, "models": {}}
-    try:
-        info = svc.get_backend_info("vertex")
-        result["models"]["vertex"] = {
-            "base_url": info["base_url"],
-            "best_model": info["best_model"],
-            "image_models": info["models"],
-        }
-    except GenError as exc:
-        result["models"]["vertex"] = f"不可用：{exc}"
+    for target in ("translator", "image"):
+        try:
+            result["models"][target] = svc.list_models(target)
+        except GenError as exc:
+            result["models"][target] = f"不可用：{exc}"
     return result
 
 
@@ -117,10 +111,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
 
 def cmd_doctor(args: argparse.Namespace) -> dict[str, Any]:
-    return DiagnosticService().doctor(
-        size_probe=getattr(args, "size_probe", False),
-        size=getattr(args, "size", ""),
-    )
+    return DiagnosticService().doctor()
 
 
 def _print_result(result: dict[str, Any], use_json: bool) -> int:
@@ -167,26 +158,11 @@ def _print_result(result: dict[str, Any], use_json: bool) -> int:
             if check.get("best_model"):
                 extra = f"（最佳模型：{check['best_model']}，共 {check.get('model_count')} 个）"
             print(f"  [{'OK' if check['ok'] else 'FAIL'}] {check['backend']}: {check['message']}{extra}")
-    elif "probes" in result:
-        print(f"尺寸探针（后端：{result['backend']}）")
-        for p in result["probes"]:
-            print(
-                f"  请求 {p['requested']}：文生图直出={p.get('generations')} | "
-                f"画布优先={p.get('canvas_first') or '不支持'} → {p.get('verdict')}"
-            )
-        if result.get("cache_saved"):
-            print("结论已缓存到配置：" + str(result.get("cache_path") or ""))
-        else:
-            print("（缓存写入失败，不影响本次结果）")
     elif "models" in result:
         for name, models in result["models"].items():
             print(f"[{name}]")
-            if isinstance(models, dict):
-                for key, value in models.items():
-                    if key == "image_models":
-                        print(f"  图像模型：{'、'.join(value) if value else '（无）'}")
-                    else:
-                        print(f"  {key}：{value}")
+            if isinstance(models, list):
+                print(f"  模型：{'、'.join(models) if models else '（无，请检查配置/连通性）'}")
             else:
                 print(f"  {models}")
     elif "config" in result:
@@ -208,7 +184,7 @@ def build_parser() -> argparse.ArgumentParser:
     gen.add_argument("--out", help="输出文件路径")
     gen.add_argument("--size", default="", help="分辨率，如 1024x1024（图生图省略时自动取原图尺寸）")
     gen.add_argument("--seed", type=int, default=None, help="随机种子")
-    gen.add_argument("--model", default="", help="模型（默认自动选最佳图像模型）")
+    gen.add_argument("--model", default="", help="图像模型（默认使用配置 image.model）")
     gen.add_argument(
         "--image",
         action="append",
@@ -242,7 +218,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--translator",
         default="auto",
         choices=["auto", "deepseek", "gemini", "off"],
-        help="提示词翻译官：deepseek(默认) / gemini / off(直传) / auto(跟随配置)",
+        help="提示词处理：auto 跟随配置 / off 直传；deepseek、gemini 为旧兼容值，等价开启",
     )
     gen.add_argument(
         "--composition",
@@ -251,23 +227,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="构图预设：full-body 全身竖版 / half-body 半身 / portrait 特写 / landscape 横版",
     )
     gen.add_argument(
-        "--size-policy",
-        dest="size_policy",
-        default="",
-        choices=["", "auto", "aspect", "exact", "strict", "warn"],
-        help="尺寸不符策略：auto 尽力满足(默认) / aspect 保持画幅 / exact 严格像素；"
-             "strict 已弃用等价 aspect，warn 已弃用等价 auto",
-    )
-    gen.add_argument(
-        "--backend",
-        default="",
-        help="出图后端：vertex(默认，本地代理) / extra_backends 里的备用后端名（如 dragtokens）",
-    )
-    gen.add_argument(
         "--quality",
         default="",
-        choices=["", "auto", "low", "medium", "high"],
-        help="渲染质量（仅备用后端生效）：auto/low/medium/high；默认不传（上游默认 auto，ultra 不支持）",
+        choices=["", "low", "medium", "high"],
+        help="渲染质量：low/medium/high；默认不传（向上游省略 quality 字段）",
     )
     lib_group = gen.add_mutually_exclusive_group()
     lib_group.add_argument(
@@ -291,18 +254,13 @@ def build_parser() -> argparse.ArgumentParser:
     tr.add_argument("--feedback", default="", help="上次生成的问题反馈，用于修正重写")
     tr.add_argument("--json", action="store_true", help="输出 JSON（机器可读）")
 
-    doctor = sub.add_parser("doctor", help="诊断本地 Vertex 代理连通性")
-    doctor.add_argument(
-        "--size-probe", dest="size_probe", action="store_true",
-        help="实测代理是否遵守尺寸参数（生成小图核对，结果缓存进配置）",
-    )
-    doctor.add_argument("--size", default="", help="探针尺寸（默认 竖版/横版/正方形 三档）")
+    doctor = sub.add_parser("doctor", help="诊断提示词 / 图像上游连通性")
     doctor.add_argument("--json", action="store_true", help="输出 JSON（机器可读）")
 
     config_parser = sub.add_parser("config", help="查看当前生效配置（密钥打码）")
     config_parser.add_argument("--json", action="store_true", help="输出 JSON（机器可读）")
 
-    models_parser = sub.add_parser("list-models", help="查看本地代理可用模型")
+    models_parser = sub.add_parser("list-models", help="查看提示词 / 图像上游可用模型")
     models_parser.add_argument("--json", action="store_true", help="输出 JSON（机器可读）")
 
     serve = sub.add_parser("serve", help="启动本地 HTTP API v1")

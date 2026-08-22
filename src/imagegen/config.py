@@ -10,9 +10,7 @@ from typing import Any
 
 APP_NAME = "deepseek-imagegen"
 # 独立程序不内置任何宿主专属路径：
-# - vertex.dir 缺省时可使用环境变量 VERTEX_PROXY_DIR 指定
 # - mirror_dir 缺省时可使用环境变量 IMAGEGEN_MIRROR_DIR 指定
-VERTEX_DEFAULT_DIR = ""
 MIRROR_DIR_ENV = "IMAGEGEN_MIRROR_DIR"
 DEFAULT_MIRROR_DIR = ""
 
@@ -42,16 +40,17 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "mirror_dir": DEFAULT_MIRROR_DIR,
     "default_size": "1024x1024",
     "translator": {
-        "engine": "deepseek",
+        "enabled": True,
+        "base_url": "",
+        "api_key": "",
+        "model": "",
         "output_lang": "zh",
-        "deepseek": {
-            "base_url": "",
-            "api_key": "",
-            "model": "deepseek-v4-flash",
-        },
-        "gemini": {
-            "model": "",
-        },
+    },
+    "image": {
+        "base_url": "",
+        "api_key": "",
+        "model": "",
+        "quality": "",
     },
     "composition": {
         "preset": "auto",
@@ -78,11 +77,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
             },
         },
     },
-    "size_policy": {
-        "mode": "auto",
-        "retries": 2,
+    "size_check": {
+        "enabled": True,
         "tolerance": 0.06,
-        "probe_cache": {},
     },
     "reference": {
         "auto_classify": True,
@@ -116,13 +113,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "db": "prompt_library",
         },
     },
-    "vertex": {
-        "dir": VERTEX_DEFAULT_DIR,
-        "base_url": "",
-        "api_key": "",
-        "model": "",
-    },
-    "extra_backends": {},
 }
 
 
@@ -137,19 +127,40 @@ def deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
-def _migrate_translator(cfg: dict[str, Any]) -> dict[str, Any]:
-    """统一 translator 开关：Core 内部只保留 engine 一种最终状态。
+def _migrate_config(cfg: dict[str, Any]) -> dict[str, Any]:
+    """旧配置迁移到 Phase 6 双 OpenAI-Compatible 结构（简单、确定、可预测）。
 
-    旧配置同时有 enabled + engine 时：enabled=false → engine=off；
-    否则保留 engine（缺省 deepseek）。迁移后不再维护 enabled。
+    - translator.deepseek.{base_url,api_key,model} → translator.{...}（值明确才迁移）
+    - translator.engine off/none/direct/直传 → translator.enabled=false
+    - vertex / extra_backends.* 不猜测哪个应成为 image 上游 → image.* 保持为空
+    - size_policy.tolerance → size_check.tolerance
     """
     tr = cfg.get("translator")
-    if isinstance(tr, dict) and "enabled" in tr:
-        if not bool(tr.get("enabled", True)):
-            tr["engine"] = "off"
-        elif not str(tr.get("engine") or "").strip():
-            tr["engine"] = "deepseek"
-        tr.pop("enabled", None)
+    if isinstance(tr, dict):
+        if "engine" in tr:
+            legacy_engine = str(tr.get("engine") or "deepseek").strip().lower()
+            tr["enabled"] = legacy_engine not in ("off", "none", "direct", "直传")
+            tr.pop("engine", None)
+        old = tr.get("deepseek")
+        if isinstance(old, dict):
+            for key in ("base_url", "api_key", "model"):
+                value = str(old.get(key) or "").strip()
+                if value and not str(tr.get(key) or "").strip():
+                    tr[key] = value
+        tr.pop("deepseek", None)
+        tr.pop("gemini", None)
+    if not isinstance(cfg.get("image"), dict):
+        cfg["image"] = {}
+    sc = cfg.pop("size_policy", None)
+    if isinstance(sc, dict) and "tolerance" in sc:
+        cfg.setdefault("size_check", {})
+        if isinstance(cfg.get("size_check"), dict):
+            try:
+                cfg["size_check"]["tolerance"] = float(sc["tolerance"])
+            except (TypeError, ValueError):
+                pass
+    cfg.pop("vertex", None)
+    cfg.pop("extra_backends", None)
     return cfg
 
 
@@ -175,7 +186,14 @@ def load_config(config_path: str | Path | None = None) -> dict[str, Any]:
         env_mirror = os.environ.get(MIRROR_DIR_ENV, "").strip()
         if env_mirror:
             cfg["mirror_dir"] = env_mirror
-    return _migrate_translator(cfg)
+    # 提示词上游兼容：Codex 宿主注入的通用环境变量作为 translator 兜底
+    tr = cfg.get("translator")
+    if isinstance(tr, dict):
+        if not str(tr.get("base_url") or "").strip():
+            tr["base_url"] = os.environ.get("DEEPSEEK_BASE_URL", "").strip()
+        if not str(tr.get("api_key") or "").strip():
+            tr["api_key"] = os.environ.get("DEEPSEEK_API_KEY", "").strip()
+    return _migrate_config(cfg)
 
 
 def save_config(cfg: dict[str, Any], config_path: str | Path | None = None) -> str:

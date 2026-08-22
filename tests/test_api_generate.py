@@ -14,7 +14,7 @@ class TestGenerateRoute(unittest.TestCase):
     def setUp(self):
         self.result = GenerateResult(
             path=r"D:\tmp\out.png",
-            backend="vertex",
+            backend="openai",
             image_model_used="gemini-3-pro-image",
             seed=7,
             requested_size="1024x1024",
@@ -35,7 +35,7 @@ class TestGenerateRoute(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(data["generation_id"], self.result.generation_id)
         self.assertEqual(data["output_url"], f"/api/v1/outputs/{self.result.generation_id}")
-        self.assertEqual(data["backend"], "vertex")
+        self.assertEqual(data["backend"], "openai")
         self.assertEqual(data["image_model_used"], "gemini-3-pro-image")
         self.assertEqual(data["warnings"], ["w1"])
         self.assertEqual(fake.last_request.prompt, "a cat")

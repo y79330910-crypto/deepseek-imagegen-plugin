@@ -27,13 +27,13 @@ class TestConfigPathInjection(unittest.TestCase):
             cfg_path = Path(tmp) / "custom.json"
             svc = ConfigService(cfg_path)
             self.assertFalse(svc.exists())
-            svc.save({"save_dir": "/x", "translator": {"engine": "gemini"}})
+            svc.save({"save_dir": "/x", "translator": {"enabled": True}})
             self.assertTrue(svc.exists())
-            self.assertEqual(svc.load()["translator"]["engine"], "gemini")
+            self.assertTrue(svc.load()["translator"]["enabled"])
             self.assertEqual(svc.path(), cfg_path)
-            result = svc.update({"save_dir": "/y", "size_policy": {"retries": "3"}})
+            result = svc.update({"save_dir": "/y", "size_check": {"tolerance": "0.08"}})
             self.assertEqual(result["save_dir"], "/y")
-            self.assertEqual(svc.load()["size_policy"]["retries"], 3)
+            self.assertEqual(svc.load()["size_check"]["tolerance"], 0.08)
             self.assertEqual(svc.masked()["save_dir"], "/y")
             # 实例路径与默认路径隔离
             self.assertNotEqual(svc.path(), default_config_path())
@@ -44,12 +44,12 @@ class TestConfigPathInjection(unittest.TestCase):
             path_b = Path(tmp) / "config_b.json"
             svc_a = ConfigService(path_a)
             svc_b = ConfigService(path_b)
-            svc_a.update({"save_dir": "/a/out", "translator": {"engine": "gemini"}})
-            svc_b.update({"save_dir": "/b/out", "translator": {"engine": "off"}})
+            svc_a.update({"save_dir": "/a/out", "translator": {"enabled": True}})
+            svc_b.update({"save_dir": "/b/out", "translator": {"enabled": False}})
             self.assertEqual(svc_a.load()["save_dir"], "/a/out")
-            self.assertEqual(svc_a.load()["translator"]["engine"], "gemini")
+            self.assertTrue(svc_a.load()["translator"]["enabled"])
             self.assertEqual(svc_b.load()["save_dir"], "/b/out")
-            self.assertEqual(svc_b.load()["translator"]["engine"], "off")
+            self.assertFalse(svc_b.load()["translator"]["enabled"])
 
     def test_load_raw_on_custom_path(self):
         with tempfile.TemporaryDirectory() as tmp:

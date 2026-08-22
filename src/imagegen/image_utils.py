@@ -20,15 +20,6 @@ from .http import BROWSER_UA, HEALTH_TIMEOUT, http
 
 MAX_INIT_BYTES = 20 * 1024 * 1024
 
-# 画布优先兜底时使用的画布尺寸（已实测代理会原样返回）
-VERTEX_CANVAS_DEFAULTS = {
-    (2, 3): (768, 1408),
-    (3, 2): (1408, 768),
-    (1, 1): (1024, 1024),
-    (9, 16): (768, 1408),
-    (16, 9): (1408, 768),
-}
-
 
 def parse_size(size: str) -> tuple[int, int]:
     """解析 WxH 尺寸，支持 x/X/×。"""
@@ -234,80 +225,6 @@ def sizes_match(
         f"实际 {aw}x{ah}（{a_kind[0]}:{a_kind[1]}）"
     )
     return result
-
-
-def size_matches(
-    requested: tuple[int, int],
-    actual: Optional[tuple[int, int]],
-    policy: str = "auto",
-    tolerance: float = 0.06,
-) -> bool:
-    """按 size_policy 判断最终尺寸是否合格。
-
-    exact → 像素完全一致；aspect / auto → 复用 sizes_match（画幅比例与方向）。
-    """
-    if actual is None:
-        return False
-    rw, rh = (int(x) for x in requested)
-    aw, ah = (int(x) for x in actual)
-    if policy == "exact":
-        return (rw, rh) == (aw, ah)
-    return bool(sizes_match((rw, rh), (aw, ah), tolerance).get("ok"))
-
-
-def canvas_size_for(width: int, height: int) -> tuple[int, int]:
-    """画布优先兜底使用的画布尺寸（已实测代理会原样返回的档位优先）。"""
-    if width <= 0 or height <= 0:
-        return (768, 1408)
-    key = aspect_ratio_key(width, height)
-    known = VERTEX_CANVAS_DEFAULTS.get(key)
-    if known:
-        return known
-    max_side = 1408
-    if width >= height:
-        w = max_side
-        h = max(64, round(height * max_side / width / 8) * 8)
-        return w, h
-    h = max_side
-    w = max(64, round(width * max_side / height / 8) * 8)
-    return w, h
-
-
-def build_canvas_png(width: int, height: int, color: tuple[int, int, int] = (238, 238, 238)) -> bytes:
-    """用 Pillow 建纯色画布（画布优先兜底用）。"""
-    try:
-        from PIL import Image  # type: ignore  # noqa: PLC0415
-    except ImportError as exc:
-        raise GenError(
-            "画布优先兜底需要 Pillow 库（本机建议安装：pip install Pillow）。"
-            "也可以改用 --size-policy warn 让脚本保留后端原始尺寸。"
-        ) from exc
-    img = Image.new("RGB", (width, height), color)
-    buf = io_bytes(b"")
-    img.save(buf, format="PNG")
-    return buf.getvalue()
-
-
-def fit_reference_to_canvas(
-    data: bytes, mime: str, target_w: int, target_h: int
-) -> tuple[bytes, str, str]:
-    """把参考图等比缩放到目标画幅内、四周补边，不拉伸（角色参考图用）。"""
-    try:
-        from PIL import Image  # type: ignore  # noqa: PLC0415
-    except ImportError as exc:
-        raise GenError("参考图等比适配画布需要 Pillow 库，请先安装：pip install Pillow") from exc
-    with Image.open(io_bytes(data)) as src:
-        src = src.convert("RGB")
-        src_w, src_h = src.size
-        scale = min(target_w / src_w, target_h / src_h)
-        new_w = max(16, round(src_w * scale))
-        new_h = max(16, round(src_h * scale))
-        src = src.resize((new_w, new_h), Image.LANCZOS)
-        canvas = Image.new("RGB", (target_w, target_h), (238, 238, 238))
-        canvas.paste(src, ((target_w - new_w) // 2, (target_h - new_h) // 2))
-        buf = io_bytes(b"")
-        canvas.save(buf, format="PNG")
-    return buf.getvalue(), "image/png", "reference-fit.png"
 
 
 def load_init_image(ref: str) -> tuple[bytes, str, str]:

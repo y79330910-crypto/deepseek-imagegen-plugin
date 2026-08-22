@@ -16,12 +16,10 @@ class TestGenerateRequest(unittest.TestCase):
         self.assertIsNone(req.width)
         self.assertIsNone(req.height)
         self.assertEqual(req.model, "")
-        self.assertEqual(req.backend, "")
         self.assertIsNone(req.seed)
         self.assertEqual(req.quality, "")
         self.assertEqual(req.composition, "auto")
         self.assertEqual(req.translator, "auto")
-        self.assertEqual(req.size_policy, "")
         self.assertEqual(req.images, [])
         self.assertEqual(req.reference_roles, [])
         self.assertEqual(req.ref_type, "auto")
@@ -40,7 +38,6 @@ class TestGenerateRequest(unittest.TestCase):
     def test_from_dict_uses_defaults(self):
         req = GenerateRequest.from_dict({"prompt": "a girl under cherry blossoms"})
         self.assertEqual(req.prompt, "a girl under cherry blossoms")
-        self.assertEqual(req.backend, "")
         self.assertEqual(req.size, "")
         self.assertIsNone(req.width)
         self.assertEqual(req.composition, "auto")
@@ -49,20 +46,20 @@ class TestGenerateRequest(unittest.TestCase):
     def test_from_dict_full_input(self):
         data = {
             "prompt": "a girl under cherry blossoms",
-            "backend": "vertex",
             "model": "",
             "size": "1024x1536",
             "quality": "",
             "composition": "auto",
             "translator": "auto",
-            "size_policy": "auto",
             "images": [],
             "reference_roles": [],
         }
         req = GenerateRequest.from_dict(data)
-        self.assertEqual(req.backend, "vertex")
         self.assertEqual(req.size, "1024x1536")
-        self.assertEqual(req.size_policy, "auto")
+
+    def test_from_dict_rejects_legacy_backend_field(self):
+        with self.assertRaises(ValidationError):
+            GenerateRequest.from_dict({"prompt": "x", "backend": "vertex"})
 
     def test_from_dict_rejects_unknown_fields(self):
         with self.assertRaises(ValidationError):

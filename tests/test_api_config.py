@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -17,68 +18,60 @@ INITIAL_CONFIG = {
         "engine": "deepseek",
         "deepseek": {"api_key": "sk-real-secret-123", "model": "deepseek-v4-flash"},
     },
-    "size_policy": {"mode": "auto", "retries": 2, "tolerance": 0.06},
+    "size_check": {"enabled": True, "tolerance": 0.06},
 }
 
 
 class TestConfigRoutes(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(self._tempdir())
-        self.config_path = self.tmp / "config.json"
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.config_path = Path(self.tmp.name) / "config.json"
         self.server = ApiTestServer(
             config_path=self.config_path, initial_config=INITIAL_CONFIG
         )
         self.addCleanup(self.server.close)
 
-    def _tempdir(self):
-        import tempfile
-
-        handle = tempfile.TemporaryDirectory()
-        self.addCleanup(handle.cleanup)
-        return handle.name
-
     def test_get_config_masks_secret(self):
         status, _, data = self.server.json("GET", "/api/v1/config")
         self.assertEqual(status, 200)
         masked = data["config"]
-        self.assertIn("*", masked["translator"]["deepseek"]["api_key"])
+        self.assertIn("*", masked["translator"]["api_key"])
         self.assertNotIn("sk-real-secret-123", json.dumps(masked))
 
     def test_patch_plain_and_nested(self):
         status, _, data = self.server.json(
             "PATCH",
             "/api/v1/config",
-            {"save_dir": "/new/out", "translator": {"engine": "gemini"}},
+            {"save_dir": "/new/out", "translator": {"output_lang": "en"}},
         )
         self.assertEqual(status, 200)
         cfg = ConfigService(self.config_path).load()
         self.assertEqual(cfg["save_dir"], "/new/out")
-        self.assertEqual(cfg["translator"]["engine"], "gemini")
-        self.assertEqual(
-            cfg["translator"]["deepseek"]["api_key"], "sk-real-secret-123"
-        )
+        self.assertEqual(cfg["translator"]["output_lang"], "en")
+        self.assertEqual(cfg["translator"]["api_key"], "sk-real-secret-123")
 
     def test_patch_masked_secret_preserved(self):
         masked = ConfigService(self.config_path).masked()
-        patch_secret = masked["translator"]["deepseek"]["api_key"]
+        patch_secret = masked["translator"]["api_key"]
         status, _, _ = self.server.json(
             "PATCH",
             "/api/v1/config",
-            {"translator": {"deepseek": {"api_key": patch_secret}}},
+            {"translator": {"api_key": patch_secret}},
         )
         self.assertEqual(status, 200)
         cfg = ConfigService(self.config_path).load()
-        self.assertEqual(cfg["translator"]["deepseek"]["api_key"], "sk-real-secret-123")
+        self.assertEqual(cfg["translator"]["api_key"], "sk-real-secret-123")
 
     def test_patch_new_secret_updates(self):
         status, _, _ = self.server.json(
             "PATCH",
             "/api/v1/config",
-            {"translator": {"deepseek": {"api_key": "sk-brand-new-999"}}},
+            {"translator": {"api_key": "sk-brand-new-999"}},
         )
         self.assertEqual(status, 200)
         cfg = ConfigService(self.config_path).load()
-        self.assertEqual(cfg["translator"]["deepseek"]["api_key"], "sk-brand-new-999")
+        self.assertEqual(cfg["translator"]["api_key"], "sk-brand-new-999")
 
     def test_config_isolated_from_default(self):
         self.server.json("PATCH", "/api/v1/config", {"save_dir": "/isolated"})
